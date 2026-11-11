@@ -390,7 +390,16 @@ dotnet test --logger "console;verbosity=detailed"
 
 ## 🎙️ Модуль локальной транскрибации речи (Tsukiko Metal GPU + Gemini Fallback) и автопротоколирования (MoM)
 
-Для распознавания голосовых сообщений сотрудников и аудиозаписей планерок реализован гибридный отказоустойчивый модуль `Fotoprint.Core.Audio`, объединяющий локальное ускорение на Apple Silicon Metal GPU и облачный мультимодальный резерв.
+Для распознавания голосовых сообщений сотрудников и аудиозаписей планерок реализован гибридный отказоустойчивый модуль `Fotoprint.Core.Audio`, объединяющий локальное ускорение на Apple Silicon Metal GPU / Windows GPU и облачный мультимодальный резерв.
+
+### 🎙️ Настройка модуля распознавания речи (2 варианта)
+
+**Вариант 1 (Быстрый старт без установки, Zero-Install)**:
+Просто задайте `GEMINI_API_KEY` в файле `.env`. Больше ничего устанавливать не нужно — звук расшифровывается в облаке.
+
+**Вариант 2 (Локально на GPU в 1 клик, 100% оффлайн)**:
+- На Windows: запустите `powershell -File scripts/setup-tsukiko-win.ps1`
+- На macOS: запустите `bash scripts/setup-tsukiko-mac.sh`
 
 ### 1. Гибридная архитектура (`CompositeAudioTranscriber`)
 Оркестратор `CompositeAudioTranscriber` реализует паттерн **Chain of Responsibility / Fallback**:

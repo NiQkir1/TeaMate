@@ -424,4 +424,111 @@ public class AudioTranscriptionTests
         Assert.Contains("Провести калибровку спектрофотометра в цехе №1", parsedDoc.FullText);
         Assert.Contains("требует уточнения", parsedDoc.FullText);
     }
+
+    [Fact]
+    public void TsukikoTranscriber_ParseCliOutput_Handles_Empty_ErrorJson_And_PlainText_EdgeCases()
+    {
+        // 1. Пустая строка и пробелы -> Success == false
+        var emptyResult = TsukikoTranscriber.ParseCliOutput("", durationMs: 10);
+        Assert.False(emptyResult.Success);
+
+        var whitespaceResult = TsukikoTranscriber.ParseCliOutput("   \n\t  ", durationMs: 10);
+        Assert.False(whitespaceResult.Success);
+
+        // 2. JSON с ошибкой -> Success == false
+        var errorJsonResult = TsukikoTranscriber.ParseCliOutput("""{"error": "model not found"}""", durationMs: 25);
+        Assert.False(errorJsonResult.Success);
+        Assert.Contains("model not found", errorJsonResult.ErrorMessage ?? string.Empty);
+
+        // 3. Обычный плоский текст без JSON и без таймкодов -> Success == true
+        var plainResult = TsukikoTranscriber.ParseCliOutput("Обычный текст расшифровки без таймкодов.", durationMs: 100);
+        Assert.True(plainResult.Success);
+        Assert.Equal("Обычный текст расшифровки без таймкодов.", plainResult.Text);
+    }
+
+    [Fact]
+    public void TsukikoPathResolver_ResolveCliPath_Finds_Portable_Windows_And_Mac_Binaries_Or_Returns_Null()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"fotoprint_cli_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            // 1. Пустая папка при несуществующем configuredPath -> null (Zero-Install Cloud Mode)
+            var missing = TsukikoPathResolver.ResolveCliPath(
+                configuredPath: "/non_existent_dir_12345/tsukiko-transcribe",
+                customSearchRoot: tempRoot);
+            Assert.Null(missing);
+
+            // 2. Портативный бинарник macOS/Linux: tools/tsukiko/tsukiko-transcribe
+            var toolsDir = Path.Combine(tempRoot, "tools", "tsukiko");
+            Directory.CreateDirectory(toolsDir);
+            var macBinPath = Path.Combine(toolsDir, "tsukiko-transcribe");
+            File.WriteAllText(macBinPath, "#!/bin/sh\necho ok");
+
+            var resolvedMac = TsukikoPathResolver.ResolveCliPath(
+                configuredPath: "/non_existent_dir_12345/tsukiko-transcribe",
+                customSearchRoot: tempRoot);
+            Assert.NotNull(resolvedMac);
+            Assert.Equal(Path.GetFullPath(macBinPath), Path.GetFullPath(resolvedMac!));
+
+            File.Delete(macBinPath);
+
+            // 3. Портативный бинарник Windows: tools/tsukiko/tsukiko-transcribe.exe
+            var winBinPath = Path.Combine(toolsDir, "tsukiko-transcribe.exe");
+            File.WriteAllText(winBinPath, "MZ-fake-exe");
+
+            var resolvedWin = TsukikoPathResolver.ResolveCliPath(
+                configuredPath: "/non_existent_dir_12345/tsukiko-transcribe",
+                customSearchRoot: tempRoot);
+            Assert.NotNull(resolvedWin);
+            Assert.Equal(Path.GetFullPath(winBinPath), Path.GetFullPath(resolvedWin!));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TsukikoPathResolver_ResolveModelPath_Finds_Portable_Ggml_Models_Or_Returns_Null()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"fotoprint_model_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            // 1. В пустой папке модель не найдена -> null
+            var missingModel = TsukikoPathResolver.ResolveModelPath(customSearchRoot: tempRoot);
+            Assert.Null(missingModel);
+
+            // 2. Находит легкую модель ggml-base.bin в tools/tsukiko/models
+            var modelsDir = Path.Combine(tempRoot, "tools", "tsukiko", "models");
+            Directory.CreateDirectory(modelsDir);
+            var baseModelPath = Path.Combine(modelsDir, "ggml-base.bin");
+            File.WriteAllBytes(baseModelPath, new byte[] { 0x67, 0x67, 0x6D, 0x6C });
+
+            var resolvedBase = TsukikoPathResolver.ResolveModelPath(customSearchRoot: tempRoot);
+            Assert.NotNull(resolvedBase);
+            Assert.Equal(Path.GetFullPath(baseModelPath), Path.GetFullPath(resolvedBase!));
+
+            // 3. При наличии ggml-large-v3-turbo.bin выбирает приоритетную turbo-модель
+            var turboModelPath = Path.Combine(modelsDir, "ggml-large-v3-turbo.bin");
+            File.WriteAllBytes(turboModelPath, new byte[] { 0x67, 0x67, 0x6D, 0x6C });
+
+            var resolvedTurbo = TsukikoPathResolver.ResolveModelPath(customSearchRoot: tempRoot);
+            Assert.NotNull(resolvedTurbo);
+            Assert.Equal(Path.GetFullPath(turboModelPath), Path.GetFullPath(resolvedTurbo!));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
 }
