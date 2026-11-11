@@ -386,4 +386,106 @@ dotnet test --logger "console;verbosity=detailed"
   - **Context Switch Accuracy**: валидация решения детектора контекста (склеил или разделил сессии корректно).
   - **Formatting & Policy Check**: проверка соответствия корпоративному шаблону и отсутствия утечки системных промптов, токенов и ключей.
 
+---
+
+## 🎙️ Модуль локальной транскрибации речи (Tsukiko Metal GPU + Gemini Fallback) и автопротоколирования (MoM)
+
+Для распознавания голосовых сообщений сотрудников и аудиозаписей планерок реализован гибридный отказоустойчивый модуль `Fotoprint.Core.Audio`, объединяющий локальное ускорение на Apple Silicon Metal GPU и облачный мультимодальный резерв.
+
+### 1. Гибридная архитектура (`CompositeAudioTranscriber`)
+Оркестратор `CompositeAudioTranscriber` реализует паттерн **Chain of Responsibility / Fallback**:
+1. **Primary (On-Premise Metal GPU) — `TsukikoTranscriber` (`provider: "tsukiko-metal"`)**:
+   - Использует локальный движок `tsukiko` (`whisper.cpp` с моделью `ggml-large-v3-turbo.bin` на Apple Silicon Metal GPU) через CLI (`/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe` / `tsukiko-recognizer`) или локальный HTTP-бридж (`TRANSCRIBER_URL`).
+   - Обеспечивает 100% приватность аудиозаписей планерок внутри контура предприятия, нулевую стоимость токенов за STT и возврат посегментных таймкодов (`AudioSegment`).
+2. **Fallback (Cloud Multimodal) — `GeminiAudioTranscriber` (`provider: "gemini"`)**:
+   - Автоматически включается, если система запущена внутри изолированного Linux-контейнера без проброса GPU или если локальный движок недоступен.
+   - Передает аудиопоток (`inline_data` base64) напрямую в `gemini-1.5-flash` через REST API Google AI Studio.
+3. **Телеметрия Langfuse**:
+   - Каждая операция транскрибации логируется спаном `Span:Audio_Transcription` с фиксацией выбранного провайдера (`tsukiko-metal` или `gemini`), длительности (`duration_ms`) и размера файла.
+
+### 2. Конфигурация в `config.yaml`
+```yaml
+audio:
+  enabled: true
+  provider: "auto" # "auto" | "tsukiko" | "gemini"
+  tsukiko:
+    cli_path: "/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe"
+    http_url: "http://127.0.0.1:8756"
+    timeout_seconds: 300
+  gemini:
+    model: "gemini-1.5-flash"
+  max_file_size_mb: 100
+```
+
+### 3. Поддерживаемые аудио- и видеоформаты
+`.ogg`, `.oga`, `.opus`, `.m4a`, `.mp3`, `.wav`, `.aac`, `.flac`, `.mp4`, `.mov`.
+
+### 4. Примеры вызова API (`curl`)
+
+#### 4.1 Прямая транскрибация аудиофайла (`POST /api/audio/transcribe`)
+```bash
+curl -X POST "http://localhost:8080/api/audio/transcribe?language=ru" \
+  -F "file=@/path/to/voice_message.m4a"
+```
+
+Пример ответа:
+```json
+{
+  "success": true,
+  "text": "Коллеги, начинаем планерку офсетного цеха. Кузнецову Ивану подготовить отчет по валам к пятнице.",
+  "segments": [
+    {
+      "startSeconds": 0.0,
+      "endSeconds": 4.2,
+      "text": "Коллеги, начинаем планерку офсетного цеха.",
+      "speaker": null
+    },
+    {
+      "startSeconds": 4.2,
+      "endSeconds": 9.8,
+      "text": "Кузнецову Ивану подготовить отчет по валам к пятнице.",
+      "speaker": null
+    }
+  ],
+  "duration_ms": 840,
+  "provider": "tsukiko-metal",
+  "error": null
+}
+```
+
+#### 4.2 End-to-End обработка аудиозаписи совещания с генерацией протокола `.docx` и поручений (`POST /api/meetings/process-audio`)
+Эндпоинт выполняет полный цикл **Audio $\rightarrow$ Transcript $\rightarrow$ MoM Analysis (`MeetingTranscriptAnalyzer`) $\rightarrow$ PostgreSQL $\rightarrow$ DOCX (`MeetingProtocolGenerator`) $\rightarrow$ Action Items + Telegram Inline Keyboard**:
+- Соблюдается строгий инвариант **No Hallucinations**: если в стенограмме совещания не озвучен ответственный или дедлайн по задаче, система автоматически проставляет статус `"требует уточнения"`.
+
+```bash
+curl -X POST "http://localhost:8080/api/meetings/process-audio?language=ru" \
+  -F "file=@/path/to/meeting_recording.m4a" \
+  -F "title=Оперативка производства по тиражу №44102" \
+  -F "organizer_id=1" \
+  -F "chat_id=100001"
+```
+
+#### 4.3 Обработка голосовых сообщений в Telegram (`POST /api/telegram/webhook`)
+Шлюз автоматически перехватывает объекты `message.voice` и `message.audio` из Telegram, скачивает голосовой файл через Telegram Bot API (или читает локальный файл при тестировании), расшифровывает речь через `IAudioTranscriber` и передает распознанный текст в стандартный пайплайн `MasterId` $\rightarrow$ `SessionId` $\rightarrow$ `ContextSwitchDetector` $\rightarrow$ `FotoprintAiAgent` / `n8n`:
+
+```bash
+curl -X POST "http://localhost:8080/api/telegram/webhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "update_id": 900101,
+    "message": {
+      "message_id": 55,
+      "from": { "id": 100001, "username": "smirnov_ceo" },
+      "chat": { "id": 100001, "type": "private" },
+      "voice": {
+        "file_id": "AwACAgIAAxkBAAIB...",
+        "duration": 6,
+        "mime_type": "audio/ogg",
+        "local_file_path": "/path/to/sample_voice.m4a"
+      }
+    }
+  }'
+```
+
+
 
