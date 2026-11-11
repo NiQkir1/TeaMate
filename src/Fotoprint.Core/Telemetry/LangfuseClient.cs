@@ -309,6 +309,15 @@ public class LangfuseClient : ILangfuseClient
     {
         if (!_options.Enabled) return;
 
+        // Langfuse v3 ObservationLevel поддерживает только: DEBUG | DEFAULT | WARNING | ERROR
+        var normalizedLevel = level?.Trim().ToUpperInvariant() switch
+        {
+            "DEBUG" => "DEBUG",
+            "WARNING" or "WARN" => "WARNING",
+            "ERROR" or "CRITICAL" or "FATAL" => "ERROR",
+            _ => "DEFAULT"
+        };
+
         var payload = new
         {
             batch = new object[]
@@ -323,7 +332,7 @@ public class LangfuseClient : ILangfuseClient
                         id = Guid.NewGuid().ToString("N"),
                         traceId = traceId,
                         name = name,
-                        level = level,
+                        level = normalizedLevel,
                         statusMessage = message,
                         metadata = metadata
                     }

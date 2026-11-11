@@ -53,6 +53,7 @@ public class FotoprintRepository : IFotoprintRepository
 
     static FotoprintRepository()
     {
+        DefaultTypeMap.MatchNamesWithUnderscores = true;
         SqlMapper.AddTypeHandler(new VectorTypeHandler());
     }
 
@@ -222,14 +223,51 @@ public class FotoprintRepository : IFotoprintRepository
     public async Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        const string sql = "SELECT * FROM employees WHERE id = @Id;";
+        const string sql = """
+            SELECT
+                id AS Id,
+                master_id AS MasterId,
+                first_name AS FirstName,
+                last_name AS LastName,
+                middle_name AS MiddleName,
+                email AS Email,
+                telegram_id AS TelegramId,
+                telegram_username AS TelegramUsername,
+                whatsapp_id AS WhatsappId,
+                department AS Department,
+                position AS Position,
+                is_active AS IsActive,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM employees
+            WHERE id = @Id;
+        """;
         return await conn.QueryFirstOrDefaultAsync<Employee>(new CommandDefinition(sql, new { Id = id }, cancellationToken: ct));
     }
 
     public async Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        const string sql = "SELECT * FROM employees WHERE is_active = TRUE ORDER BY id;";
+        const string sql = """
+            SELECT
+                id AS Id,
+                master_id AS MasterId,
+                first_name AS FirstName,
+                last_name AS LastName,
+                middle_name AS MiddleName,
+                email AS Email,
+                telegram_id AS TelegramId,
+                telegram_username AS TelegramUsername,
+                whatsapp_id AS WhatsappId,
+                department AS Department,
+                position AS Position,
+                is_active AS IsActive,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM employees
+            WHERE is_active = TRUE
+            ORDER BY id;
+        """;
         var results = await conn.QueryAsync<Employee>(new CommandDefinition(sql, cancellationToken: ct));
         return results.ToList();
     }
@@ -259,9 +297,9 @@ public class FotoprintRepository : IFotoprintRepository
 
         // 3. Создаем новую активную сессию с новым UUID SessionId
         const string insertSql = """
-            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, telegram_chat_id, is_active, title, current_branch)
-            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, @MessengerChatId, TRUE, 'Диалог ' || @MasterId, 'general')
-            RETURNING *;
+            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, is_active, title, current_branch)
+            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, TRUE, 'Диалог ' || @MasterId, 'general')
+            RETURNING *, messenger_chat_id AS TelegramChatId;
         """;
 
         return await conn.QuerySingleAsync<ChatSession>(
@@ -302,9 +340,9 @@ public class FotoprintRepository : IFotoprintRepository
 
         var branch = !string.IsNullOrWhiteSpace(newBranch) ? newBranch : "general";
         const string insertNewSql = """
-            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, telegram_chat_id, is_active, title, current_branch)
-            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, @MessengerChatId, TRUE, 'Диалог (' || @Branch || ') ' || @MasterId, @Branch)
-            RETURNING *;
+            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, is_active, title, current_branch)
+            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, TRUE, 'Диалог (' || @Branch || ') ' || @MasterId, @Branch)
+            RETURNING *, messenger_chat_id AS TelegramChatId;
         """;
 
         return await conn.QuerySingleAsync<ChatSession>(
@@ -365,23 +403,30 @@ public class FotoprintRepository : IFotoprintRepository
     public async Task<ChatSession> GetOrCreateSessionAsync(long telegramChatId, long? telegramUserId = null, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        const string selectSql = "SELECT * FROM chat_sessions WHERE telegram_chat_id = @TelegramChatId ORDER BY updated_at DESC LIMIT 1;";
+        const string selectSql = "SELECT *, messenger_chat_id AS TelegramChatId FROM chat_sessions WHERE messenger_chat_id = @TelegramChatId ORDER BY updated_at DESC LIMIT 1;";
         var session = await conn.QueryFirstOrDefaultAsync<ChatSession>(new CommandDefinition(selectSql, new { TelegramChatId = telegramChatId }, cancellationToken: ct));
 
         if (session != null) return session;
 
         int? employeeId = null;
+        long masterId = telegramUserId ?? telegramChatId;
         if (telegramUserId.HasValue)
         {
-            employeeId = await conn.ExecuteScalarAsync<int?>("SELECT id FROM employees WHERE telegram_id = @TgId LIMIT 1;", new { TgId = telegramUserId.Value });
+            var emp = await conn.QueryFirstOrDefaultAsync<(int Id, long MasterId)>(
+                new CommandDefinition("SELECT id AS Id, master_id AS MasterId FROM employees WHERE telegram_id = @TgId LIMIT 1;", new { TgId = telegramUserId.Value }, cancellationToken: ct));
+            if (emp.Id > 0)
+            {
+                employeeId = emp.Id;
+                masterId = emp.MasterId;
+            }
         }
 
         const string insertSql = """
-            INSERT INTO chat_sessions (telegram_chat_id, employee_id, title, current_branch)
-            VALUES (@TelegramChatId, @EmployeeId, 'Чат-сессия ' || @TelegramChatId, 'general')
-            RETURNING *;
+            INSERT INTO chat_sessions (master_id, employee_id, messenger_type, messenger_chat_id, title, current_branch)
+            VALUES (@MasterId, @EmployeeId, 'telegram', @TelegramChatId, 'Чат-сессия ' || @TelegramChatId, 'general')
+            RETURNING *, messenger_chat_id AS TelegramChatId;
         """;
-        return await conn.QuerySingleAsync<ChatSession>(new CommandDefinition(insertSql, new { TelegramChatId = telegramChatId, EmployeeId = employeeId }, cancellationToken: ct));
+        return await conn.QuerySingleAsync<ChatSession>(new CommandDefinition(insertSql, new { MasterId = masterId, TelegramChatId = telegramChatId, EmployeeId = employeeId }, cancellationToken: ct));
     }
 
     public async Task SaveMessageAsync(Guid sessionId, string contextId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default)

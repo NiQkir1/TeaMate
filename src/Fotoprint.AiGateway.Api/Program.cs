@@ -74,6 +74,7 @@ builder.Services.AddSingleton<IFotoprintAgent, FotoprintAiAgent>();
 builder.Services.AddHttpClient("N8nClient", client =>
 {
     client.BaseAddress = new Uri(n8nWebhookBaseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(120);
 });
 
 builder.Services.AddHttpClient("BitrixMcpClient", client =>
@@ -188,27 +189,44 @@ app.MapPost("/api/gemini/generate", async (
     });
 });
 
-// Автономный диалог с AI-агентом: нейросеть понимает запрос и сама дергает нужные MCP
-app.MapPost("/api/agent/chat", async (
+// Список доступных пользователей и их RBAC-ролей для переключателя в Web UI
+app.MapGet("/api/agent/users", async (IFotoprintRepository repo, CancellationToken ct) =>
+{
+    var employees = await repo.GetAllEmployeesAsync(ct);
+    var users = new List<object>();
+
+    foreach (var emp in employees.Where(e => e.TelegramId.HasValue))
+    {
+        var secCtx = await repo.GetEmployeeSecurityContextAsync(emp.TelegramId!.Value, ct);
+        users.Add(new
+        {
+            employee_id = emp.Id,
+            telegram_id = emp.TelegramId.Value,
+            full_name = secCtx?.FullName ?? $"{emp.LastName} {emp.FirstName}".Trim(),
+            department = emp.Department,
+            position = emp.Position,
+            roles = secCtx?.Roles ?? new List<string>(),
+            permissions = secCtx?.Permissions ?? new List<string>()
+        });
+    }
+
+    return Results.Ok(new { users });
+});
+
+// Внутренний вызов AI-агента из оркестратора n8n (после проверки прав и роутинга в n8n)
+app.MapPost("/api/agent/execute", async (
     [FromBody] AgentChatRequest req,
     IFotoprintAgent agent,
     ILangfuseClient langfuse,
-    FotoprintConfig config) =>
+    CancellationToken ct) =>
 {
-    var traceId = langfuse.GenerateTraceId();
-    await langfuse.CreateTraceAsync(
-        traceId: traceId,
-        name: "web-agent-chat",
-        userId: req.TelegramId.ToString(),
-        sessionId: $"web-chat-{req.ChatId}",
-        metadata: new { telegram_id = req.TelegramId, chat_id = req.ChatId, message = req.Message },
-        tags: new[] { "channel:web-chat", $"provider:{config.Llm.Provider}" });
-
+    var traceId = !string.IsNullOrWhiteSpace(req.TraceId) ? req.TraceId : langfuse.GenerateTraceId();
     var response = await agent.ProcessMessageAsync(
         telegramId: req.TelegramId,
         chatId: req.ChatId,
         messageText: req.Message,
-        traceId: traceId);
+        traceId: traceId,
+        ct: ct);
 
     return Results.Ok(new
     {
@@ -219,6 +237,163 @@ app.MapPost("/api/agent/chat", async (
         is_success = response.IsSuccess,
         trace_id = traceId
     });
+});
+
+// Диалог из Web UI: трейс + контекст -> оркестратор n8n (fotoprint-chat) -> AI-агент -> ответ
+app.MapPost("/api/agent/chat", async (
+    [FromBody] AgentChatRequest req,
+    IFotoprintRepository repo,
+    IHttpClientFactory httpFactory,
+    IContextSwitchDetector switchDetector,
+    ILlmLoadBalancer loadBalancer,
+    IRollbackManager rollbackManager,
+    ILangfuseClient langfuse,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    var masterId = await repo.ResolveMasterIdByMessengerAsync("telegram", req.TelegramId.ToString(), ct);
+
+    string effectiveSessionId = $"web-chat-{req.ChatId}";
+    bool isContextSwitched = false;
+    string branch = "general_chat";
+    string switchReason = "Новый веб-диалог";
+
+    if (masterId.HasValue)
+    {
+        var activeSession = await repo.GetOrCreateActiveSessionByMasterIdAsync(masterId.Value, req.ChatId, "web", ct);
+        var recentMsgs = await repo.GetMessagesBySessionIdAsync(activeSession.Id, limit: config.ContextSwitch.MaxHistoryMessages, ct: ct);
+        var switchResult = await switchDetector.DetectSwitchAsync(recentMsgs, req.Message, traceId, ct);
+
+        isContextSwitched = switchResult.IsSwitched;
+        branch = switchResult.SuggestedBranch;
+        switchReason = switchResult.Reason;
+
+        if (switchResult.IsSwitched)
+        {
+            activeSession = await repo.SwitchToNewSessionAsync(activeSession.Id, masterId.Value, req.ChatId, branch, "web", ct);
+        }
+
+        effectiveSessionId = activeSession.Id.ToString();
+
+        await repo.SaveMessageToSessionAsync(
+            sessionId: activeSession.Id,
+            masterId: masterId.Value,
+            role: "user",
+            content: req.Message,
+            isFrozen: false,
+            metadata: new { trace_id = traceId, branch, is_context_switched = isContextSwitched },
+            ct: ct);
+    }
+
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "web-agent-chat",
+        userId: req.TelegramId.ToString(),
+        sessionId: effectiveSessionId,
+        metadata: new { telegram_id = req.TelegramId, chat_id = req.ChatId, branch, is_context_switched = isContextSwitched, message = req.Message },
+        tags: new[] { "channel:web-chat", "orchestrator:n8n", $"branch:{branch}", $"provider:{config.Llm.Provider}" },
+        ct: ct);
+
+    var n8nPayload = new
+    {
+        trace_id = traceId,
+        master_id = masterId,
+        session_id = effectiveSessionId,
+        is_context_switched = isContextSwitched,
+        branch,
+        switch_reason = switchReason,
+        chat_id = req.ChatId,
+        user_id = req.TelegramId,
+        channel = "web-chat",
+        text = req.Message
+    };
+
+    var n8nCallResult = await loadBalancer.ScheduleAsync(
+        taskName: "WebChatToN8n",
+        work: async lbToken =>
+        {
+            return await rollbackManager.ExecuteWithRollbackAsync<(bool Forbidden, JsonElement Body)>(
+                nodeName: "N8n:WebChat",
+                action: async (attempt, retryToken) =>
+                {
+                    var n8nClient = httpFactory.CreateClient("N8nClient");
+                    n8nClient.DefaultRequestHeaders.Remove("X-Trace-Id");
+                    n8nClient.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
+                    n8nClient.DefaultRequestHeaders.Remove("X-Telegram-Id");
+                    n8nClient.DefaultRequestHeaders.Add("X-Telegram-Id", req.TelegramId.ToString());
+                    n8nClient.DefaultRequestHeaders.Remove("X-Internal-Service-Key");
+                    n8nClient.DefaultRequestHeaders.Add("X-Internal-Service-Key", config.Security.InternalServiceSecretKey);
+
+                    var resp = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, retryToken);
+                    if (resp.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        var errJson = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
+                        return (true, errJson);
+                    }
+
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        throw new NodeTransientException($"n8n вернул код {(int)resp.StatusCode}: {resp.ReasonPhrase}", (int)resp.StatusCode);
+                    }
+
+                    var okJson = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
+                    return (false, okJson);
+                },
+                compensatingRollbackAction: (ex, token) => Task.CompletedTask,
+                traceId: traceId,
+                ct: lbToken);
+        },
+        traceId: traceId,
+        ct: ct);
+
+    if (!n8nCallResult.IsSuccess)
+    {
+        return Results.Ok(new
+        {
+            answer = $"⚠️ Ошибка оркестратора n8n: {n8nCallResult.ErrorMessage}",
+            tools_invoked = Array.Empty<string>(),
+            total_llm_calls = 0,
+            total_tokens = 0,
+            is_success = false,
+            trace_id = traceId,
+            orchestrator = "n8n",
+            branch
+        });
+    }
+
+    var (forbidden, body) = n8nCallResult.Value;
+    if (forbidden)
+    {
+        var denyMsg = body.TryGetProperty("message", out var msgProp)
+            ? msgProp.GetString()
+            : "🚫 Доступ запрещен оркестратором n8n.";
+        return Results.Ok(new
+        {
+            answer = denyMsg,
+            tools_invoked = Array.Empty<string>(),
+            total_llm_calls = 0,
+            total_tokens = 0,
+            is_success = false,
+            trace_id = traceId,
+            orchestrator = "n8n",
+            branch = "auth_rejected"
+        });
+    }
+
+    if (masterId.HasValue && Guid.TryParse(effectiveSessionId, out var sid) && body.TryGetProperty("answer", out var ansProp))
+    {
+        await repo.SaveMessageToSessionAsync(
+            sessionId: sid,
+            masterId: masterId.Value,
+            role: "assistant",
+            content: ansProp.GetString() ?? "",
+            isFrozen: false,
+            metadata: new { trace_id = traceId, orchestrator = "n8n", branch },
+            ct: ct);
+    }
+
+    return Results.Ok(body);
 });
 
 // ============================================================================
@@ -854,4 +1029,4 @@ public record ContextSwitchRequest(List<ContextMessageDto>? History, string Curr
 public record ContextMessageDto(string Role, string Content);
 public record RagSearchRequest(string Query, List<string> UserAccessGroups, int TopK = 5);
 public record GeminiPromptRequest(string Prompt, string? SystemInstruction = null, double? Temperature = null, int? MaxOutputTokens = null);
-public record AgentChatRequest(long TelegramId, long ChatId, string Message);
+public record AgentChatRequest(long TelegramId, long ChatId, string Message, string? TraceId = null);
