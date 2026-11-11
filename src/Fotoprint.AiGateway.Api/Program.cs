@@ -104,7 +104,6 @@ builder.Services.AddSingleton<IFotoprintAgent, FotoprintAiAgent>();
 // Аудиотранскрибация (Tsukiko Metal GPU + Gemini Fallback) и MoM-анализатор протоколов совещаний
 builder.Services.AddHttpClient<TsukikoTranscriber>();
 builder.Services.AddHttpClient<GeminiAudioTranscriber>();
-builder.Services.AddSingleton<IAudioTranscriber, CompositeAudioTranscriber>();
 builder.Services.AddSingleton<IAudioTranscriber>(sp => new CompositeAudioTranscriber(
     sp.GetRequiredService<TsukikoTranscriber>(),
     sp.GetRequiredService<GeminiAudioTranscriber>(),
