@@ -375,9 +375,9 @@ public class AudioTranscriptionTests
             Text: llmJson,
             FinishReason: "STOP",
             PromptTokens: 120,
-            CompletionTokens: 180,
+            CandidatesTokens: 180,
             TotalTokens: 300,
-            AttemptCount: 1,
+            AttemptsMade: 1,
             ErrorMessage: null));
 
         var analyzer = new MeetingTranscriptAnalyzer(fakeGemini, new FotoprintConfig(), null, NullLogger<MeetingTranscriptAnalyzer>.Instance);
