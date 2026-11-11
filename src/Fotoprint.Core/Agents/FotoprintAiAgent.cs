@@ -73,14 +73,23 @@ public class FotoprintAiAgent : IFotoprintAgent
         int totalTokens = 0;
 
         // 1. Получаем контекст безопасности сотрудника (RBAC)
-        var secContext = await _repo.GetEmployeeSecurityContextAsync(telegramId, ct);
+        // Fail-closed: при недоступности БД сотрудник остаётся в роли Guest (EmployeeId = 0), без повышенных привилегий.
+        EmployeeSecurityContext? secContext = null;
+        try
+        {
+            secContext = await _repo.GetEmployeeSecurityContextAsync(telegramId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogWarning(ex, "[FotoprintAiAgent] БД недоступна при чтении RBAC-контекста, применяем fail-closed Guest.");
+        }
         var rolesStr = secContext != null ? string.Join(", ", secContext.Roles) : "Guest";
         var deptStr = secContext?.Department ?? "Не указан";
         var userName = secContext?.FullName ?? $"User_{telegramId}";
 
         var systemInstruction = $"""
             Ты — корпоративный AI-ассистент типографии «Фотопринт» (Fotoprint Copilot).
-            Ты общаешься с сотрудником: {userName} (ID сотрудника: {secContext?.EmployeeId ?? 1}, Отдел: {deptStr}, Должность: {secContext?.Position ?? "Сотрудник"}, Роли: [{rolesStr}]).
+            Ты общаешься с сотрудником: {userName} (ID сотрудника: {secContext?.EmployeeId ?? 0}, Отдел: {deptStr}, Должность: {secContext?.Position ?? "Сотрудник"}, Роли: [{rolesStr}]).
 
             Твоя цель: понимать любые свободные запросы пользователя и самостоятельно выбирать подходящие MCP-инструменты:
             1. Заказы и тиражи (1С) -> вызови 'get_order_status'
@@ -242,7 +251,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             }
 
             // Параллельно выполняем все выбранные MCP-инструменты этого шага
-            var empId = secContext?.EmployeeId ?? 1;
+            var empId = secContext?.EmployeeId ?? 0;
             var userAccessGroups = (secContext?.AccessGroups is { Count: > 0 } ag)
                 ? ag.Union(new[] { "all" }, StringComparer.OrdinalIgnoreCase).ToList()
                 : new List<string> { "all" };

@@ -76,7 +76,7 @@ load_balancer:
   # Размер буфера burst для Nginx (сетевой уровень)
   nginx_burst_size: 40
   # Максимальное время нахождения запроса в очереди ожидания до отмены (мс)
-  queue_timeout_ms: 30000
+  queue_timeout_ms: 60000
   # Включение приоритетной очереди для руководства (C-Level / Director)
   enable_executive_priority: true
 

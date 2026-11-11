@@ -17,6 +17,8 @@ public class FotoprintAiAgentTests
     {
         private int _callStep = 0;
         private readonly bool _triggerTool;
+        public string? LastSystemInstruction { get; private set; }
+        public List<object>? LastContents { get; private set; }
 
         public FakeGeminiClient(bool triggerTool = true)
         {
@@ -31,6 +33,8 @@ public class FotoprintAiAgentTests
         public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
         {
             _callStep++;
+            LastSystemInstruction = systemInstruction;
+            LastContents = contents;
 
             if (!_triggerTool)
             {
@@ -84,8 +88,19 @@ public class FotoprintAiAgentTests
 
     private class FakeFotoprintRepository : IFotoprintRepository
     {
+        private readonly bool _throwOnSecurityContext;
+
+        public FakeFotoprintRepository(bool throwOnSecurityContext = false)
+        {
+            _throwOnSecurityContext = throwOnSecurityContext;
+        }
         public Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default)
         {
+            if (_throwOnSecurityContext)
+            {
+                throw new InvalidOperationException("PostgreSQL connection refused: localhost:5432");
+            }
+
             return Task.FromResult<EmployeeSecurityContext?>(new EmployeeSecurityContext
             {
                 EmployeeId = 1,
@@ -151,16 +166,33 @@ public class FotoprintAiAgentTests
 
     private class FakeHttpClientFactory : IHttpClientFactory
     {
+        private readonly bool _simulateNetworkError;
+
+        public FakeHttpClientFactory(bool simulateNetworkError = false)
+        {
+            _simulateNetworkError = simulateNetworkError;
+        }
         public HttpClient CreateClient(string name)
         {
-            var handler = new FakeHttpHandler();
+            var handler = new FakeHttpHandler(_simulateNetworkError);
             return new HttpClient(handler);
         }
 
         private class FakeHttpHandler : HttpMessageHandler
         {
+            private readonly bool _simulateNetworkError;
+
+            public FakeHttpHandler(bool simulateNetworkError = false)
+            {
+                _simulateNetworkError = simulateNetworkError;
+            }
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
+                if (_simulateNetworkError)
+                {
+                    throw new HttpRequestException("Connection refused to MCP service");
+                }
+
                 var kpiData = new
                 {
                     department = "Офсетный цех",
@@ -264,6 +296,54 @@ public class FotoprintAiAgentTests
         }
 
         public GeminiCallStats GetStats() => new(1, 1, 60, 59, 1.0, DateTime.UtcNow, 0);
+    }
+
+    [Fact]
+    public async Task Agent_Gracefully_Falls_Back_When_Database_Is_Offline()
+    {
+        var gemini = new FakeGeminiClient(triggerTool: false);
+        var repo = new FakeFotoprintRepository(throwOnSecurityContext: true);
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(
+            telegramId: 99999,
+            chatId: 88888,
+            messageText: "Привет!");
+
+        Assert.True(res.IsSuccess);
+        Assert.NotNull(res.AnswerText);
+        Assert.NotNull(gemini.LastSystemInstruction);
+        Assert.Contains("Роли: [Guest]", gemini.LastSystemInstruction);
+        Assert.Contains("ID сотрудника: 0", gemini.LastSystemInstruction);
+        Assert.DoesNotContain("admin", gemini.LastSystemInstruction, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Director", gemini.LastSystemInstruction, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("operator", gemini.LastSystemInstruction, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Agent_Gracefully_Handles_Offline_MCP_Service()
+    {
+        var gemini = new FakeGeminiClient(triggerTool: true);
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory(simulateNetworkError: true);
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(
+            telegramId: 100001,
+            chatId: 55555,
+            messageText: "Покажи выработку цехов");
+
+        Assert.True(res.IsSuccess);
+        Assert.Contains("get_production_kpis", res.ToolsInvoked);
+
+        var serializedContents = JsonSerializer.Serialize(gemini.LastContents);
+        Assert.Contains("Connection refused to MCP service", serializedContents);
+        Assert.DoesNotContain("mock_offline", serializedContents);
     }
 }
 

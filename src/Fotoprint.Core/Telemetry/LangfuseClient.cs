@@ -17,9 +17,18 @@ public interface ILangfuseClient
         string? sessionId = null,
         object? metadata = null,
         string[]? tags = null,
-        object? input = null,
-        object? output = null,
         CancellationToken ct = default);
+
+    Task CreateTraceAsync(
+        string traceId,
+        string name,
+        string? userId,
+        string? sessionId,
+        object? metadata,
+        string[]? tags,
+        object? input,
+        object? output = null,
+        CancellationToken ct = default) => CreateTraceAsync(traceId, name, userId, sessionId, metadata, tags, ct);
 
     Task CreateSpanAsync(
         string traceId,
@@ -121,14 +130,24 @@ public class LangfuseClient : ILangfuseClient
         return Math.Round(promptCost + completionCost + cachedCost, 6);
     }
 
-    public async Task CreateTraceAsync(
+    public Task CreateTraceAsync(
         string traceId,
         string name,
         string? userId = null,
         string? sessionId = null,
         object? metadata = null,
         string[]? tags = null,
-        object? input = null,
+        CancellationToken ct = default)
+        => CreateTraceAsync(traceId, name, userId, sessionId, metadata, tags, input: null, output: null, ct: ct);
+
+    public async Task CreateTraceAsync(
+        string traceId,
+        string name,
+        string? userId,
+        string? sessionId,
+        object? metadata,
+        string[]? tags,
+        object? input,
         object? output = null,
         CancellationToken ct = default)
     {
