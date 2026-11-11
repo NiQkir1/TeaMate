@@ -102,20 +102,24 @@ public class ContextSwitchDetector : IContextSwitchDetector
             ТЕКУЩЕЕ НОВОЕ СООБЩЕНИЕ:
             "{{currentMessage}}"
 
-            Вопрос: сменил ли пользователь контекст/тему диалога по отношению к предыдущей сессии?
-            Ответь строго в формате JSON:
+            Вопрос: сменил ли пользователь глобальную тему диалога (переключился ли на совсем другой, не связанный с историей предмет разговора)?
+            ВАЖНО: Если новое сообщение относится к той же ситуации, тому же поставщику, заказу, клиенту или проблеме (например, уточняет детали, последствия, письма, сроки или статус решения той же проблемы) — это НЕ смена темы (`"context_switched": false`).
+            Смена темы (`"context_switched": true`) — только когда предмет разговора стал полностью другим и не связан с предыдущими сообщениями.
+
+            Ответь строго в формате JSON (сначала напиши рассуждение в reason, затем boolean в context_switched):
             {
-              "context_switched": true,
-              "suggested_branch": "meeting_prep" | "live_meeting_notes" | "meeting_summary" | "task_management" | "executive_report" | "doc_search" | "general_chat",
-              "reason": "краткая причина"
+              "reason": "краткое объяснение, связан ли вопрос с предыдущей темой",
+              "context_switched": false,
+              "suggested_branch": "meeting_prep" | "live_meeting_notes" | "meeting_summary" | "task_management" | "executive_report" | "doc_search" | "general_chat"
             }
             """;
 
         var systemInstruction = """
             Ты — высокоточный классификатор смены контекста диалогов типографии Fotoprint.
             Твоя цель — определить, сменил ли пользователь тему разговора по отношению к предыдущей сессии.
-            Если пользователь переключился на совершенно другую тему или задачу (например, обсуждали брак и технологию печати, а он попросил поставить задачу в Битрикс или назначить встречу) — context_switched = true.
-            Если сообщение развивает, уточняет или продолжает предыдущий диалог — context_switched = false.
+            Правила:
+            1. Если сообщение развивает, уточняет или продолжает предыдущий диалог, задает вопрос о последствиях/деталях/участниках той же ситуации или использует местоимения («они», «он», «там», «по нему», «этот») — context_switched = false.
+            2. Если пользователь переключился на совершенно другую тему, другой отдел или несвязанную задачу (например, обсуждали технологию печати или поставку материалов, а он спросил про корпоратив, кадровый отпуск или попросил поставить несвязанную задачу в Битрикс) — context_switched = true.
             Всегда отвечай максимально кратко и строго валидным JSON без markdown-обертки.
             """;
 
@@ -263,16 +267,44 @@ public class ContextSwitchDetector : IContextSwitchDetector
             return false;
         }
 
-        // Определяем домен предыдущего сообщения пользователя (или последнего сообщения в сессии)
+        // Определяем домен и подтему предыдущего сообщения пользователя (или последнего сообщения в сессии)
         var lastUserMsg = activeHistory.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content
                           ?? activeHistory[^1].Content;
-        var prevBranch = ClassifyDomainBranch(lastUserMsg) ?? ClassifyDomainBranch(activeHistory[^1].Content);
-        var currentBranch = ClassifyDomainBranch(currentMessage);
+        var allHistoryText = string.Join(" ", activeHistory.Select(m => m.Content));
 
-        // 1. Явная фраза-продолжение ("а для ...", "а по нему", "подробнее", "еще", "а какие там...") без жесткой смены домена
-        if (IsContinuationPhrase(currentMessage))
+        var (prevBranch, prevSubTopic) = ClassifyTopicAndBranch(lastUserMsg);
+        if (prevBranch == null)
         {
-            if (currentBranch == null || prevBranch == null || string.Equals(currentBranch, prevBranch, StringComparison.OrdinalIgnoreCase))
+            (prevBranch, prevSubTopic) = ClassifyTopicAndBranch(activeHistory[^1].Content);
+        }
+
+        var (currentBranch, currentSubTopic) = ClassifyTopicAndBranch(currentMessage);
+
+        // 0. Явный маркер смены темы ("другой вопрос", "сменим тему", "теперь давай про", "не по теме", "забудь")
+        if (HasExplicitSwitchMarker(currentMessage) && currentBranch != null)
+        {
+            result = new ContextSwitchResult(
+                IsSwitched: true,
+                SuggestedBranch: currentBranch,
+                Reason: $"Пользователь явно сменил тему на '{currentBranch}'");
+            return true;
+        }
+
+        // Проверяем, есть ли общий объект (номер заказа, оборудование, клиент) между историей и новым сообщением
+        bool sharesSpecificEntity = SharesEntityWithHistory(allHistoryText, currentMessage);
+        bool isContinuation = IsContinuationPhrase(currentMessage);
+        bool isImperativeSwitchCommand = currentMessage.Contains("поставь задач", StringComparison.OrdinalIgnoreCase) ||
+                                         currentMessage.Contains("создай задач", StringComparison.OrdinalIgnoreCase) ||
+                                         currentMessage.Contains("назначь встреч", StringComparison.OrdinalIgnoreCase) ||
+                                         currentMessage.Contains("сформируй итоговый протокол", StringComparison.OrdinalIgnoreCase) ||
+                                         currentMessage.Contains("сформируй протокол", StringComparison.OrdinalIgnoreCase);
+
+        // 1. Явная фраза-продолжение ("а для ...", "а по нему", "а кто еще", "и какой...", "а покажи еще...") без директивной смены задачи
+        if (isContinuation && !isImperativeSwitchCommand)
+        {
+            if (currentBranch == null || prevBranch == null ||
+                string.Equals(currentBranch, prevBranch, StringComparison.OrdinalIgnoreCase) ||
+                sharesSpecificEntity)
             {
                 var targetBranch = currentBranch ?? prevBranch ?? "doc_search";
                 result = new ContextSwitchResult(
@@ -283,11 +315,26 @@ public class ContextSwitchDetector : IContextSwitchDetector
             }
         }
 
-        // 2. Если домен текущего сообщения четко определен
+        // 2. Если домен текущего сообщения и предыдущего сообщения определены
         if (currentBranch != null && prevBranch != null)
         {
+            // 2a. Тот же самый домен
             if (string.Equals(currentBranch, prevBranch, StringComparison.OrdinalIgnoreCase))
             {
+                // Проверяем, не переключился ли пользователь внутри одного домена на совершенно другую подтему
+                // (например, в doc_search: обсуждали краску/печатные машины, а спросили про оплату сверхурочных/отпуска или скидки клиентам)
+                if (prevSubTopic != null && currentSubTopic != null &&
+                    !string.Equals(prevSubTopic, currentSubTopic, StringComparison.OrdinalIgnoreCase) &&
+                    !isContinuation && !sharesSpecificEntity &&
+                    currentBranch == "doc_search")
+                {
+                    result = new ContextSwitchResult(
+                        IsSwitched: true,
+                        SuggestedBranch: currentBranch,
+                        Reason: $"Пользователь сменил тему внутри базы знаний с '{prevSubTopic}' на '{currentSubTopic}'");
+                    return true;
+                }
+
                 result = new ContextSwitchResult(
                     IsSwitched: false,
                     SuggestedBranch: currentBranch,
@@ -295,37 +342,61 @@ public class ContextSwitchDetector : IContextSwitchDetector
                 return true;
             }
 
-            // Если это явная команда на постановку задачи / встречу / другой модуль — фиксируем смену темы,
-            // но для обычных вопросов по заказам/КПИ/документам внутри рабочего диалога сохраняем сессию
-            bool hardSwitch = currentBranch is "task_management" or "meeting_prep" or "meeting_summary"
-                              && currentMessage.Contains("поставь", StringComparison.OrdinalIgnoreCase)
-                              || currentMessage.Contains("создай задач", StringComparison.OrdinalIgnoreCase)
-                              || currentMessage.Contains("назначь встреч", StringComparison.OrdinalIgnoreCase);
-
-            if (hardSwitch)
+            // 2b. Домены разные, но вопрос привязан к тому же объекту/заказу (например, заказ 44102 в 1С -> задачи по заказу 44102 в Битрикс)
+            if (sharesSpecificEntity && !isImperativeSwitchCommand)
             {
                 result = new ContextSwitchResult(
-                    IsSwitched: true,
+                    IsSwitched: false,
                     SuggestedBranch: currentBranch,
-                    Reason: $"Пользователь резко сменил тему с '{prevBranch}' на '{currentBranch}'");
+                    Reason: $"Пользователь продолжает обсуждение того же объекта в ветке '{currentBranch}'");
                 return true;
             }
 
-            // Мягкий переход внутри рабочего ассистента (например, проверил заказ 44102 и спросил про задачи) — не рвем контекст сессии!
+            // 2c. Домены разные и нет связующего объекта -> произошла смена темы диалога!
             result = new ContextSwitchResult(
-                IsSwitched: false,
+                IsSwitched: true,
                 SuggestedBranch: currentBranch,
-                Reason: $"Пользователь продолжает обсуждение в рабочей сессии (переход к '{currentBranch}')");
+                Reason: $"Пользователь резко сменил тему с '{prevBranch}' на '{currentBranch}'");
             return true;
         }
 
-        if (currentBranch != null)
+        return false;
+    }
+
+    private static bool HasExplicitSwitchMarker(string text)
+    {
+        var t = text.Trim().ToLowerInvariant();
+        return t.Contains("другой вопрос") ||
+               t.Contains("сменим тему") ||
+               t.Contains("другая тема") ||
+               t.Contains("теперь про ") ||
+               t.Contains("теперь давай") ||
+               t.Contains("не по теме") ||
+               t.Contains("кстати, ");
+    }
+
+    private static bool SharesEntityWithHistory(string historyText, string currentMessage)
+    {
+        if (string.IsNullOrWhiteSpace(historyText) || string.IsNullOrWhiteSpace(currentMessage))
+            return false;
+
+        var h = historyText.ToLowerInvariant();
+        var c = currentMessage.ToLowerInvariant();
+
+        // Проверяем общие номера заказов/задач (4+ цифры подряд, например 44102, 2051)
+        var digitsMatch = System.Text.RegularExpressions.Regex.Matches(c, @"\b\d{4,6}\b");
+        foreach (System.Text.RegularExpressions.Match m in digitsMatch)
         {
-            result = new ContextSwitchResult(
-                IsSwitched: false,
-                SuggestedBranch: currentBranch,
-                Reason: $"Пользователь продолжает обсуждение ('{currentBranch}')");
-            return true;
+            if (h.Contains(m.Value, StringComparison.Ordinal))
+                return true;
+        }
+
+        // Проверяем сквозные именованные сущности (клиенты, печатные машины)
+        string[] namedEntities = ["heidelberg", "speedmaster", "альфа-маркет", "альфа маркет", "гринвей", "тр-04"];
+        foreach (var entity in namedEntities)
+        {
+            if (c.Contains(entity, StringComparison.Ordinal) && h.Contains(entity, StringComparison.Ordinal))
+                return true;
         }
 
         return false;
@@ -334,6 +405,8 @@ public class ContextSwitchDetector : IContextSwitchDetector
     private static bool IsContinuationPhrase(string text)
     {
         var t = text.Trim().ToLowerInvariant();
+        if (HasExplicitSwitchMarker(t)) return false;
+
         return t.StartsWith("а ") ||
                t.StartsWith("и ") ||
                t.StartsWith("ну ") ||
@@ -344,37 +417,57 @@ public class ContextSwitchDetector : IContextSwitchDetector
                t.StartsWith("а что ") ||
                t.StartsWith("а как") ||
                t.StartsWith("а для ") ||
-               t.StartsWith("а по ");
+               t.StartsWith("а по ") ||
+               t.StartsWith("а кто ") ||
+               t.StartsWith("а покажи") ||
+               t.StartsWith("еще ") ||
+               t.StartsWith("ещё ") ||
+               t.Contains("по нему") ||
+               t.Contains("по этому") ||
+               t.Contains("на этой встрече") ||
+               t.Contains("там будет");
     }
 
-    private static string? ClassifyDomainBranch(string? text)
+    private static string? ClassifyDomainBranch(string? text) => ClassifyTopicAndBranch(text).Branch;
+
+    private static (string? Branch, string? SubTopic) ClassifyTopicAndBranch(string? text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (string.IsNullOrWhiteSpace(text)) return (null, null);
         var t = text.ToLowerInvariant();
 
-        if (t.Contains("задач") || t.Contains("битрикс") || t.Contains("bitrix") || t.Contains("поручен") || t.Contains("сделк") || t.Contains("crm") || t.Contains("дедлайн"))
-            return "task_management";
+        if (t.Contains("протокол") || t.Contains("итоги встреч") || t.Contains("резюме встреч") || t.Contains("резюме совещан"))
+            return ("meeting_summary", "mom");
 
-        if (t.Contains("протокол") || t.Contains("итоги встреч") || t.Contains("резюме встреч"))
-            return "meeting_summary";
+        if (t.Contains("задач") || t.Contains("битрикс") || t.Contains("bitrix") || t.Contains("поручен") || t.Contains("дедлайн"))
+            return ("task_management", "tasks");
+
+        if (t.Contains("сделк") || t.Contains("crm") || t.Contains("лид"))
+            return ("task_management", "crm");
 
         if (t.Contains("встреч") || t.Contains("планерк") || t.Contains("совещан") || t.Contains("календар") || t.Contains("расписан"))
-            return "meeting_prep";
+            return ("meeting_prep", "calendar");
+
+        if (t.Contains("сверхуроч") || t.Contains("трудов") || t.Contains("распоряд") || t.Contains("отпуск") || t.Contains("пвтр") || t.Contains("оплат"))
+            return ("doc_search", "hr_labor");
+
+        if (t.Contains("скидк") || t.Contains("коммерческ") || t.Contains("предоплат") || t.Contains("наценк") || t.Contains("прайс"))
+            return ("doc_search", "commercial_policy");
 
         if (t.Contains("регламент") || t.Contains("heidelberg") || t.Contains("краск") || t.Contains("бумаг") ||
-            t.Contains("плотн") || t.Contains("раг") || t.Contains("rag") || t.Contains("база знаний") ||
-            t.Contains("базе знаний") || t.Contains("скидк") || t.Contains("сверхуроч") || t.Contains("отход") ||
-            t.Contains("документ") || t.Contains("правил"))
-            return "doc_search";
+            t.Contains("плотн") || t.Contains("отход") || t.Contains("приладк") || t.Contains("техкарт"))
+            return ("doc_search", "tech_regulations");
+
+        if (t.Contains("раг") || t.Contains("rag") || t.Contains("база знаний") || t.Contains("базе знаний") || t.Contains("документ") || t.Contains("правил"))
+            return ("doc_search", "rag_catalog");
 
         if (t.Contains("выработк") || t.Contains("kpi") || t.Contains("кпи") || t.Contains("брак") ||
             t.Contains("оттиск") || t.Contains("загрузк") || t.Contains("сводк") || t.Contains("дайджест") ||
             t.Contains("заказ") || t.Contains("тираж") || t.Contains("44102") || t.Contains("1с") || t.Contains("1c") || t.Contains("офсет"))
-            return "executive_report";
+            return ("executive_report", "production_1c");
 
         if (t.Contains("привет") || t.Contains("здравствуй") || t.Contains("спасибо") || t.Contains("кто ты") || t.Contains("помощь"))
-            return "general_chat";
+            return ("general_chat", "greeting");
 
-        return null;
+        return (null, null);
     }
 }
