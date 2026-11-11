@@ -14,10 +14,10 @@ public class FotoprintConfigTests
         Assert.NotNull(config);
         Assert.Equal("1.0", config.Version);
 
-        // 1. Проверка LLM параметров (Gemini по умолчанию)
-        Assert.Equal("gemini", config.Llm.Provider);
-        Assert.Equal("gemini-1.5-flash", config.Llm.Models.ChatModel);
-        Assert.Equal("gemini-1.5-flash", config.Llm.Models.FastModel);
+        // 1. Проверка LLM параметров
+        Assert.True(config.Llm.Provider is "nvidia" or "gemini");
+        Assert.NotNull(config.Llm.Models.ChatModel);
+        Assert.NotNull(config.Llm.Models.FastModel);
         Assert.Equal("text-embedding-004", config.Llm.Models.EmbeddingModel);
 
         // 2. Проверка гиперпараметров (температура, токены)

@@ -10,11 +10,12 @@ services:
       - "${NGINX_PORT:-80}:80"
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/html:/usr/share/nginx/html:ro
     depends_on:
       - ai-gateway
       - n8n
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/nginx-health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/nginx-health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,7 +26,10 @@ services:
   # 1. PostgreSQL 16 + pgvector (Основная БД проекта + n8n + Langfuse)
   # =========================================================================
   postgres:
-    image: pgvector/pgvector:pg16
+    image: fotoprint-postgres:pg16
+    build:
+      context: .
+      dockerfile: infra/postgres/Dockerfile
     container_name: fotoprint-postgres
     restart: unless-stopped
     environment:
@@ -99,14 +103,16 @@ services:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_secret}
+      CLICKHOUSE_LISTEN_HOST: "0.0.0.0"
     ports:
       - "127.0.0.1:8123:8123"
       - "127.0.0.1:9000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - clickhouse_logs:/var/log/clickhouse-server
+      - ./infra/clickhouse/listen.xml:/etc/clickhouse-server/config.d/listen.xml:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -128,7 +134,7 @@ services:
       - fotoprint-net
 
   langfuse-minio:
-    image: minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
     container_name: fotoprint-langfuse-storage
     restart: unless-stopped
     entrypoint: sh
@@ -139,7 +145,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9090 ${MINIO_ROOT_USER:-minio} ${MINIO_ROOT_PASSWORD:-minio_secret_password} >/dev/null 2>&1 && mc ready local"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -229,6 +235,10 @@ services:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-fotoprint};Username=${POSTGRES_USER:-fotoprint};Password=${POSTGRES_PASSWORD:-fotoprint_secret}
       N8n__WebhookBaseUrl: http://n8n:5678/webhook
       Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-demo-bot-token}
+      LLM_PROVIDER: ${LLM_PROVIDER:-nvidia}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-nvidia/nemotron-3.5-super-vl-120b-a12b}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
       Langfuse__BaseUrl: http://langfuse-web:3000
@@ -240,7 +250,7 @@ services:
       McpUrls__Calendar: http://mcp-calendar:8084
     ports:
       # Доступен только с localhost разработчика, публичный доступ идет строго через Nginx
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${GATEWAY_PORT:-8088}:8080"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     networks:
@@ -338,6 +348,8 @@ services:
     image: bit2beat/bitrix24-mcp:latest
     container_name: fotoprint-bitrix24-ready-mcp
     restart: unless-stopped
+    profiles:
+      - optional
     environment:
       BITRIX24_WEBHOOK_URL: ${BITRIX24_WEBHOOK_URL:-https://fotoprint.bitrix24.ru/rest/1/webhook-key/}
       PORT: "8085"

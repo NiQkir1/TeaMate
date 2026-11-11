@@ -93,7 +93,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов.
             """;
 
-        // 2. Формируем список Function Declarations для Gemini
+        // 2. Формируем список Function Tools для LLM (OpenAI / NVIDIA формат)
         var toolDeclarations = GetAvailableTools();
 
         var contents = new List<object>
@@ -101,10 +101,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             new
             {
                 role = "user",
-                parts = new object[]
-                {
-                    new { text = messageText }
-                }
+                content = messageText
             }
         };
 
@@ -197,18 +194,22 @@ public class FotoprintAiAgent : IFotoprintAgent
                 ct: ct);
         }
 
-        // 5. Шаг 3: Передаем результат работы MCP обратно в модель
+        // 5. Шаг 3: Передаем вызов и результат работы MCP инструмента обратно в модель (OpenAI / NVIDIA формат)
+        var callId = $"call_{fnCall.Name}_{Guid.NewGuid():N}";
         contents.Add(new
         {
-            role = "model",
-            parts = new object[]
+            role = "assistant",
+            content = turn1.Text ?? "",
+            tool_calls = new object[]
             {
                 new
                 {
-                    functionCall = new
+                    id = callId,
+                    type = "function",
+                    function = new
                     {
                         name = fnCall.Name,
-                        args = fnCall.Arguments
+                        arguments = fnCall.Arguments.ToString()
                     }
                 }
             }
@@ -216,21 +217,10 @@ public class FotoprintAiAgent : IFotoprintAgent
 
         contents.Add(new
         {
-            role = "function",
-            parts = new object[]
-            {
-                new
-                {
-                    functionResponse = new
-                    {
-                        name = fnCall.Name,
-                        response = new
-                        {
-                            output = toolExecutionResult
-                        }
-                    }
-                }
-            }
+            role = "tool",
+            tool_call_id = callId,
+            name = fnCall.Name,
+            content = toolExecutionResult
         });
 
         // Второе обращение к Gemini: синтез обоснованного ответа на основе данных MCP
@@ -382,61 +372,71 @@ public class FotoprintAiAgent : IFotoprintAgent
         {
             new
             {
-                functionDeclarations = new object[]
+                type = "function",
+                function = new
                 {
-                    new
+                    name = "get_order_status",
+                    description = "Возвращает актуальный статус тиража/заказа из 1С:Управление нашей типографией (этап офсета, % готовности, дата отгрузки, наличие бумаги и краски).",
+                    parameters = new
                     {
-                        name = "get_order_status",
-                        description = "Возвращает актуальный статус тиража/заказа из 1С:Управление нашей типографией (этап офсета, % готовности, дата отгрузки, наличие бумаги и краски).",
-                        parameters = new
+                        type = "object",
+                        properties = new
                         {
-                            type = "OBJECT",
-                            properties = new
-                            {
-                                order_id = new { type = "STRING", description = "Номер заказа, например '44102' или 'ЗК-44102'" }
-                            },
-                            required = new[] { "order_id" }
-                        }
-                    },
-                    new
+                            order_id = new { type = "string", description = "Номер заказа, например '44102' или 'ЗК-44102'" }
+                        },
+                        required = new[] { "order_id" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "get_production_kpis",
+                    description = "Возвращает производственные показатели цехов из 1С: выработка оттисков, процент брака, загрузка офсетных машин Heidelberg, аварии и простои. Используется для управленческих отчетов директора.",
+                    parameters = new
                     {
-                        name = "get_production_kpis",
-                        description = "Возвращает производственные показатели цехов из 1С: выработка оттисков, процент брака, загрузка офсетных машин Heidelberg, аварии и простои. Используется для управленческих отчетов директора.",
-                        parameters = new
+                        type = "object",
+                        properties = new
                         {
-                            type = "OBJECT",
-                            properties = new
-                            {
-                                department = new { type = "STRING", description = "Цех (например, 'Офсетный цех', 'Цех цифровой печати')" }
-                            }
+                            department = new { type = "string", description = "Цех (например, 'Офсетный цех', 'Цех цифровой печати')" }
                         }
-                    },
-                    new
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "get_upcoming_meetings",
+                    description = "Возвращает список предстоящих совещаний, планерок, тем и участников из корпоративного календаря.",
+                    parameters = new
                     {
-                        name = "get_upcoming_meetings",
-                        description = "Возвращает список предстоящих совещаний, планерок, тем и участников из корпоративного календаря.",
-                        parameters = new
+                        type = "object",
+                        properties = new
                         {
-                            type = "OBJECT",
-                            properties = new
-                            {
-                                time_window_minutes = new { type = "INTEGER", description = "Окно поиска встреч в минутах (например 60)" }
-                            }
+                            time_window_minutes = new { type = "integer", description = "Окно поиска встреч в минутах (например 60)" }
                         }
-                    },
-                    new
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "search_typography_regulations",
+                    description = "Ищет в базе знаний технологические регламенты типографии, нормы брака оборудования Heidelberg, правила приемки макетов и техкарты.",
+                    parameters = new
                     {
-                        name = "search_typography_regulations",
-                        description = "Ищет в базе знаний технологические регламенты типографии, нормы брака оборудования Heidelberg, правила приемки макетов и техкарты.",
-                        parameters = new
+                        type = "object",
+                        properties = new
                         {
-                            type = "OBJECT",
-                            properties = new
-                            {
-                                query = new { type = "STRING", description = "Поисковый запрос по регламентам" }
-                            },
-                            required = new[] { "query" }
-                        }
+                            query = new { type = "string", description = "Поисковый запрос по регламентам" }
+                        },
+                        required = new[] { "query" }
                     }
                 }
             }

@@ -43,8 +43,11 @@ var lbOptions = new LoadBalancerOptions
 builder.Services.AddSingleton<ILlmLoadBalancer>(_ => new LlmLoadBalancer(lbOptions));
 builder.Services.AddSingleton<IRollbackManager, RollbackManager>();
 
-// Gemini API Client с автоматическим подсчетом 15 RPM и 3 повторами
-builder.Services.AddHttpClient<IGeminiClient, GeminiClient>();
+// NVIDIA NIM LLM Client с контролем нагрузки, повторами и трейсингом
+builder.Services.AddHttpClient<ILlmClient, NvidiaClient>();
+builder.Services.AddHttpClient<INvidiaClient, NvidiaClient>();
+builder.Services.AddHttpClient<IGeminiClient, NvidiaClient>();
+builder.Services.AddHttpClient<NvidiaClient>();
 
 // 2-й этап: Детекция смены контекста через LLM перед передачей в n8n
 builder.Services.AddSingleton<IContextSwitchDetector, ContextSwitchDetector>();
@@ -127,7 +130,29 @@ app.MapGet("/api/system/stats", (
     });
 });
 
-// Прямой вызов Gemini с контролем 15 RPM и 3 повторами
+// Прямой вызов NVIDIA LLM с контролем нагрузки и повторами
+app.MapPost("/api/llm/generate", async (
+    [FromBody] GeminiPromptRequest req,
+    INvidiaClient llm,
+    ILangfuseClient langfuse) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    var response = await llm.GenerateContentAsync(
+        prompt: req.Prompt,
+        systemInstruction: req.SystemInstruction,
+        temperature: req.Temperature,
+        maxOutputTokens: req.MaxOutputTokens,
+        traceId: traceId);
+
+    return Results.Ok(new
+    {
+        response,
+        llm_call_stats = llm.GetStats(),
+        trace_id = traceId
+    });
+});
+
+// Прямой вызов Gemini / NVIDIA (обратная совместимость)
 app.MapPost("/api/gemini/generate", async (
     [FromBody] GeminiPromptRequest req,
     IGeminiClient gemini,
