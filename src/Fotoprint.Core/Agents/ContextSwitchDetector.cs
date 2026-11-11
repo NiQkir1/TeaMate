@@ -106,20 +106,21 @@ public class ContextSwitchDetector : IContextSwitchDetector
             ВАЖНО: Если новое сообщение относится к той же ситуации, тому же поставщику, заказу, клиенту или проблеме (например, уточняет детали, последствия, письма, сроки или статус решения той же проблемы) — это НЕ смена темы (`"context_switched": false`).
             Смена темы (`"context_switched": true`) — только когда предмет разговора стал полностью другим и не связан с предыдущими сообщениями.
 
-            Ответь строго в формате JSON (сначала напиши рассуждение в reason, затем boolean в context_switched):
+            Ответь строго в формате JSON (сначала напиши рассуждение в reason, затем boolean true/false в context_switched):
             {
-              "reason": "краткое объяснение, связан ли вопрос с предыдущей темой",
-              "context_switched": false,
+              "reason": "краткое объяснение, связан ли вопрос с предыдущей темой пользователя",
+              "context_switched": true,
               "suggested_branch": "meeting_prep" | "live_meeting_notes" | "meeting_summary" | "task_management" | "executive_report" | "doc_search" | "general_chat"
             }
             """;
 
         var systemInstruction = """
             Ты — высокоточный классификатор смены контекста диалогов типографии Fotoprint.
-            Твоя цель — определить, сменил ли пользователь тему разговора по отношению к предыдущей сессии.
+            Твоя цель — определить, сменил ли пользователь тему разговора по отношению к своим предыдущим сообщениям в сессии.
             Правила:
-            1. Если сообщение развивает, уточняет или продолжает предыдущий диалог, задает вопрос о последствиях/деталях/участниках той же ситуации или использует местоимения («они», «он», «там», «по нему», «этот») — context_switched = false.
-            2. Если пользователь переключился на совершенно другую тему, другой отдел или несвязанную задачу (например, обсуждали технологию печати или поставку материалов, а он спросил про корпоратив, кадровый отпуск или попросил поставить несвязанную задачу в Битрикс) — context_switched = true.
+            1. Если новое сообщение развивает, уточняет или продолжает предыдущую тему пользователя (даже если тема бытовая/кулинарная, например обсуждали плов и уточнили про зирвак и рис, либо обсуждали поставку фольги и спросили про гарантийные письма от поставщика) — context_switched = false.
+            2. Если пользователь переключился на совершенно другую тему (например, обсуждали работу/заказы/регламенты/задачи/встречи, а он вдруг спросил про рецепт блюда, погоду, спорт, криптовалюту, сериалы, игры, анекдоты или корпоратив) — context_switched = true, suggested_branch = "general_chat".
+            3. Если предыдущий вопрос пользователя был на отвлеченную/нерабочую тему (флуд, аниме, кино, еда, спорт), а в новом сообщении он перешел к рабочему вопросу типографии (например, проверить заказ в 1С, регламент или задачу) — это ВСЕГДА смена темы: context_switched = true.
             Всегда отвечай максимально кратко и строго валидным JSON без markdown-обертки.
             """;
 
@@ -242,6 +243,19 @@ public class ContextSwitchDetector : IContextSwitchDetector
                 reason = rStr;
             }
 
+            // Защита от рассинхрона поля reason и boolean у быстрых LLM:
+            // если модель сама в рассуждении написала «пользователь переключился / сменил тему / в отличие от предыдущего», корректируем флаг
+            var rLower = reason.ToLowerInvariant();
+            if (!isSwitched &&
+                (rLower.Contains("пользователь переключился") ||
+                 rLower.Contains("переключился на") ||
+                 rLower.Contains("сменил тему") ||
+                 rLower.Contains("совершенно друг") ||
+                 rLower.Contains("в отличие от предыдущ")))
+            {
+                isSwitched = true;
+            }
+
             return new ContextSwitchResult(isSwitched, branch, reason);
         }
         catch
@@ -299,12 +313,15 @@ public class ContextSwitchDetector : IContextSwitchDetector
                                          currentMessage.Contains("сформируй итоговый протокол", StringComparison.OrdinalIgnoreCase) ||
                                          currentMessage.Contains("сформируй протокол", StringComparison.OrdinalIgnoreCase);
 
-        // 1. Явная фраза-продолжение ("а для ...", "а по нему", "а кто еще", "и какой...", "а покажи еще...") без директивной смены задачи
+        // 1. Явная фраза-продолжение ("а для ...", "а по нему", "а кто еще там", "и какой...") без директивной смены задачи
         if (isContinuation && !isImperativeSwitchCommand)
         {
-            if (currentBranch == null || prevBranch == null ||
-                string.Equals(currentBranch, prevBranch, StringComparison.OrdinalIgnoreCase) ||
-                sharesSpecificEntity)
+            bool sameKnownDomain = currentBranch != null && prevBranch != null &&
+                                   string.Equals(currentBranch, prevBranch, StringComparison.OrdinalIgnoreCase);
+            bool anaphoricFollowUpToKnownDomain = prevBranch != null && currentBranch == null &&
+                                                  HasStrongAnaphora(currentMessage);
+
+            if (sameKnownDomain || sharesSpecificEntity || anaphoricFollowUpToKnownDomain)
             {
                 var targetBranch = currentBranch ?? prevBranch ?? "doc_search";
                 result = new ContextSwitchResult(
@@ -426,6 +443,24 @@ public class ContextSwitchDetector : IContextSwitchDetector
                t.Contains("по этому") ||
                t.Contains("на этой встрече") ||
                t.Contains("там будет");
+    }
+
+    private static bool HasStrongAnaphora(string text)
+    {
+        var t = text.Trim().ToLowerInvariant();
+        if (HasExplicitSwitchMarker(t)) return false;
+
+        return t.Contains("по нему") ||
+               t.Contains("по ней") ||
+               t.Contains("по этому") ||
+               t.Contains("на этой ") ||
+               t.Contains("этой же ") ||
+               t.Contains("там будет") ||
+               t.Contains("кто еще там") ||
+               t.Contains("кто ещё там") ||
+               t.StartsWith("подробнее") ||
+               t.StartsWith("уточни") ||
+               t.StartsWith("расскажи подробнее");
     }
 
     private static string? ClassifyDomainBranch(string? text) => ClassifyTopicAndBranch(text).Branch;
