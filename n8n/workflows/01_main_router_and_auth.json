@@ -182,7 +182,7 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ telegramId: Number($('ContextSwitchDetector').item.json.user_id), chatId: Number($('ContextSwitchDetector').item.json.chat_id), message: $('ContextSwitchDetector').item.json.text, traceId: $('ContextSwitchDetector').item.json.trace_id }) }}",
         "options": {
-          "timeout": 120000
+          "timeout": 180000
         }
       },
       "name": "Execute Fotoprint AI Agent",

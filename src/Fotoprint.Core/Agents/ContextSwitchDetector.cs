@@ -106,7 +106,7 @@ public class ContextSwitchDetector : IContextSwitchDetector
         try
         {
             var startTime = DateTime.UtcNow;
-            var response = await _gemini.GenerateContentAsync(
+            var response = await _gemini.GenerateJsonNoThinkingAsync(
                 prompt: prompt,
                 systemInstruction: systemInstruction,
                 temperature: _config.ContextSwitch.Temperature,

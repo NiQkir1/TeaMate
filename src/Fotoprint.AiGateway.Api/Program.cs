@@ -74,7 +74,7 @@ builder.Services.AddSingleton<IFotoprintAgent, FotoprintAiAgent>();
 builder.Services.AddHttpClient("N8nClient", client =>
 {
     client.BaseAddress = new Uri(n8nWebhookBaseUrl.TrimEnd('/') + "/");
-    client.Timeout = TimeSpan.FromSeconds(120);
+    client.Timeout = TimeSpan.FromSeconds(180);
 });
 
 builder.Services.AddHttpClient("BitrixMcpClient", client =>

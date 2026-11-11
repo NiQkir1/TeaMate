@@ -220,5 +220,50 @@ public class FotoprintAiAgentTests
         Assert.Contains("485 000 оттисков", res.AnswerText);
         Assert.True(res.IsSuccess);
     }
+
+    [Fact]
+    public async Task Agent_Executes_Multiple_ToolCalls_In_Single_Turn()
+    {
+        var gemini = new BatchToolFakeGeminiClient();
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+        var res = await agent.ProcessMessageAsync(100001, 55555, "Заказ 44102, задачи и встречи");
+
+        Assert.True(res.IsSuccess);
+        Assert.Equal(2, res.TotalLlmCalls);
+        Assert.Equal(3, res.ToolsInvoked.Count);
+        Assert.Contains("get_order_status", res.ToolsInvoked);
+        Assert.Contains("get_user_tasks", res.ToolsInvoked);
+        Assert.Contains("get_upcoming_meetings", res.ToolsInvoked);
+        Assert.Contains("Сводка по всем 3 системам", res.AnswerText);
+    }
+
+    private class BatchToolFakeGeminiClient : IGeminiClient
+    {
+        private int _step;
+        public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => Task.FromResult(new GeminiGenerateResponse(true, "ok", "STOP", 1, 1, 2, 1, null));
+
+        public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            _step++;
+            if (_step == 1)
+            {
+                var calls = new List<GeminiFunctionCall>
+                {
+                    new("get_order_status", JsonSerializer.SerializeToElement(new { order_id = "44102" }), "c1"),
+                    new("get_user_tasks", JsonSerializer.SerializeToElement(new { employee_id = 1 }), "c2"),
+                    new("get_upcoming_meetings", JsonSerializer.SerializeToElement(new { hours_ahead = 24 }), "c3")
+                };
+                return Task.FromResult(new GeminiTurnResponse(true, null, calls[0], "tool_calls", 50, 20, 70, 1, null, calls));
+            }
+            return Task.FromResult(new GeminiTurnResponse(true, "Сводка по всем 3 системам готова.", null, "stop", 100, 30, 130, 1, null));
+        }
+
+        public GeminiCallStats GetStats() => new(1, 1, 60, 59, 1.0, DateTime.UtcNow, 0);
+    }
 }
 

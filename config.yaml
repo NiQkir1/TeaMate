@@ -149,8 +149,8 @@ telemetry:
     completion_token_cost_per_1k: 0.000300
     cached_token_cost_per_1k: 0.00001875
   evaluations:
-    # Фоновые проверки качества через LLM-as-a-Judge
-    enable_llm_as_judge: true
+    # Фоновые проверки качества через LLM-as-a-Judge (отключено для dev-режима ради экономии RPM/TPM)
+    enable_llm_as_judge: false
     sample_rate: 1.0
     evaluate_faithfulness: true
     evaluate_context_switch_accuracy: true

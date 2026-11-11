@@ -89,6 +89,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             4. Расписание и история планерок/совещаний (Календарь) -> вызови 'get_upcoming_meetings' или 'get_meeting_history'
             5. Технологические карты, нормы отходов, регламенты оборудования (База знаний) -> вызови 'search_typography_regulations'
 
+            Если запрос требует данных из нескольких систем (например, заказ в 1С, задачи в Битрикс24 и встречи в календаре), вызывай все нужные инструменты сразу за один шаг.
             Если запрос не требует инструментов (приветствие, уточнение), сразу дай вежливый и профессиональный ответ.
             Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов.
             """;
@@ -115,16 +116,28 @@ public class FotoprintAiAgent : IFotoprintAgent
         {
             llmCallsCount++;
             var startTurn = DateTime.UtcNow;
-            var turn = await _gemini.ChatTurnAsync(
-                contents: contents,
-                tools: turnIdx < maxLlmTurns ? toolDeclarations : null,
-                systemInstruction: systemInstruction,
-                traceId: traceId,
-                ct: ct);
+            var toolsForTurn = turnIdx < maxLlmTurns ? toolDeclarations : null;
+            var turn = toolsInvoked.Count > 0
+                ? await _gemini.ChatTurnNoThinkingAsync(
+                    contents: contents,
+                    tools: toolsForTurn,
+                    systemInstruction: systemInstruction,
+                    traceId: traceId,
+                    ct: ct)
+                : await _gemini.ChatTurnAsync(
+                    contents: contents,
+                    tools: toolsForTurn,
+                    systemInstruction: systemInstruction,
+                    traceId: traceId,
+                    ct: ct);
             var endTurn = DateTime.UtcNow;
 
             totalTokens += turn.TotalTokens;
             lastTurn = turn;
+
+            var calls = turn.FunctionCalls is { Count: > 0 } batchCalls
+                ? batchCalls
+                : (turn.FunctionCall != null ? new[] { turn.FunctionCall } : Array.Empty<GeminiFunctionCall>());
 
             if (_langfuse != null)
             {
@@ -138,8 +151,8 @@ public class FotoprintAiAgent : IFotoprintAgent
                     completionTokens: turn.CandidatesTokens,
                     totalTokens: turn.TotalTokens,
                     input: turnIdx == 1 ? (object)messageText : lastToolResult,
-                    output: turn.FunctionCall != null ? $"FunctionCall: {turn.FunctionCall.Name}" : turn.Text,
-                    metadata: new { turn = turnIdx, department = deptStr, role = rolesStr },
+                    output: calls.Count > 0 ? $"FunctionCalls: {string.Join(", ", calls.Select(c => c.Name))}" : turn.Text,
+                    metadata: new { turn = turnIdx, department = deptStr, role = rolesStr, tool_calls_count = calls.Count },
                     ct: ct);
             }
 
@@ -157,82 +170,96 @@ public class FotoprintAiAgent : IFotoprintAgent
             }
 
             // Если модель дала финальный текстовый ответ без вызова инструмента (или достигнут лимит шагов):
-            if (turn.FunctionCall == null || turnIdx == maxLlmTurns)
+            if (calls.Count == 0 || turnIdx == maxLlmTurns)
             {
-                finalAnswer = turn.FunctionCall == null
+                finalAnswer = calls.Count == 0
                     ? turn.Text
                     : "По вашему запросу данные в корпоративной системе не найдены или поиск не дал результатов. Попробуйте уточнить формулировку или номер заказа/встречи.";
                 break;
             }
 
-            var fnCall = turn.FunctionCall;
-            toolsInvoked.Add(fnCall.Name);
+            foreach (var fnCall in calls)
+            {
+                toolsInvoked.Add(fnCall.Name);
+                _logger?.LogInformation("🧠 [Agent] Модель выбрала инструмент '{ToolName}' (шаг {Turn}) с аргументами: {Args}",
+                    fnCall.Name, turnIdx, fnCall.Arguments.ToString());
 
-            _logger?.LogInformation("🧠 [Agent] Модель выбрала инструмент '{ToolName}' (шаг {Turn}) с аргументами: {Args}",
-                fnCall.Name, turnIdx, fnCall.Arguments.ToString());
+                if (_langfuse != null)
+                {
+                    _ = _langfuse.LogEventAsync(
+                        traceId,
+                        "Agent:ToolDecision",
+                        "DEFAULT",
+                        $"Модель автономно выбрала инструмент '{fnCall.Name}'",
+                        metadata: new { tool = fnCall.Name, turn = turnIdx, arguments = fnCall.Arguments.ToString() },
+                        ct: ct);
+                }
+            }
+
+            // Параллельно выполняем все выбранные MCP-инструменты этого шага
+            var empId = secContext?.EmployeeId ?? 1;
+            var execTasks = calls.Select(async fnCall =>
+            {
+                var callId = !string.IsNullOrWhiteSpace(fnCall.CallId)
+                    ? fnCall.CallId!
+                    : $"call_{fnCall.Name}_{Guid.NewGuid():N}";
+                var startSpan = DateTime.UtcNow;
+                var result = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, empId, traceId, ct);
+                var endSpan = DateTime.UtcNow;
+                return (Call: fnCall, CallId: callId, Result: result, Start: startSpan, End: endSpan);
+            });
+            var execResults = await Task.WhenAll(execTasks);
+
+            lastToolResult = execResults.Length == 1
+                ? execResults[0].Result
+                : execResults.Select(r => new { tool = r.Call.Name, result = r.Result }).ToList();
 
             if (_langfuse != null)
             {
-                _ = _langfuse.LogEventAsync(
-                    traceId,
-                    "Agent:ToolDecision",
-                    "INFO",
-                    $"Модель автономно выбрала инструмент '{fnCall.Name}'",
-                    metadata: new { tool = fnCall.Name, turn = turnIdx, arguments = fnCall.Arguments.ToString() },
-                    ct: ct);
+                foreach (var r in execResults)
+                {
+                    await _langfuse.CreateSpanAsync(
+                        traceId: traceId,
+                        name: $"Span:MCP-{r.Call.Name}",
+                        startTime: r.Start,
+                        endTime: r.End,
+                        input: r.Call.Arguments.ToString(),
+                        output: r.Result,
+                        metadata: new { tool = r.Call.Name, turn = turnIdx, department = deptStr },
+                        ct: ct);
+                }
             }
-
-            // Выполняем выбранный MCP инструмент с замером Latency (Span)
-            var startSpan = DateTime.UtcNow;
-            var toolExecutionResult = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, secContext?.EmployeeId ?? 1, traceId, ct);
-            var endSpan = DateTime.UtcNow;
-            lastToolResult = toolExecutionResult;
-
-            if (_langfuse != null)
-            {
-                await _langfuse.CreateSpanAsync(
-                    traceId: traceId,
-                    name: $"Span:MCP-{fnCall.Name}",
-                    startTime: startSpan,
-                    endTime: endSpan,
-                    input: fnCall.Arguments.ToString(),
-                    output: toolExecutionResult,
-                    metadata: new { tool = fnCall.Name, turn = turnIdx, department = deptStr },
-                    ct: ct);
-            }
-
-            // Передаем вызов и результат работы MCP инструмента обратно в модель (OpenAI / NVIDIA формат)
-            var callId = $"call_{fnCall.Name}_{Guid.NewGuid():N}";
-            var toolResultJson = toolExecutionResult is string strResult
-                ? strResult
-                : JsonSerializer.Serialize(toolExecutionResult);
 
             contents.Add(new
             {
                 role = "assistant",
                 content = "",
-                tool_calls = new object[]
+                tool_calls = execResults.Select(r => (object)new
                 {
-                    new
+                    id = r.CallId,
+                    type = "function",
+                    function = new
                     {
-                        id = callId,
-                        type = "function",
-                        function = new
-                        {
-                            name = fnCall.Name,
-                            arguments = fnCall.Arguments.ToString()
-                        }
+                        name = r.Call.Name,
+                        arguments = r.Call.Arguments.ToString()
                     }
-                }
+                }).ToArray()
             });
 
-            contents.Add(new
+            foreach (var r in execResults)
             {
-                role = "tool",
-                tool_call_id = callId,
-                name = fnCall.Name,
-                content = toolResultJson
-            });
+                var toolResultJson = r.Result is string strResult
+                    ? strResult
+                    : JsonSerializer.Serialize(r.Result);
+
+                contents.Add(new
+                {
+                    role = "tool",
+                    tool_call_id = r.CallId,
+                    name = r.Call.Name,
+                    content = toolResultJson
+                });
+            }
         }
 
         if (toolsInvoked.Count == 0)
