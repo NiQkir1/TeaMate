@@ -183,6 +183,24 @@ CREATE TABLE IF NOT EXISTS meeting_protocols (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Изолированное векторное хранилище чанков созвонов (отдельно от корпоративных регламентов)
+CREATE TABLE IF NOT EXISTS meeting_chunks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    protocol_id UUID REFERENCES meeting_protocols(id) ON DELETE SET NULL,
+    chunk_index INT NOT NULL,
+    chunk_text TEXT NOT NULL,
+    embedding vector(1536),
+    allowed_access_groups JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meeting_chunks_meeting_id ON meeting_chunks(meeting_id);
+CREATE INDEX IF NOT EXISTS idx_meeting_chunks_allowed_groups ON meeting_chunks USING GIN(allowed_access_groups);
+CREATE INDEX IF NOT EXISTS idx_meeting_chunks_embedding ON meeting_chunks
+USING hnsw (embedding vector_cosine_ops);
+
 CREATE TABLE IF NOT EXISTS action_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     meeting_id UUID NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,

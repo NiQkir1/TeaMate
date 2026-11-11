@@ -74,6 +74,12 @@ builder.Services.AddSingleton<ILlmClient>(sp => sp.GetRequiredService<NvidiaClie
 builder.Services.AddSingleton<INvidiaClient>(sp => sp.GetRequiredService<NvidiaClient>());
 builder.Services.AddSingleton<IGeminiClient>(sp => sp.GetRequiredService<NvidiaClient>());
 
+builder.Services.AddHttpClient("GeminiEmbeddingHttpClient", c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<IEmbeddingClient>(sp => new GeminiEmbeddingClient(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("GeminiEmbeddingHttpClient"),
+    sp.GetRequiredService<FotoprintConfig>(),
+    sp.GetService<ILogger<GeminiEmbeddingClient>>()));
+
 // 2-й этап: Детекция смены контекста через LLM перед передачей в n8n
 builder.Services.AddSingleton<IContextSwitchDetector, ContextSwitchDetector>();
 
@@ -210,6 +216,18 @@ app.MapPost("/api/audio/transcribe", async (
 
     try
     {
+        var traceName = string.IsNullOrWhiteSpace(file.FileName) ? "meeting-audio-transcribe" : "meeting-audio-transcribe";
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: traceName,
+            userId: null,
+            sessionId: null,
+            metadata: new { file_name = file.FileName, size_bytes = file.Length, language = language ?? "ru", provider = result.Provider, duration_ms = result.DurationMs },
+            tags: new[] { "channel:api", "module:meetings", $"stt:{result.Provider}", result.Success ? "status:ok" : "status:error" },
+            input: new { file_name = file.FileName, size_bytes = file.Length, language = language ?? "ru" },
+            output: result.Success ? (object)new { text = result.Text, segments_count = result.Segments?.Count ?? 0, provider = result.Provider } : new { error = result.ErrorMessage },
+            ct: ct);
+
         await langfuse.CreateSpanAsync(
             traceId: traceId,
             name: "Span:Audio_Transcribe",
@@ -225,6 +243,7 @@ app.MapPost("/api/audio/transcribe", async (
     return Results.Ok(new
     {
         success = result.Success,
+        trace_id = traceId,
         text = result.Text,
         segments = result.Segments ?? new List<AudioSegment>(),
         duration_ms = result.DurationMs,
@@ -277,12 +296,9 @@ app.MapPost("/api/llm/generate", async (
     ILangfuseClient langfuse,
     FotoprintConfig config) =>
 {
-    var traceId = langfuse.GenerateTraceId();
-    await langfuse.CreateTraceAsync(
-        traceId: traceId,
-        name: "api-llm-generate",
-        metadata: new { prompt_length = req.Prompt?.Length ?? 0, model = config.Llm.Models.ChatModel },
-        tags: new[] { "channel:api", $"provider:{config.Llm.Provider}" });
+    var traceId = !string.IsNullOrWhiteSpace(req.TraceId) ? req.TraceId : langfuse.GenerateTraceId();
+    var traceName = !string.IsNullOrWhiteSpace(req.TraceName) ? req.TraceName : "api-llm-generate";
+    var startGen = DateTime.UtcNow;
 
     var response = await llm.GenerateContentAsync(
         prompt: req.Prompt,
@@ -290,6 +306,29 @@ app.MapPost("/api/llm/generate", async (
         temperature: req.Temperature,
         maxOutputTokens: req.MaxOutputTokens,
         traceId: traceId);
+    var endGen = DateTime.UtcNow;
+
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: traceName,
+        userId: req.UserId,
+        sessionId: req.SessionId,
+        metadata: new { prompt_length = req.Prompt?.Length ?? 0, model = response.Model ?? config.Llm.Models.ChatModel, total_tokens = response.TotalTokens },
+        tags: new[] { "channel:api", $"provider:{config.Llm.Provider}", response.IsSuccess ? "status:ok" : "status:error" },
+        input: req.Prompt,
+        output: response.IsSuccess ? response.Text : response.ErrorMessage);
+
+    await langfuse.CreateGenerationAsync(
+        traceId: traceId,
+        name: traceName.Contains("summarize", StringComparison.OrdinalIgnoreCase) ? "Gen:Meeting_LLM_Summarize" : "Gen:LLM_Generate",
+        model: response.Model ?? config.Llm.Models.ChatModel,
+        startTime: startGen,
+        endTime: endGen,
+        promptTokens: response.PromptTokens,
+        completionTokens: response.CandidatesTokens,
+        totalTokens: response.TotalTokens,
+        input: req.Prompt,
+        output: response.IsSuccess ? response.Text : response.ErrorMessage);
 
     return Results.Ok(new
     {
@@ -355,11 +394,32 @@ app.MapGet("/api/agent/users", async (IFotoprintRepository repo, CancellationTok
 // Внутренний вызов AI-агента из оркестратора n8n (после проверки прав и роутинга в n8n)
 app.MapPost("/api/agent/execute", async (
     [FromBody] AgentChatRequest req,
+    HttpContext httpContext,
+    IFotoprintRepository repo,
+    FotoprintConfig config,
     IFotoprintAgent agent,
     ILangfuseClient langfuse,
     CancellationToken ct) =>
 {
     var traceId = !string.IsNullOrWhiteSpace(req.TraceId) ? req.TraceId : langfuse.GenerateTraceId();
+
+    if (!HasValidInternalServiceKey(httpContext, config))
+    {
+        var secContext = await repo.GetEmployeeSecurityContextAsync(req.TelegramId, ct);
+        if (secContext == null)
+        {
+            await langfuse.LogSecurityAlertAsync(traceId, req.TelegramId, "/api/agent/execute", "employee_registered",
+                $"Неизвестный или неактивный TelegramId {req.TelegramId} попытался вызвать /api/agent/execute напрямую.", ct);
+            return Results.Json(new
+            {
+                is_success = false,
+                error = "Access Denied",
+                message = "Доступ запрещен: сотрудник не найден или деактивирован.",
+                trace_id = traceId
+            }, statusCode: 403);
+        }
+    }
+
     var response = await agent.ProcessMessageAsync(
         telegramId: req.TelegramId,
         chatId: req.ChatId,
@@ -615,11 +675,31 @@ app.MapPost("/api/rag/index-document", async (
     IFormFile file,
     [FromForm] string? department,
     [FromForm] string? allowed_groups,
+    HttpContext httpContext,
+    FotoprintConfig config,
     IFotoprintRepository repo,
     IDocumentParser docParser,
-    ILangfuseClient langfuse) =>
+    IEmbeddingClient embeddingClient,
+    ILangfuseClient langfuse,
+    CancellationToken ct) =>
 {
     var traceId = langfuse.GenerateTraceId();
+    if (!HasValidInternalServiceKey(httpContext, config))
+    {
+        var caller = await ResolveCallerSecurityContextAsync(httpContext, repo, null, null, ct);
+        if (caller == null || !caller.HasPermission("rag:search_all"))
+        {
+            var actorId = caller?.TelegramId ?? 0;
+            await langfuse.LogSecurityAlertAsync(traceId, actorId, "/api/rag/index-document", "rag:search_all",
+                $"Попытка несанкционированной индексации документа в RAG (TelegramId={actorId}).", ct);
+            return Results.Json(new
+            {
+                error = "Access Denied",
+                message = "Доступ запрещен: индексация регламентов доступна только с правом rag:search_all (Директор)."
+            }, statusCode: 403);
+        }
+    }
+
     if (file == null || file.Length == 0)
         return Results.BadRequest(new { error = "Файл пуст или отсутствует." });
 
@@ -641,16 +721,17 @@ app.MapPost("/api/rag/index-document", async (
         sourceType: parsed.SourceType,
         filePath: $"/storage/docs/{file.FileName}",
         department: department,
-        allowedAccessGroups: groups
+        allowedAccessGroups: groups,
+        ct: ct
     );
 
     var chunkTexts = parsed.Chunks.Select(c => c.Text).ToList();
-    var embeddings = new List<float[]?>(); // При наличии OpenAI API ключа тут вычисляется vector(1536)
-    for (int i = 0; i < chunkTexts.Count; i++) embeddings.Add(null);
+    var embeddings = await embeddingClient.EmbedBatchAsync(chunkTexts, "RETRIEVAL_DOCUMENT", ct);
+    var embeddedCount = embeddings.Count(e => e != null);
 
-    await repo.SaveDocumentChunksAsync(docId, chunkTexts, embeddings, groups);
+    await repo.SaveDocumentChunksAsync(docId, chunkTexts, embeddings, groups, ct);
 
-    await langfuse.LogEventAsync(traceId, "RAG:DocumentIndexed", "INFO", $"Документ '{parsed.Title}' ({parsed.Chunks.Count} чанков) проиндексирован.");
+    await langfuse.LogEventAsync(traceId, "RAG:DocumentIndexed", "INFO", $"Документ '{parsed.Title}' ({parsed.Chunks.Count} чанков, векторизовано {embeddedCount}) проиндексирован моделью {embeddingClient.ModelName}.", ct: ct);
 
     return Results.Ok(new
     {
@@ -658,20 +739,116 @@ app.MapPost("/api/rag/index-document", async (
         document_id = docId,
         title = parsed.Title,
         chunks_count = parsed.Chunks.Count,
+        embedded_chunks_count = embeddedCount,
+        embedding_model = embeddingClient.ModelName,
         allowed_access_groups = groups
     });
 }).DisableAntiforgery();
 
-app.MapPost("/api/rag/search", async (
-    [FromBody] RagSearchRequest req,
+app.MapPost("/api/rag/reindex-embeddings", async (
+    HttpContext httpContext,
+    FotoprintConfig config,
     IFotoprintRepository repo,
-    ILangfuseClient langfuse) =>
+    IEmbeddingClient embeddingClient,
+    ILangfuseClient langfuse,
+    CancellationToken ct) =>
 {
     var traceId = langfuse.GenerateTraceId();
-    var userGroups = req.UserAccessGroups.Count > 0 ? req.UserAccessGroups : new List<string> { "all" };
+    if (!HasValidInternalServiceKey(httpContext, config))
+    {
+        var caller = await ResolveCallerSecurityContextAsync(httpContext, repo, null, null, ct);
+        if (caller == null || !caller.HasPermission("rag:search_all"))
+        {
+            var actorId = caller?.TelegramId ?? 0;
+            await langfuse.LogSecurityAlertAsync(traceId, actorId, "/api/rag/reindex-embeddings", "rag:search_all",
+                $"Попытка запуска reindex-embeddings без прав rag:search_all (TelegramId={actorId}).", ct);
+            return Results.Json(new
+            {
+                error = "Access Denied",
+                message = "Доступ запрещен: переиндексация доступна только с правом rag:search_all (Директор)."
+            }, statusCode: 403);
+        }
+    }
+
+    if (!embeddingClient.IsConfigured)
+    {
+        return Results.BadRequest(new { success = false, error = "GEMINI_API_KEY не настроен." });
+    }
+
+    var updatedCount = await BackfillMissingEmbeddingsAsync(repo, embeddingClient, ct);
+    await langfuse.LogEventAsync(traceId, "RAG:EmbeddingsReindexed", "INFO", $"Доиндексировано чанков: {updatedCount} (модель: {embeddingClient.ModelName}).", ct: ct);
+
+    return Results.Ok(new
+    {
+        success = true,
+        updated_chunks_count = updatedCount,
+        embedding_model = embeddingClient.ModelName,
+        dimensions = embeddingClient.Dimensions
+    });
+});
+
+app.MapPost("/api/rag/search", async (
+    [FromBody] RagSearchRequest req,
+    HttpContext httpContext,
+    FotoprintConfig config,
+    IFotoprintRepository repo,
+    IEmbeddingClient embeddingClient,
+    ILangfuseClient langfuse,
+    CancellationToken ct) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    List<string> userGroups;
+    if (HasValidInternalServiceKey(httpContext, config))
+    {
+        userGroups = req.UserAccessGroups is { Count: > 0 } ? req.UserAccessGroups : new List<string> { "all" };
+    }
+    else
+    {
+        var caller = await ResolveCallerSecurityContextAsync(httpContext, repo, req.MasterId, req.TelegramId, ct);
+        if (caller == null)
+        {
+            await langfuse.LogSecurityAlertAsync(traceId, req.MasterId ?? req.TelegramId ?? 0, "/api/rag/search", "rag:search_department",
+                "Внешний вызов /api/rag/search без авторизованного MasterId/TelegramId (защита от подмены UserAccessGroups).", ct);
+            return Results.Json(new
+            {
+                error = "Access Denied",
+                message = "Доступ запрещен: передача произвольных UserAccessGroups без авторизации не допускается."
+            }, statusCode: 403);
+        }
+        userGroups = caller.AccessGroups is { Count: > 0 } ? caller.AccessGroups : new List<string> { "all" };
+    }
 
     var startSpan = DateTime.UtcNow;
-    var results = await repo.SearchTextChunksAsync(req.Query, userGroups, req.TopK);
+    var searchMode = "text";
+    List<CorporateDocumentChunk> results;
+
+    if (embeddingClient.IsConfigured && !FotoprintRepository.IsGeneralCatalogQuery(req.Query))
+    {
+        var queryEmbedding = await embeddingClient.EmbedTextAsync(req.Query, "RETRIEVAL_QUERY", ct);
+        if (queryEmbedding != null)
+        {
+            results = await repo.SearchSimilarChunksAsync(queryEmbedding, userGroups, req.TopK, ct);
+            if (results.Count > 0)
+            {
+                searchMode = "vector";
+            }
+            else
+            {
+                results = await repo.SearchTextChunksAsync(req.Query, userGroups, req.TopK, ct);
+                searchMode = "text_fallback";
+            }
+        }
+        else
+        {
+            results = await repo.SearchTextChunksAsync(req.Query, userGroups, req.TopK, ct);
+            searchMode = "text_fallback";
+        }
+    }
+    else
+    {
+        results = await repo.SearchTextChunksAsync(req.Query, userGroups, req.TopK, ct);
+    }
+
     var endSpan = DateTime.UtcNow;
 
     // Техническая метрика: замер времени выполнения поиска по pgvector
@@ -681,27 +858,31 @@ app.MapPost("/api/rag/search", async (
         startTime: startSpan,
         endTime: endSpan,
         input: req.Query,
-        output: new { count = results.Count },
-        metadata: new { top_k = req.TopK, user_groups = userGroups });
+        output: new { count = results.Count, mode = searchMode },
+        metadata: new { top_k = req.TopK, user_groups = userGroups, search_mode = searchMode },
+        ct: ct);
 
     // Поколение токенов Gen:Embedding_RAG (FinOps учет векторизации и поиска)
     await langfuse.CreateGenerationAsync(
         traceId: traceId,
         name: "Gen:Embedding_RAG",
-        model: "text-embedding-004",
+        model: embeddingClient.ModelName,
         startTime: startSpan,
         endTime: endSpan,
         promptTokens: Math.Max(1, req.Query.Length / 4),
         completionTokens: 0,
         totalTokens: Math.Max(1, req.Query.Length / 4),
         input: req.Query,
-        output: $"Returned {results.Count} chunks");
+        output: $"Returned {results.Count} chunks ({searchMode})",
+        ct: ct);
 
-    await langfuse.LogEventAsync(traceId, "RAG:SearchExecuted", "INFO", $"Поиск '{req.Query}' вернул {results.Count} фрагментов.");
+    await langfuse.LogEventAsync(traceId, "RAG:SearchExecuted", "INFO", $"Поиск '{req.Query}' ({searchMode}, {embeddingClient.ModelName}) вернул {results.Count} фрагментов.", ct: ct);
 
     return Results.Ok(new
     {
         query = req.Query,
+        search_mode = searchMode,
+        embedding_model = embeddingClient.ModelName,
         results_count = results.Count,
         results = results.Select(r => new
         {
@@ -778,6 +959,23 @@ app.MapPost("/api/meetings/{id:guid}/generate-protocol", async (
         rawTranscript: summary
     );
 
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "meeting-generate-protocol",
+        userId: meeting.OrganizerId?.ToString(),
+        sessionId: $"meeting-{id}",
+        metadata: new
+        {
+            meeting_id = id,
+            protocol_id = protocolId,
+            title = meeting.Title,
+            decisions_count = decisions.Count,
+            action_items_count = actionExportData.Count
+        },
+        tags: new[] { "channel:api", "module:meetings", "status:ok" },
+        input: new { meeting_id = id, title = meeting.Title, notes_count = notes.Count },
+        output: new { protocol_id = protocolId, summary, decisions_count = decisions.Count, action_items_count = actionExportData.Count });
+
     // FinOps учет: Gen:Protocol_And_Executive_Summarizer
     await langfuse.CreateGenerationAsync(
         traceId: traceId,
@@ -811,11 +1009,38 @@ app.MapPost("/api/meetings/{id:guid}/generate-protocol", async (
 
 app.MapGet("/api/meetings/{id:guid}/export-docx", async (
     Guid id,
+    [FromQuery] long? master_id,
+    [FromQuery] long? telegram_id,
+    HttpContext httpContext,
+    FotoprintConfig config,
     IFotoprintRepository repo,
-    IMeetingProtocolGenerator generator) =>
+    IMeetingProtocolGenerator generator,
+    ILangfuseClient langfuse,
+    CancellationToken ct) =>
 {
-    var meeting = await repo.GetMeetingByIdAsync(id);
+    var meeting = await repo.GetMeetingByIdAsync(id, ct);
     if (meeting == null) return Results.NotFound();
+
+    if (!HasValidInternalServiceKey(httpContext, config))
+    {
+        var traceId = langfuse.GenerateTraceId();
+        var secContext = await ResolveCallerSecurityContextAsync(httpContext, repo, master_id, telegram_id, ct);
+        bool hasAccess = secContext != null &&
+                         (secContext.IsExecutive ||
+                          meeting.OrganizerId == secContext.EmployeeId ||
+                          meeting.ParticipantIds.Contains(secContext.EmployeeId));
+        if (!hasAccess)
+        {
+            var actorId = secContext?.MasterId ?? master_id ?? telegram_id ?? 0;
+            await langfuse.LogSecurityAlertAsync(traceId, actorId, "/api/meetings/export-docx", "meeting_participant_or_director",
+                $"Попытка несанкционированной выгрузки DOCX встречи {id} пользователем {actorId}.", ct);
+            return Results.Json(new
+            {
+                error = "Access Denied",
+                message = "Доступ к материалам созвона имеют только его участники и директор."
+            }, statusCode: 403);
+        }
+    }
 
     var notes = await repo.GetMeetingNotesAsync(id);
     var actionItems = await repo.GetActionItemsByMeetingAsync(id);
@@ -1105,6 +1330,25 @@ app.MapPost("/api/meetings/process-audio", async (
 
     try
     {
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "meeting-process-audio",
+            userId: organizer_id?.ToString(),
+            sessionId: $"meeting-{meetingId}",
+            metadata: new
+            {
+                meeting_id = meetingId,
+                protocol_id = protocolId,
+                audio_provider = transcription.Provider,
+                duration_ms = transcription.DurationMs,
+                decisions_count = analysis.Decisions.Count,
+                action_items_count = normalizedItems.Count
+            },
+            tags: new[] { "channel:api", "module:meetings", $"stt:{transcription.Provider}", "status:ok" },
+            input: new { title = effectiveTitle, file_name = file.FileName, transcript_preview = transcription.Text.Length > 1000 ? transcription.Text[..1000] : transcription.Text },
+            output: new { meeting_id = meetingId, protocol_id = protocolId, summary = analysis.Summary, decisions = analysis.Decisions, action_items_count = normalizedItems.Count },
+            ct: ct);
+
         await langfuse.CreateGenerationAsync(
             traceId: traceId,
             name: "Gen:Audio_MoM_Protocol",
@@ -1161,6 +1405,551 @@ app.MapPost("/api/meetings/process-audio", async (
     });
 }).DisableAntiforgery();
 
+// Сохранение созвона (Google Meet / Calendar) после Whisper + LLM:
+// БД (meetings, meeting_protocols, action_items) + .docx/.html + индексация в pgvector (gemini-embedding-2) со строгим RBAC (участники + Директор)
+app.MapPost("/api/meetings/save-and-index", async (
+    [FromBody] SaveAndIndexMeetingRequest req,
+    IFotoprintRepository repo,
+    IDocumentParser docParser,
+    IMeetingProtocolGenerator protocolGenerator,
+    IEmbeddingClient embeddingClient,
+    ILangfuseClient langfuse,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    if (string.IsNullOrWhiteSpace(req.Summary) && string.IsNullOrWhiteSpace(req.RawTranscript))
+    {
+        return Results.BadRequest(new { success = false, trace_id = traceId, error = "Не переданы summary или raw_transcript созвона." });
+    }
+
+    var employees = await repo.GetAllEmployeesAsync(ct);
+    var participantEmployees = new List<Employee>();
+
+    if (req.OrganizerMasterId.HasValue)
+    {
+        var orgEmp = employees.FirstOrDefault(e => e.MasterId == req.OrganizerMasterId.Value);
+        if (orgEmp != null) participantEmployees.Add(orgEmp);
+    }
+    if (!string.IsNullOrWhiteSpace(req.OrganizerEmail))
+    {
+        var orgEmp = employees.FirstOrDefault(e => string.Equals(e.Email, req.OrganizerEmail.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (orgEmp != null && !participantEmployees.Any(p => p.Id == orgEmp.Id)) participantEmployees.Add(orgEmp);
+    }
+
+    foreach (var mId in req.ParticipantMasterIds ?? new List<long>())
+    {
+        var emp = employees.FirstOrDefault(e => e.MasterId == mId);
+        if (emp != null && !participantEmployees.Any(p => p.Id == emp.Id)) participantEmployees.Add(emp);
+    }
+    foreach (var email in req.ParticipantEmails ?? new List<string>())
+    {
+        var emp = employees.FirstOrDefault(e => string.Equals(e.Email, email.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (emp != null && !participantEmployees.Any(p => p.Id == emp.Id)) participantEmployees.Add(emp);
+    }
+
+    var organizerId = participantEmployees.FirstOrDefault()?.Id;
+    var participantIds = participantEmployees.Select(e => e.Id).Distinct().ToList();
+
+    // Строгий RBAC для созвона: только Директор ("c-level") и конкретные участники ("master:<id>"), БЕЗ "all"
+    var allowedAccessGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "c-level" };
+    if (req.OrganizerMasterId.HasValue && req.OrganizerMasterId.Value > 0)
+        allowedAccessGroups.Add($"master:{req.OrganizerMasterId.Value}");
+    foreach (var mId in req.ParticipantMasterIds ?? new List<long>())
+    {
+        if (mId > 0) allowedAccessGroups.Add($"master:{mId}");
+    }
+    foreach (var emp in participantEmployees)
+    {
+        allowedAccessGroups.Add($"master:{emp.MasterId}");
+    }
+
+    var effectiveTitle = string.IsNullOrWhiteSpace(req.Title)
+        ? $"Созвон от {DateTime.UtcNow.AddHours(3):dd.MM.yyyy HH:mm}"
+        : req.Title.Trim();
+    var startTime = req.StartTime ?? DateTime.UtcNow;
+    var endTime = req.EndTime ?? DateTime.UtcNow;
+
+    var meetingId = await repo.CreateMeetingAsync(
+        title: effectiveTitle,
+        description: req.Summary,
+        startTime: startTime,
+        endTime: endTime,
+        status: "completed",
+        organizerId: organizerId,
+        participantIds: participantIds,
+        ct: ct);
+
+    var decisions = req.Decisions ?? new List<string>();
+    var actionInputs = req.ActionItems ?? new List<MeetingActionItemInput>();
+    var empById = employees.ToDictionary(e => e.Id, e => e.FullName);
+
+    var exportData = new ProtocolExportData(
+        Title: effectiveTitle,
+        MeetingDate: startTime,
+        OrganizerName: organizerId.HasValue && empById.TryGetValue(organizerId.Value, out var orgName) ? orgName : "Организатор созвона",
+        Participants: participantEmployees.Count > 0
+            ? participantEmployees.Select(e => e.FullName).ToList()
+            : new List<string> { "Участники созвона" },
+        Summary: req.Summary ?? string.Empty,
+        Decisions: decisions,
+        ActionItems: actionInputs.Select(a => new ActionItemExportData(
+            Title: a.Title,
+            ResponsibleName: string.IsNullOrWhiteSpace(a.Responsible) ? "требует уточнения" : a.Responsible,
+            Deadline: a.Deadline,
+            Status: "pending"
+        )).ToList(),
+        RawTranscript: req.RawTranscript
+    );
+
+    var protocolsDir = Path.Combine(Path.GetTempPath(), "fotoprint_protocols");
+    Directory.CreateDirectory(protocolsDir);
+    var docxPath = Path.Combine(protocolsDir, $"Meeting_{meetingId}.docx");
+    var pdfPath = Path.Combine(protocolsDir, $"Meeting_{meetingId}.html");
+
+    await File.WriteAllBytesAsync(docxPath, protocolGenerator.GenerateDocx(exportData), ct);
+    await File.WriteAllBytesAsync(pdfPath, protocolGenerator.GeneratePdf(exportData), ct);
+
+    var protocolId = await repo.SaveMeetingProtocolAsync(
+        meetingId: meetingId,
+        title: $"Протокол: {effectiveTitle}",
+        summary: req.Summary ?? string.Empty,
+        decisions: decisions,
+        rawTranscript: req.RawTranscript,
+        docxPath: docxPath,
+        pdfPath: pdfPath,
+        ct: ct);
+
+    foreach (var item in actionInputs)
+    {
+        if (string.IsNullOrWhiteSpace(item.Title)) continue;
+
+        int? respEmpId = null;
+        if (!string.IsNullOrWhiteSpace(item.Responsible))
+        {
+            var matched = employees.FirstOrDefault(e =>
+                (!string.IsNullOrWhiteSpace(e.LastName) && item.Responsible.Contains(e.LastName, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(e.FullName) && item.Responsible.Contains(e.FullName, StringComparison.OrdinalIgnoreCase)));
+            respEmpId = matched?.Id;
+        }
+
+        await repo.CreateActionItemAsync(
+            meetingId: meetingId,
+            protocolId: protocolId,
+            title: item.Title,
+            description: item.Description,
+            responsibleId: respEmpId,
+            deadline: item.Deadline,
+            ct: ct);
+    }
+
+    var ragContent = new StringBuilder();
+    ragContent.AppendLine($"Созвон: {effectiveTitle} ({startTime:yyyy-MM-dd HH:mm})");
+    ragContent.AppendLine($"Саммари: {req.Summary}");
+    if (decisions.Count > 0)
+    {
+        ragContent.AppendLine("Принятые решения: " + string.Join("; ", decisions));
+    }
+    if (!string.IsNullOrWhiteSpace(req.RawTranscript))
+    {
+        ragContent.AppendLine("Стенограмма созвона:");
+        ragContent.AppendLine(req.RawTranscript);
+    }
+
+    await using var textStream = new MemoryStream(Encoding.UTF8.GetBytes(ragContent.ToString()));
+    var parsedRag = await docParser.ParseStreamAsync(
+        textStream,
+        $"meeting_{meetingId}.txt",
+        config.Rag.Chunking.ChunkSize > 0 ? config.Rag.Chunking.ChunkSize : 800,
+        config.Rag.Chunking.ChunkOverlap >= 0 ? config.Rag.Chunking.ChunkOverlap : 150,
+        ct);
+
+    var ragGroups = allowedAccessGroups.ToList();
+    var docMetadata = new
+    {
+        meeting_id = meetingId,
+        protocol_id = protocolId,
+        calendar_event_id = req.CalendarEventId,
+        title = effectiveTitle,
+        meeting_date = startTime.ToString("yyyy-MM-dd HH:mm"),
+        summary = req.Summary ?? string.Empty
+    };
+
+    var chunkTexts = parsedRag.Chunks.Select(c => c.Text).ToList();
+    var embedStart = DateTime.UtcNow;
+    var embeddings = await embeddingClient.EmbedBatchAsync(chunkTexts, "RETRIEVAL_DOCUMENT", ct);
+    var embedEnd = DateTime.UtcNow;
+    var embeddedCount = embeddings.Count(e => e != null);
+    await repo.SaveMeetingChunksAsync(meetingId, protocolId, chunkTexts, embeddings, ragGroups, docMetadata, ct);
+
+    var traceUserId = req.OrganizerMasterId?.ToString()
+        ?? req.ParticipantMasterIds?.FirstOrDefault().ToString();
+    var totalChunkChars = chunkTexts.Sum(t => t.Length);
+
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "google-meet-save-and-index",
+        userId: traceUserId,
+        sessionId: $"meeting-{meetingId}",
+        metadata: new
+        {
+            meeting_id = meetingId,
+            protocol_id = protocolId,
+            storage_table = "meeting_chunks",
+            calendar_event_id = req.CalendarEventId,
+            chunks_count = chunkTexts.Count,
+            embedded_chunks_count = embeddedCount,
+            embedding_model = embeddingClient.ModelName,
+            allowed_access_groups = ragGroups
+        },
+        tags: new[] { "channel:api", "module:meetings", "source:google_meet", "status:ok" },
+        input: new
+        {
+            title = effectiveTitle,
+            calendar_event_id = req.CalendarEventId,
+            participant_master_ids = req.ParticipantMasterIds,
+            summary_length = req.Summary?.Length ?? 0,
+            transcript_length = req.RawTranscript?.Length ?? 0
+        },
+        output: new
+        {
+            meeting_id = meetingId,
+            protocol_id = protocolId,
+            storage_table = "meeting_chunks",
+            chunks_count = chunkTexts.Count,
+            embedded_chunks_count = embeddedCount,
+            allowed_access_groups = ragGroups
+        },
+        ct: ct);
+
+    await langfuse.CreateGenerationAsync(
+        traceId: traceId,
+        name: "Gen:Meeting_Embedding_Index",
+        model: embeddingClient.ModelName,
+        startTime: embedStart,
+        endTime: embedEnd,
+        promptTokens: Math.Max(1, totalChunkChars / 4),
+        completionTokens: 0,
+        totalTokens: Math.Max(1, totalChunkChars / 4),
+        input: effectiveTitle,
+        output: $"Indexed {embeddedCount}/{chunkTexts.Count} meeting chunks ({string.Join(", ", ragGroups)})",
+        metadata: new { meeting_id = meetingId, protocol_id = protocolId, storage_table = "meeting_chunks", dimensions = embeddingClient.Dimensions },
+        ct: ct);
+
+    await langfuse.LogEventAsync(traceId, "Meeting:SavedAndIndexed", "INFO",
+        $"Созвон '{effectiveTitle}' (ID: {meetingId}) сохранён в meeting_chunks и векторизован ({embeddedCount}/{chunkTexts.Count} чанков, доступ: {string.Join(", ", ragGroups)}).", ct: ct);
+
+    return Results.Ok(new
+    {
+        success = true,
+        trace_id = traceId,
+        meeting_id = meetingId,
+        protocol_id = protocolId,
+        storage_table = "meeting_chunks",
+        title = effectiveTitle,
+        chunks_count = chunkTexts.Count,
+        embedded_chunks_count = embeddedCount,
+        embedding_model = embeddingClient.ModelName,
+        allowed_access_groups = ragGroups,
+        export_docx_url = $"/api/meetings/{meetingId}/export-full?format=docx",
+        export_pdf_url = $"/api/meetings/{meetingId}/export-full?format=pdf"
+    });
+});
+
+// Поиск подходящего созвона в RAG по MasterId пользователя и вопросу (строго участники + Директор)
+app.MapPost("/api/meetings/rag-search", async (
+    [FromBody] MeetingRagSearchRequest req,
+    IFotoprintRepository repo,
+    IEmbeddingClient embeddingClient,
+    ILangfuseClient langfuse,
+    CancellationToken ct) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    var secContext = await repo.GetEmployeeSecurityContextByMasterIdAsync(req.MasterId, ct);
+    if (secContext == null)
+    {
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "google-meet-rag-search",
+            userId: req.MasterId.ToString(),
+            sessionId: null,
+            metadata: new { master_id = req.MasterId, query = req.Query },
+            tags: new[] { "channel:api", "module:meetings", "source:google_meet", "status:forbidden" },
+            input: req.Query,
+            output: $"Доступ запрещён: сотрудник MasterId {req.MasterId} не найден",
+            ct: ct);
+        await langfuse.LogSecurityAlertAsync(traceId, req.MasterId, "MeetingRagSearch", "master_id_exists",
+            $"Неизвестный MasterId {req.MasterId} попытался выполнить поиск по созвонам.", ct);
+        return Results.Json(new { found = false, trace_id = traceId, access_denied = true, message = $"Сотрудник с MasterId {req.MasterId} не найден." }, statusCode: 403);
+    }
+
+    var meetingAccessGroups = new List<string> { $"master:{secContext.MasterId}" };
+    if (secContext.IsExecutive)
+    {
+        meetingAccessGroups.Add("c-level");
+    }
+
+    var startSpan = DateTime.UtcNow;
+    var queryVector = await embeddingClient.EmbedTextAsync(req.Query, "RETRIEVAL_QUERY", ct);
+    if (queryVector == null)
+    {
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "google-meet-rag-search",
+            userId: secContext.MasterId.ToString(),
+            sessionId: null,
+            metadata: new { master_id = secContext.MasterId, is_director = secContext.IsExecutive },
+            tags: new[] { "channel:api", "module:meetings", "source:google_meet", "status:error" },
+            input: req.Query,
+            output: "Не удалось построить векторный эмбеддинг запроса.",
+            ct: ct);
+        return Results.Ok(new
+        {
+            found = false,
+            trace_id = traceId,
+            master_id = secContext.MasterId,
+            message = "Не удалось построить векторный эмбеддинг запроса."
+        });
+    }
+
+    var matchedChunks = await repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, req.TopK, ct);
+    var endSpan = DateTime.UtcNow;
+
+    if (matchedChunks.Count == 0)
+    {
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "google-meet-rag-search",
+            userId: secContext.MasterId.ToString(),
+            sessionId: null,
+            metadata: new { master_id = secContext.MasterId, is_director = secContext.IsExecutive, access_groups = meetingAccessGroups, matches_count = 0 },
+            tags: new[] { "channel:api", "module:meetings", "source:google_meet", "status:not_found" },
+            input: req.Query,
+            output: "Доступных созвонов не найдено (RBAC-фильтр).",
+            ct: ct);
+        await langfuse.CreateGenerationAsync(
+            traceId: traceId,
+            name: "Gen:Meeting_Embedding_Search",
+            model: embeddingClient.ModelName,
+            startTime: startSpan,
+            endTime: endSpan,
+            promptTokens: Math.Max(1, req.Query.Length / 4),
+            completionTokens: 0,
+            totalTokens: Math.Max(1, req.Query.Length / 4),
+            input: req.Query,
+            output: "0 matches (RBAC filtered)",
+            ct: ct);
+        await langfuse.CreateSpanAsync(traceId, "Span:Meeting_RAG_Search", startSpan, endSpan,
+            input: new { master_id = secContext.MasterId, query = req.Query, access_groups = meetingAccessGroups },
+            output: new { matches_count = 0 }, ct: ct);
+        await langfuse.LogScoreAsync(traceId, "meeting_rag_found", 0.0, "Совпадений не найдено либо нет доступа", ct: ct);
+
+        return Results.Ok(new
+        {
+            found = false,
+            trace_id = traceId,
+            master_id = secContext.MasterId,
+            message = "По вашему запросу не найдено доступных созвонов (доступ имеют только участники встречи и директор)."
+        });
+    }
+
+    Guid? bestMeetingId = matchedChunks[0].DocumentId != Guid.Empty ? matchedChunks[0].DocumentId : null;
+    if (!bestMeetingId.HasValue)
+    {
+        foreach (var ch in matchedChunks)
+        {
+            if (!string.IsNullOrWhiteSpace(ch.MetadataJson))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(ch.MetadataJson);
+                    if (doc.RootElement.TryGetProperty("meeting_id", out var mProp) && Guid.TryParse(mProp.GetString(), out var parsedMid))
+                    {
+                        bestMeetingId = parsedMid;
+                        break;
+                    }
+                }
+                catch { }
+            }
+        }
+    }
+
+    Meeting? meeting = bestMeetingId.HasValue ? await repo.GetMeetingByIdAsync(bestMeetingId.Value, ct) : null;
+    MeetingProtocol? protocol = bestMeetingId.HasValue ? await repo.GetMeetingProtocolAsync(bestMeetingId.Value, ct) : null;
+    var summaryText = protocol?.Summary ?? meeting?.Description ?? matchedChunks[0].ChunkText;
+
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "google-meet-rag-search",
+        userId: secContext.MasterId.ToString(),
+        sessionId: bestMeetingId.HasValue ? $"meeting-{bestMeetingId.Value}" : null,
+        metadata: new
+        {
+            master_id = secContext.MasterId,
+            is_director = secContext.IsExecutive,
+            meeting_id = bestMeetingId,
+            meeting_title = meeting?.Title ?? protocol?.Title,
+            matches_count = matchedChunks.Count,
+            access_groups = meetingAccessGroups
+        },
+        tags: new[] { "channel:api", "module:meetings", "source:google_meet", "status:ok", secContext.IsExecutive ? "role:director" : "role:participant" },
+        input: req.Query,
+        output: new { meeting_id = bestMeetingId, title = meeting?.Title ?? protocol?.Title, summary = summaryText },
+        ct: ct);
+
+    await langfuse.CreateGenerationAsync(
+        traceId: traceId,
+        name: "Gen:Meeting_Embedding_Search",
+        model: embeddingClient.ModelName,
+        startTime: startSpan,
+        endTime: endSpan,
+        promptTokens: Math.Max(1, req.Query.Length / 4),
+        completionTokens: 0,
+        totalTokens: Math.Max(1, req.Query.Length / 4),
+        input: req.Query,
+        output: $"Matched meeting {bestMeetingId} ({matchedChunks.Count} chunks)",
+        ct: ct);
+
+    await langfuse.CreateSpanAsync(traceId, "Span:Meeting_RAG_Search", startSpan, endSpan,
+        input: new { master_id = secContext.MasterId, query = req.Query, access_groups = meetingAccessGroups },
+        output: new { matches_count = matchedChunks.Count, meeting_id = bestMeetingId }, ct: ct);
+
+    await langfuse.LogScoreAsync(traceId, "meeting_rag_found", 1.0, $"Найден созвон {bestMeetingId}", ct: ct);
+
+    return Results.Ok(new
+    {
+        found = true,
+        trace_id = traceId,
+        master_id = secContext.MasterId,
+        is_director = secContext.IsExecutive,
+        meeting_id = bestMeetingId,
+        title = meeting?.Title ?? protocol?.Title ?? "Созвон",
+        meeting_date = meeting?.StartTime.ToString("yyyy-MM-dd HH:mm"),
+        summary = summaryText,
+        decisions = protocol?.Decisions ?? new List<string>(),
+        has_full_transcript = !string.IsNullOrWhiteSpace(protocol?.RawTranscript),
+        export_docx_url = bestMeetingId.HasValue ? $"/api/meetings/{bestMeetingId.Value}/export-full?master_id={secContext.MasterId}&format=docx" : null,
+        export_pdf_url = bestMeetingId.HasValue ? $"/api/meetings/{bestMeetingId.Value}/export-full?master_id={secContext.MasterId}&format=pdf" : null,
+        matched_chunks = matchedChunks.Select(c => new { chunk_id = c.Id, chunk_index = c.ChunkIndex, text = c.ChunkText })
+    });
+});
+
+// Экспорт полного созвона (саммари + решения + поручения + вся стенограмма) в .docx или .pdf (.html) с проверкой RBAC
+app.MapGet("/api/meetings/{id:guid}/export-full", async (
+    Guid id,
+    [FromQuery] long master_id,
+    [FromQuery] string? format,
+    IFotoprintRepository repo,
+    IMeetingProtocolGenerator generator,
+    ILangfuseClient langfuse,
+    CancellationToken ct) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    var fmt = (format ?? "docx").Trim().ToLowerInvariant();
+    var exportStart = DateTime.UtcNow;
+
+    var secContext = await repo.GetEmployeeSecurityContextByMasterIdAsync(master_id, ct);
+    if (secContext == null)
+    {
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "google-meet-export-full",
+            userId: master_id.ToString(),
+            sessionId: $"meeting-{id}",
+            metadata: new { meeting_id = id, master_id, format = fmt },
+            tags: new[] { "channel:api", "module:meetings", "source:google_meet", $"format:{fmt}", "status:forbidden" },
+            input: new { meeting_id = id, master_id, format = fmt },
+            output: "403 Access Denied: сотрудник не найден.",
+            ct: ct);
+        await langfuse.LogSecurityAlertAsync(traceId, master_id, "ExportFullMeeting", "employee_exists",
+            $"Неизвестный MasterId {master_id} запросил полную выгрузку созвона {id}.", ct);
+        return Results.Json(new { error = "Access Denied", message = "Сотрудник не найден." }, statusCode: 403);
+    }
+
+    var meeting = await repo.GetMeetingByIdAsync(id, ct);
+    if (meeting == null)
+    {
+        return Results.NotFound(new { error = $"Встреча {id} не найдена." });
+    }
+
+    bool hasAccess = secContext.IsExecutive ||
+                     meeting.OrganizerId == secContext.EmployeeId ||
+                     meeting.ParticipantIds.Contains(secContext.EmployeeId);
+    if (!hasAccess)
+    {
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "google-meet-export-full",
+            userId: master_id.ToString(),
+            sessionId: $"meeting-{id}",
+            metadata: new { meeting_id = id, master_id, format = fmt, title = meeting.Title },
+            tags: new[] { "channel:api", "module:meetings", "source:google_meet", $"format:{fmt}", "status:forbidden" },
+            input: new { meeting_id = id, master_id, format = fmt },
+            output: "403 Access Denied: пользователь не является участником или директором.",
+            ct: ct);
+        await langfuse.LogSecurityAlertAsync(traceId, master_id, "ExportFullMeeting", "meeting_participant_or_director",
+            $"Сотрудник MasterId {master_id} ({secContext.FullName}) без прав попытался скачать полную стенограмму созвона {id}.", ct);
+        return Results.Json(new
+        {
+            error = "Access Denied",
+            message = "Доступ к материалам созвона имеют только его участники и директор."
+        }, statusCode: 403);
+    }
+
+    var protocol = await repo.GetMeetingProtocolAsync(id, ct);
+    var actionItems = await repo.GetActionItemsByMeetingAsync(id, ct);
+    var allEmps = await repo.GetAllEmployeesAsync(ct);
+    var empDict = allEmps.ToDictionary(e => e.Id, e => e.FullName);
+
+    var exportData = new ProtocolExportData(
+        Title: meeting.Title,
+        MeetingDate: meeting.StartTime,
+        OrganizerName: meeting.OrganizerId.HasValue && empDict.TryGetValue(meeting.OrganizerId.Value, out var org) ? org : "Организатор",
+        Participants: meeting.ParticipantIds.Select(pid => empDict.TryGetValue(pid, out var p) ? p : $"Участник #{pid}").ToList(),
+        Summary: protocol?.Summary ?? meeting.Description ?? "Итоги созвона.",
+        Decisions: protocol?.Decisions ?? new List<string>(),
+        ActionItems: actionItems.Select(a => new ActionItemExportData(
+            a.Title,
+            a.ResponsibleId.HasValue && empDict.TryGetValue(a.ResponsibleId.Value, out var r) ? r : "требует уточнения",
+            a.Deadline,
+            a.Status)).ToList(),
+        RawTranscript: protocol?.RawTranscript
+    );
+
+    byte[] exportBytes;
+    string contentType;
+    string fileName;
+    if (fmt is "pdf" or "html")
+    {
+        exportBytes = generator.GeneratePdf(exportData);
+        contentType = "text/html; charset=utf-8";
+        fileName = $"Meeting_{id}.html";
+    }
+    else
+    {
+        exportBytes = generator.GenerateDocx(exportData);
+        contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        fileName = $"Meeting_{id}.docx";
+    }
+
+    var exportEnd = DateTime.UtcNow;
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "google-meet-export-full",
+        userId: master_id.ToString(),
+        sessionId: $"meeting-{id}",
+        metadata: new { meeting_id = id, master_id, format = fmt, file_name = fileName, bytes = exportBytes.Length, has_raw_transcript = !string.IsNullOrWhiteSpace(protocol?.RawTranscript) },
+        tags: new[] { "channel:api", "module:meetings", "source:google_meet", $"format:{fmt}", "status:ok" },
+        input: new { meeting_id = id, master_id, format = fmt },
+        output: new { file_name = fileName, bytes = exportBytes.Length, content_type = contentType },
+        ct: ct);
+    await langfuse.CreateSpanAsync(traceId, "Span:Meeting_Export_Full", exportStart, exportEnd,
+        input: new { meeting_id = id, master_id, format = fmt },
+        output: new { file_name = fileName, bytes = exportBytes.Length }, ct: ct);
+
+    return Results.File(exportBytes, contentType, fileName);
+});
+
 // Прямой вызов детектора смены контекста через LLM (2-й этап)
 app.MapPost("/api/context/detect-switch", async (
     [FromBody] ContextSwitchRequest req,
@@ -1203,12 +1992,155 @@ app.MapPost("/api/telemetry/evaluate-formatting-policy", async (
     return Results.Ok(new { trace_id = traceId, metric = "formatting_and_policy", score });
 });
 
+_ = Task.Run(async () =>
+{
+    try
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var repo = app.Services.GetRequiredService<IFotoprintRepository>();
+        var embClient = app.Services.GetRequiredService<IEmbeddingClient>();
+        if (!embClient.IsConfigured) return;
+        var updated = await BackfillMissingEmbeddingsAsync(repo, embClient, cts.Token);
+        if (updated > 0)
+        {
+            app.Logger.LogInformation("🧠 [RAG] Доиндексировано {Count} чанков с помощью {Model}", updated, embClient.ModelName);
+        }
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogDebug(ex, "[RAG] Фоновая доиндексация эмбеддингов пропущена (БД или API недоступны)");
+    }
+});
+
 app.Run();
 
+static async Task<int> BackfillMissingEmbeddingsAsync(
+    IFotoprintRepository repo,
+    IEmbeddingClient embeddingClient,
+    CancellationToken ct)
+{
+    if (!embeddingClient.IsConfigured) return 0;
+
+    var totalUpdated = 0;
+    while (!ct.IsCancellationRequested)
+    {
+        var missing = await repo.GetChunksWithoutEmbeddingAsync(100, ct);
+        if (missing.Count == 0) break;
+
+        var texts = missing.Select(c => c.ChunkText).ToList();
+        var vectors = await embeddingClient.EmbedBatchAsync(texts, "RETRIEVAL_DOCUMENT", ct);
+
+        var updatedInBatch = 0;
+        for (int i = 0; i < missing.Count && i < vectors.Count; i++)
+        {
+            var vec = vectors[i];
+            if (vec != null)
+            {
+                await repo.UpdateChunkEmbeddingAsync(missing[i].Id, vec, ct);
+                updatedInBatch++;
+                totalUpdated++;
+            }
+        }
+
+        if (updatedInBatch == 0) break;
+    }
+
+    while (!ct.IsCancellationRequested)
+    {
+        var missingMeetings = await repo.GetMeetingChunksWithoutEmbeddingAsync(100, ct);
+        if (missingMeetings.Count == 0) break;
+
+        var texts = missingMeetings.Select(c => c.ChunkText).ToList();
+        var vectors = await embeddingClient.EmbedBatchAsync(texts, "RETRIEVAL_DOCUMENT", ct);
+
+        var updatedInBatch = 0;
+        for (int i = 0; i < missingMeetings.Count && i < vectors.Count; i++)
+        {
+            var vec = vectors[i];
+            if (vec != null)
+            {
+                await repo.UpdateMeetingChunkEmbeddingAsync(missingMeetings[i].Id, vec, ct);
+                updatedInBatch++;
+                totalUpdated++;
+            }
+        }
+
+        if (updatedInBatch == 0) break;
+    }
+
+    return totalUpdated;
+}
+
+static bool HasValidInternalServiceKey(HttpContext httpContext, FotoprintConfig config)
+{
+    var providedKey = httpContext.Request.Headers["X-Internal-Service-Key"].FirstOrDefault();
+    return !string.IsNullOrWhiteSpace(providedKey) &&
+           string.Equals(providedKey, config.Security.InternalServiceSecretKey, StringComparison.Ordinal);
+}
+
+static async Task<EmployeeSecurityContext?> ResolveCallerSecurityContextAsync(
+    HttpContext httpContext,
+    IFotoprintRepository repo,
+    long? masterId,
+    long? telegramId,
+    CancellationToken ct)
+{
+    long? effectiveMasterId = masterId;
+    if (!effectiveMasterId.HasValue &&
+        long.TryParse(httpContext.Request.Query["master_id"].FirstOrDefault(), out var qMasterId))
+    {
+        effectiveMasterId = qMasterId;
+    }
+    if (!effectiveMasterId.HasValue &&
+        long.TryParse(httpContext.Request.Headers["X-Master-Id"].FirstOrDefault(), out var hMasterId))
+    {
+        effectiveMasterId = hMasterId;
+    }
+
+    if (effectiveMasterId is > 0)
+    {
+        return await repo.GetEmployeeSecurityContextByMasterIdAsync(effectiveMasterId.Value, ct);
+    }
+
+    long? effectiveTgId = telegramId;
+    if (!effectiveTgId.HasValue &&
+        long.TryParse(httpContext.Request.Query["telegram_id"].FirstOrDefault(), out var qTgId))
+    {
+        effectiveTgId = qTgId;
+    }
+    if (!effectiveTgId.HasValue &&
+        long.TryParse(httpContext.Request.Headers["X-Telegram-Id"].FirstOrDefault(), out var hTgId))
+    {
+        effectiveTgId = hTgId;
+    }
+
+    if (effectiveTgId is > 0)
+    {
+        return await repo.GetEmployeeSecurityContextAsync(effectiveTgId.Value, ct);
+    }
+
+    return null;
+}
+
+public record SaveAndIndexMeetingRequest(
+    string Title,
+    string? CalendarEventId = null,
+    DateTime? StartTime = null,
+    DateTime? EndTime = null,
+    long? OrganizerMasterId = null,
+    string? OrganizerEmail = null,
+    List<long>? ParticipantMasterIds = null,
+    List<string>? ParticipantEmails = null,
+    string? RawTranscript = null,
+    string? Summary = null,
+    List<string>? Decisions = null,
+    List<MeetingActionItemInput>? ActionItems = null);
+public record MeetingActionItemInput(string Title, string? Description = null, string? Responsible = null, DateTime? Deadline = null);
+public record MeetingRagSearchRequest(long MasterId, string Query, int TopK = 5);
 public record EvaluateFaithfulnessRequest(string? TraceId, string UserQuestion, string RawContextData, string AgentAnswer);
 public record EvaluatePolicyRequest(string? TraceId, string OutputText, bool IsProtocol = false);
 public record ContextSwitchRequest(List<ContextMessageDto>? History, string CurrentMessage);
 public record ContextMessageDto(string Role, string Content);
-public record RagSearchRequest(string Query, List<string> UserAccessGroups, int TopK = 5);
-public record GeminiPromptRequest(string Prompt, string? SystemInstruction = null, double? Temperature = null, int? MaxOutputTokens = null);
+public record RagSearchRequest(string Query, List<string> UserAccessGroups, int TopK = 5, long? MasterId = null, long? TelegramId = null);
+public record GeminiPromptRequest(string Prompt, string? SystemInstruction = null, double? Temperature = null, int? MaxOutputTokens = null, string? TraceName = null, string? TraceId = null, string? SessionId = null, string? UserId = null);
 public record AgentChatRequest(long TelegramId, long ChatId, string Message, string? TraceId = null);

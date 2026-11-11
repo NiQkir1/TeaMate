@@ -114,4 +114,72 @@ public class SecurityInterceptorTests
         Assert.Equal((int)HttpStatusCode.OK, context.Response.StatusCode);
         Assert.NotNull(context.Items["SecurityContext"]);
     }
+
+    [Fact]
+    public async Task Interceptor_Blocks_Mutating_Endpoint_Without_User_Confirmation()
+    {
+        bool nextCalled = false;
+        var middleware = new SecurityInterceptorMiddleware(
+            next: _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            logger: NullLogger<SecurityInterceptorMiddleware>.Instance
+        );
+
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        context.Request.Headers["X-Telegram-Id"] = "100001";
+        context.Request.Headers["X-User-Confirmed"] = "false";
+
+        var endpoint = new Endpoint(
+            requestDelegate: _ => Task.CompletedTask,
+            metadata: new EndpointMetadataCollection(
+                new RequirePermissionAttribute("rag:search_all"),
+                new RequireConfirmationAttribute(true)),
+            displayName: "TestIndexDocumentEndpoint"
+        );
+        context.SetEndpoint(endpoint);
+
+        await middleware.InvokeAsync(context, new FakeSecurityValidator(), new FakeLangfuseClient());
+
+        Assert.False(nextCalled);
+        context.Response.Body.Seek(0, SeekOrigin.Begin);
+        using var reader = new StreamReader(context.Response.Body);
+        var body = await reader.ReadToEndAsync();
+        Assert.Contains("confirmation_required", body);
+    }
+
+    [Fact]
+    public async Task Interceptor_Allows_Mutating_Endpoint_With_User_Confirmation()
+    {
+        bool nextCalled = false;
+        var middleware = new SecurityInterceptorMiddleware(
+            next: _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            logger: NullLogger<SecurityInterceptorMiddleware>.Instance
+        );
+
+        var context = new DefaultHttpContext();
+        context.Request.Headers["X-Telegram-Id"] = "100001";
+        context.Request.Headers["X-User-Confirmed"] = "true";
+
+        var endpoint = new Endpoint(
+            requestDelegate: _ => Task.CompletedTask,
+            metadata: new EndpointMetadataCollection(
+                new RequirePermissionAttribute("rag:search_all"),
+                new RequireConfirmationAttribute(true)),
+            displayName: "TestIndexDocumentEndpoint"
+        );
+        context.SetEndpoint(endpoint);
+
+        await middleware.InvokeAsync(context, new FakeSecurityValidator(), new FakeLangfuseClient());
+
+        Assert.True(nextCalled);
+        Assert.Equal((int)HttpStatusCode.OK, context.Response.StatusCode);
+    }
 }

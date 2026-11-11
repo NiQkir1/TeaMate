@@ -49,6 +49,7 @@ public class FotoprintAiAgent : IFotoprintAgent
     private readonly FotoprintConfig _config;
     private readonly ILangfuseClient? _langfuse;
     private readonly ILlmJudgeService? _judgeService;
+    private readonly IEmbeddingClient? _embeddingClient;
     private readonly ILogger<FotoprintAiAgent>? _logger;
 
     public FotoprintAiAgent(
@@ -58,7 +59,8 @@ public class FotoprintAiAgent : IFotoprintAgent
         FotoprintConfig config,
         ILangfuseClient? langfuse = null,
         ILlmJudgeService? judgeService = null,
-        ILogger<FotoprintAiAgent>? logger = null)
+        ILogger<FotoprintAiAgent>? logger = null,
+        IEmbeddingClient? embeddingClient = null)
     {
         _gemini = gemini;
         _repo = repo;
@@ -67,6 +69,7 @@ public class FotoprintAiAgent : IFotoprintAgent
         _langfuse = langfuse;
         _judgeService = judgeService;
         _logger = logger;
+        _embeddingClient = embeddingClient;
     }
 
     public async Task<AgentResponse> ProcessMessageAsync(
@@ -188,8 +191,8 @@ public class FotoprintAiAgent : IFotoprintAgent
             1. Заказы и тиражи (1С) -> вызови 'get_order_status'
             2. Производственные метрики, выработка, процент брака, загрузка машин (1С) -> вызови 'get_production_kpis'
             3. Задачи, поручения и CRM-сделки сотрудника (Битрикс24) -> вызови 'get_user_tasks', 'get_crm_deal_info' или 'create_task'
-            4. Расписание и история планерок/совещаний (Календарь) -> вызови 'get_upcoming_meetings', 'get_meeting_history' или 'schedule_meeting'
-            5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, ПВТР и база знаний (RAG) -> вызови 'search_typography_regulations'
+            4. Расписание, история планерок/совещаний и семантический поиск по итогам/стенограммам прошедших Google Meet созвонов (Календарь) -> вызови 'get_upcoming_meetings', 'get_meeting_history', 'search_meeting_rag' или 'schedule_meeting'
+            5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, ПВТР и корпоративная база знаний (RAG регламентов) -> вызови 'search_typography_regulations'
 
             Правило подтверждения (Human-in-the-Loop): для инструментов с атрибутом [RequireConfirmation(true)] ('create_task', 'schedule_meeting') без подтверждения пользователя (сейчас confirmed={isConfirmedByUser}) сначала выведи точный «📋 План действий (требуется подтверждение)» со всеми параметрами и попроси подтвердить выполнение («Да, подтверждаю» / «Выполняй»). Если confirmed=True — сразу вызови инструмент создания.
             Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов, не опускай важные детали ответа инструментов (наличие материалов/остатков, сроки, риски, время и участников встреч).
@@ -306,6 +309,17 @@ public class FotoprintAiAgent : IFotoprintAgent
             var userAccessGroups = (secContext?.AccessGroups is { Count: > 0 } ag)
                 ? ag.Union(new[] { "all" }, StringComparer.OrdinalIgnoreCase).ToList()
                 : new List<string> { "all" };
+            if (secContext != null)
+            {
+                if (secContext.MasterId > 0 && !userAccessGroups.Contains($"master:{secContext.MasterId}", StringComparer.OrdinalIgnoreCase))
+                {
+                    userAccessGroups.Add($"master:{secContext.MasterId}");
+                }
+                if (secContext.IsExecutive && !userAccessGroups.Contains("c-level", StringComparer.OrdinalIgnoreCase))
+                {
+                    userAccessGroups.Add("c-level");
+                }
+            }
             var execTasks = calls.Select(async fnCall =>
             {
                 var callId = !string.IsNullOrWhiteSpace(fnCall.CallId)
@@ -550,8 +564,9 @@ public class FotoprintAiAgent : IFotoprintAgent
                 "create_task" => await Tool_create_task(arguments, telegramId, defaultEmployeeId, traceId, isConfirmed, ct),
                 "get_upcoming_meetings" => await Tool_get_upcoming_meetings(arguments, telegramId, traceId, ct),
                 "get_meeting_history" => await Tool_get_meeting_history(arguments, telegramId, traceId, ct),
+                "search_meeting_rag" => await Tool_search_meeting_rag(arguments, telegramId, traceId, ct),
                 "schedule_meeting" => await Tool_schedule_meeting(arguments, telegramId, traceId, isConfirmed, ct),
-                "search_typography_regulations" => await Tool_search_typography_regulations(arguments, userAccessGroups, ct),
+                "search_typography_regulations" => await Tool_search_typography_regulations(arguments, telegramId, traceId, userAccessGroups, ct),
                 _ => new { status = "unknown_tool", tool = toolName }
             };
         }
@@ -580,6 +595,7 @@ public class FotoprintAiAgent : IFotoprintAgent
     private static string OneCMcpBaseUrl => ResolveMcpBaseUrl("McpUrls__OneC", "http://mcp-1c:8082", "http://localhost:8082");
     private static string BitrixMcpBaseUrl => ResolveMcpBaseUrl("McpUrls__Bitrix24", "http://mcp-bitrix24:8083", "http://localhost:8083");
     private static string CalendarMcpBaseUrl => ResolveMcpBaseUrl("McpUrls__Calendar", "http://mcp-calendar:8084", "http://localhost:8084");
+    private static string KnowledgeBaseMcpBaseUrl => ResolveMcpBaseUrl("McpUrls__KnowledgeBase", "http://mcp-knowledge-base:8086", "http://localhost:8086");
 
     [RequireConfirmation(false)]
     private Task<object> Tool_get_order_status(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
@@ -689,11 +705,105 @@ public class FotoprintAiAgent : IFotoprintAgent
     }
 
     [RequireConfirmation(false)]
-    private async Task<object> Tool_search_typography_regulations(JsonElement arguments, List<string> userAccessGroups, CancellationToken ct)
+    private async Task<object> Tool_search_meeting_rag(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
+    {
+        var query = TryGetStringArg(arguments, "query") ?? "";
+        var topK = TryGetIntArg(arguments, "top_k") ?? (_config.Rag.TopK > 0 ? _config.Rag.TopK : 5);
+        var url = $"{CalendarMcpBaseUrl}/tools/search_meeting_rag?query={Uri.EscapeDataString(query)}&top_k={topK}";
+
+        try
+        {
+            return await GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger?.LogWarning(ex, "MCP-Calendar недоступен по HTTP ({Url}), используется локальный fallback поиска по meeting_chunks", url);
+        }
+
+        var secContext = await _repo.GetEmployeeSecurityContextAsync(telegramId, ct);
+        if (secContext == null)
+        {
+            return new { found = false, access_denied = true, message = "Не удалось определить сотрудника для поиска по созвонам." };
+        }
+
+        var meetingAccessGroups = new List<string> { $"master:{secContext.MasterId}" };
+        if (secContext.IsExecutive)
+        {
+            meetingAccessGroups.Add("c-level");
+        }
+
+        if (_embeddingClient is not { IsConfigured: true })
+        {
+            return new { found = false, storage_table = "meeting_chunks", message = "Сервис эмбеддингов не настроен." };
+        }
+
+        var queryVector = await _embeddingClient.EmbedTextAsync(query, "RETRIEVAL_QUERY", ct);
+        if (queryVector == null)
+        {
+            return new { found = false, storage_table = "meeting_chunks", message = "Не удалось построить эмбеддинг запроса." };
+        }
+
+        var matchedChunks = await _repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, topK, ct);
+        if (matchedChunks.Count == 0)
+        {
+            return new
+            {
+                found = false,
+                storage_table = "meeting_chunks",
+                master_id = secContext.MasterId,
+                message = "По вашему запросу не найдено доступных созвонов (доступ имеют только участники встречи и директор)."
+            };
+        }
+
+        var bestMeetingId = matchedChunks[0].DocumentId;
+        var meeting = bestMeetingId != Guid.Empty ? await _repo.GetMeetingByIdAsync(bestMeetingId, ct) : null;
+        var protocol = bestMeetingId != Guid.Empty ? await _repo.GetMeetingProtocolAsync(bestMeetingId, ct) : null;
+
+        return new
+        {
+            found = true,
+            storage_table = "meeting_chunks",
+            master_id = secContext.MasterId,
+            meeting_id = bestMeetingId,
+            title = meeting?.Title ?? protocol?.Title ?? "Созвон Google Meet",
+            summary = protocol?.Summary ?? meeting?.Description ?? matchedChunks[0].ChunkText,
+            matched_chunks = matchedChunks.Select(c => new { chunk_id = c.Id, meeting_id = c.DocumentId, text = c.ChunkText }).ToList(),
+            export_docx_url = bestMeetingId != Guid.Empty ? $"/api/meetings/{bestMeetingId}/export-full?format=docx" : null,
+            export_pdf_url = bestMeetingId != Guid.Empty ? $"/api/meetings/{bestMeetingId}/export-full?format=pdf" : null
+        };
+    }
+
+    [RequireConfirmation(false)]
+    private async Task<object> Tool_search_typography_regulations(JsonElement arguments, long telegramId, string traceId, List<string> userAccessGroups, CancellationToken ct)
     {
         var query = TryGetStringArg(arguments, "query") ?? "";
         var topK = _config.Rag.TopK > 0 ? _config.Rag.TopK : 5;
-        var chunks = await _repo.SearchTextChunksAsync(query, userAccessGroups, topK, ct);
+        var url = $"{KnowledgeBaseMcpBaseUrl}/tools/search_typography_regulations?query={Uri.EscapeDataString(query)}&top_k={topK}";
+
+        try
+        {
+            return await GetMcpJsonAsync(url, "MCP-KnowledgeBase", telegramId, traceId, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger?.LogWarning(ex, "MCP-KnowledgeBase недоступен по HTTP ({Url}), используется локальный fallback поиска по регламентам", url);
+        }
+
+        List<CorporateDocumentChunk>? chunks = null;
+        if (_embeddingClient is { IsConfigured: true } && !FotoprintRepository.IsGeneralCatalogQuery(query))
+        {
+            var queryEmbedding = await _embeddingClient.EmbedTextAsync(query, "RETRIEVAL_QUERY", ct);
+            if (queryEmbedding != null)
+            {
+                chunks = await _repo.SearchSimilarChunksAsync(queryEmbedding, userAccessGroups, topK, ct);
+            }
+        }
+
+        if (chunks == null || chunks.Count == 0)
+        {
+            chunks = await _repo.SearchTextChunksAsync(query, userAccessGroups, topK, ct);
+        }
+
         if (chunks.Count > 0)
         {
             return chunks.Select(c => new { chunk_id = c.Id, document_id = c.DocumentId, text = c.ChunkText }).ToList();
@@ -868,8 +978,27 @@ public class FotoprintAiAgent : IFotoprintAgent
                 type = "function",
                 function = new
                 {
+                    name = "search_meeting_rag",
+                    description = "Ищет в изолированном RAG-хранилище прошедших созвонов (Google Meet) саммари, решения и фрагменты стенограмм по смыслу вопроса пользователя. Возвращает только встречи, где текущий сотрудник был участником (или любые для Директора).",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            query = new { type = "string", description = "Вопрос пользователя о содержании или решениях прошедшего созвона" },
+                            top_k = new { type = "integer", description = "Максимум релевантных фрагментов (по умолчанию 5)" }
+                        },
+                        required = new[] { "query" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
                     name = "search_typography_regulations",
-                    description = "Ищет в корпоративной базе знаний (RAG) регламенты типографии, нормы брака оборудования Heidelberg, коммерческую политику и скидки, положение об оплате сверхурочных, правила внутреннего трудового распорядка и список доступных документов (передай query='*' или 'все' для просмотра всех документов в RAG).",
+                    description = "Ищет в корпоративной базе знаний (RAG регламентов) регламенты типографии, нормы брака оборудования Heidelberg, коммерческую политику и скидки, положение об оплате сверхурочных, правила внутреннего трудового распорядка и список доступных документов (передай query='*' или 'все' для просмотра всех документов в RAG).",
                     parameters = new
                     {
                         type = "object",

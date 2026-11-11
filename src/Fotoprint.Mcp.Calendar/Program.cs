@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Fotoprint.Core.Configuration;
 using Fotoprint.Core.Data;
+using Fotoprint.Core.Llm;
 using Fotoprint.Core.Mcp;
+using Fotoprint.Core.Models;
 using Fotoprint.Core.Security;
 using Fotoprint.Core.Telemetry;
 
@@ -18,6 +20,12 @@ var langfusePubKey = builder.Configuration["Langfuse:PublicKey"] ?? "pk-lf-fotop
 var langfuseSecKey = builder.Configuration["Langfuse:SecretKey"] ?? "sk-lf-fotoprint-local";
 
 builder.Services.AddSingleton<IFotoprintRepository>(_ => new FotoprintRepository(connectionString));
+
+builder.Services.AddHttpClient("GeminiEmbeddingHttpClient", c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<IEmbeddingClient>(sp => new GeminiEmbeddingClient(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("GeminiEmbeddingHttpClient"),
+    sp.GetRequiredService<FotoprintConfig>(),
+    sp.GetService<ILogger<GeminiEmbeddingClient>>()));
 
 builder.Services.AddHttpClient<ILangfuseClient, LangfuseClient>();
 builder.Services.AddSingleton(new LangfuseOptions
@@ -96,16 +104,40 @@ var tools = new List<McpToolDefinition>
             },
             required = new[] { "title" }
         }
+    },
+    new()
+    {
+        Name = "search_meeting_rag",
+        Description = "Семантический поиск (RAG) по итогам и стенограммам прошедших созвонов (Google Meet) в изолированной таблице meeting_chunks. Доступ имеют только участники созвона (по MasterId) и Генеральный директор.",
+        InputSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                query = new { type = "string", description = "Вопрос пользователя о том, что обсуждалось на созвоне" },
+                top_k = new { type = "integer", description = "Количество релевантных фрагментов (по умолчанию 5)" }
+            },
+            required = new[] { "query" }
+        }
     }
 };
 
 app.MapGet("/tools/list", () => Results.Ok(new { tools }));
 
-// Tool 1: get_upcoming_meetings
-app.MapGet("/tools/get_upcoming_meetings", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (int? time_window_minutes, IFotoprintRepository repo) =>
+static bool CanAccessMeeting(Meeting meeting, EmployeeSecurityContext? secContext)
 {
+    if (secContext == null) return false;
+    if (secContext.IsExecutive) return true;
+    return meeting.OrganizerId == secContext.EmployeeId || meeting.ParticipantIds.Contains(secContext.EmployeeId);
+}
+
+// Tool 1: get_upcoming_meetings (строго встречи пользователя или все для Директора)
+app.MapGet("/tools/get_upcoming_meetings", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (int? time_window_minutes, IFotoprintRepository repo, HttpContext ctx) =>
+{
+    var secContext = ctx.Items["SecurityContext"] as EmployeeSecurityContext;
     var minutes = time_window_minutes ?? 30;
-    var meetings = await repo.GetUpcomingMeetingsAsync(minutes);
+    var allUpcoming = await repo.GetUpcomingMeetingsAsync(minutes);
+    var meetings = allUpcoming.Where(m => CanAccessMeeting(m, secContext)).ToList();
 
     var allEmps = await repo.GetAllEmployeesAsync();
     var empDict = allEmps.ToDictionary(e => e.Id, e => $"{e.FullName} ({e.Position}, {e.Department})");
@@ -122,7 +154,7 @@ app.MapGet("/tools/get_upcoming_meetings", [RequirePermission("calendar:read_mee
         participants = m.ParticipantIds.Select(pid => empDict.TryGetValue(pid, out var pName) ? pName : $"Сотрудник #{pid}").ToList()
     }).ToList();
 
-    if (result.Count == 0)
+    if (result.Count == 0 && allUpcoming.Count == 0 && secContext != null && (secContext.IsExecutive || secContext.EmployeeId is 1 or 2 or 3))
     {
         var nowMsk = DateTime.UtcNow.AddHours(3);
         return Results.Ok(new[]
@@ -144,10 +176,12 @@ app.MapGet("/tools/get_upcoming_meetings", [RequirePermission("calendar:read_mee
     return Results.Ok(result);
 });
 
-// Tool 2: get_meeting_history
-app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (string topic_keywords, IFotoprintRepository repo) =>
+// Tool 2: get_meeting_history (строго встречи пользователя или все для Директора)
+app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (string topic_keywords, IFotoprintRepository repo, HttpContext ctx) =>
 {
+    var secContext = ctx.Items["SecurityContext"] as EmployeeSecurityContext;
     var allMeetings = await repo.GetUpcomingMeetingsAsync(10000);
+    var accessibleMeetings = allMeetings.Where(m => CanAccessMeeting(m, secContext)).ToList();
     var tokens = (topic_keywords ?? "")
         .Split(new[] { ' ', ',', ';', '№' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Where(t => t.Length >= 3)
@@ -161,7 +195,7 @@ app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meeti
         return tokens.Any(tok => hay.Contains(tok, StringComparison.OrdinalIgnoreCase));
     }
 
-    var matched = allMeetings.Where(m => MatchesTopic(m.Title, m.Description)).ToList();
+    var matched = accessibleMeetings.Where(m => MatchesTopic(m.Title, m.Description)).ToList();
 
     var history = new List<object>();
     foreach (var m in matched)
@@ -182,7 +216,7 @@ app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meeti
         });
     }
 
-    if (history.Count == 0)
+    if (history.Count == 0 && allMeetings.Count == 0 && secContext != null && (secContext.IsExecutive || secContext.EmployeeId is 1 or 2 or 3))
     {
         history.Add(new
         {
@@ -234,6 +268,104 @@ app.MapPost("/tools/schedule_meeting", [RequirePermission("calendar:read_meeting
     });
 });
 
+// Tool 4: search_meeting_rag (изолированный RAG созвонов в meeting_chunks: только участники по MasterId + Директор)
+app.MapGet("/tools/search_meeting_rag", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (
+    HttpContext httpContext,
+    IFotoprintRepository repo,
+    IEmbeddingClient embeddingClient,
+    ILangfuseClient langfuse,
+    CancellationToken ct,
+    string query = "",
+    int? top_k = null) =>
+{
+    var secContext = httpContext.Items["SecurityContext"] as EmployeeSecurityContext;
+    if (secContext == null)
+    {
+        return Results.Json(new
+        {
+            found = false,
+            access_denied = true,
+            message = "Не удалось определить контекст безопасности сотрудника для поиска по созвонам."
+        }, statusCode: 403);
+    }
+
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return Results.BadRequest(new { found = false, message = "Необходимо указать параметр query." });
+    }
+
+    var meetingAccessGroups = new List<string> { $"master:{secContext.MasterId}" };
+    if (secContext.IsExecutive)
+    {
+        meetingAccessGroups.Add("c-level");
+    }
+
+    var queryVector = await embeddingClient.EmbedTextAsync(query, "RETRIEVAL_QUERY", ct);
+    if (queryVector == null)
+    {
+        return Results.Ok(new
+        {
+            found = false,
+            source = "MCP-Calendar",
+            storage_table = "meeting_chunks",
+            master_id = secContext.MasterId,
+            message = "Не удалось построить векторный эмбеддинг запроса."
+        });
+    }
+
+    var effectiveTopK = top_k is > 0 and <= 20 ? top_k.Value : 5;
+    var matchedChunks = await repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, effectiveTopK, ct);
+
+    var traceId = httpContext.Request.Headers["X-Trace-Id"].FirstOrDefault();
+    if (!string.IsNullOrWhiteSpace(traceId))
+    {
+        await langfuse.LogEventAsync(traceId, "MCP:Calendar:SearchMeetingRag", "INFO",
+            $"Meeting RAG search '{query}' for MasterId={secContext.MasterId} (matches={matchedChunks.Count}, groups=[{string.Join(", ", meetingAccessGroups)}])", ct: ct);
+    }
+
+    if (matchedChunks.Count == 0)
+    {
+        return Results.Ok(new
+        {
+            found = false,
+            source = "MCP-Calendar",
+            storage_table = "meeting_chunks",
+            master_id = secContext.MasterId,
+            is_director = secContext.IsExecutive,
+            access_groups = meetingAccessGroups,
+            message = "По вашему запросу не найдено доступных созвонов (доступ имеют только участники встречи и директор)."
+        });
+    }
+
+    var bestMeetingId = matchedChunks[0].DocumentId;
+    Meeting? meeting = bestMeetingId != Guid.Empty ? await repo.GetMeetingByIdAsync(bestMeetingId, ct) : null;
+    MeetingProtocol? protocol = bestMeetingId != Guid.Empty ? await repo.GetMeetingProtocolAsync(bestMeetingId, ct) : null;
+    var summaryText = protocol?.Summary ?? meeting?.Description ?? matchedChunks[0].ChunkText;
+
+    return Results.Ok(new
+    {
+        found = true,
+        source = "MCP-Calendar",
+        storage_table = "meeting_chunks",
+        master_id = secContext.MasterId,
+        is_director = secContext.IsExecutive,
+        meeting_id = bestMeetingId,
+        title = meeting?.Title ?? protocol?.Title ?? "Созвон Google Meet",
+        meeting_date = meeting?.StartTime.ToString("yyyy-MM-dd HH:mm (МСК)"),
+        summary = summaryText,
+        decisions = protocol?.Decisions ?? new List<string>(),
+        matched_chunks = matchedChunks.Select(c => new
+        {
+            chunk_id = c.Id,
+            meeting_id = c.DocumentId,
+            chunk_index = c.ChunkIndex,
+            text = c.ChunkText
+        }).ToList(),
+        export_docx_url = bestMeetingId != Guid.Empty ? $"/api/meetings/{bestMeetingId}/export-full?master_id={secContext.MasterId}&format=docx" : null,
+        export_pdf_url = bestMeetingId != Guid.Empty ? $"/api/meetings/{bestMeetingId}/export-full?master_id={secContext.MasterId}&format=pdf" : null
+    });
+});
+
 // MCP tools call router
 app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepository repo, ISecurityValidator validator, ILangfuseClient langfuse, HttpContext ctx) =>
 {
@@ -269,7 +401,9 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
             else if (int.TryParse(wObj?.ToString(), out var pWin)) window = pWin;
         }
 
-        var meetings = await repo.GetUpcomingMeetingsAsync(window);
+        var meetings = (await repo.GetUpcomingMeetingsAsync(window))
+            .Where(m => CanAccessMeeting(m, empContext))
+            .ToList();
         return Results.Ok(new McpJsonRpcResponse
         {
             Id = request.Id,
@@ -280,19 +414,39 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
     if (toolName == "get_meeting_history")
     {
         var kw = request.Params?.Arguments?.GetValueOrDefault("topic_keywords")?.ToString() ?? "";
+        var accessible = (await repo.GetUpcomingMeetingsAsync(10000))
+            .Where(m => CanAccessMeeting(m, empContext))
+            .ToList();
+        var filtered = accessible
+            .Where(m => string.IsNullOrWhiteSpace(kw) ||
+                        (m.Title?.Contains(kw, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                        (m.Description?.Contains(kw, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Select(m => new { meeting_id = m.Id, title = m.Title, date = m.StartTime.ToString("yyyy-MM-dd"), summary = m.Description })
+            .ToList();
         return Results.Ok(new McpJsonRpcResponse
         {
             Id = request.Id,
-            Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
-            {
-                topic = kw,
-                history = "Найден протокол еженедельной координации руководителей. Принято решение заказать валы для Heidelberg."
-            }))
+            Result = McpToolCallResult.Text(JsonSerializer.Serialize(new { topic = kw, meetings = filtered }))
         });
     }
 
     if (toolName == "schedule_meeting")
     {
+        var confirmedHeader = ctx.Request.Headers["X-User-Confirmed"].ToString();
+        if (!string.Equals(confirmedHeader, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Ok(new McpJsonRpcResponse
+            {
+                Id = request.Id,
+                Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
+                {
+                    status = "confirmation_required",
+                    requires_confirmation = true,
+                    message = "Требуется подтверждение пользователя (X-User-Confirmed: true) для назначения встречи."
+                }))
+            });
+        }
+
         var title = request.Params?.Arguments?.GetValueOrDefault("title")?.ToString() ?? "Совещание";
         var meetingId = Guid.NewGuid();
         return Results.Ok(new McpJsonRpcResponse

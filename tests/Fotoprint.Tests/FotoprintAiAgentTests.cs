@@ -150,7 +150,10 @@ public class FotoprintAiAgentTests
         public Task FreezeContextAsync(Guid sessionId, string contextId, CancellationToken ct = default) => Task.CompletedTask;
         public Task<Guid> SaveDocumentAsync(string title, string sourceType, string? filePath, string? department, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
         public Task SaveDocumentChunksAsync(Guid documentId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<List<CorporateDocumentChunk>> GetChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+        public Task UpdateChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default) => Task.CompletedTask;
         public Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+        public Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
         public Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
         public Task<Guid> CreateMeetingAsync(string title, string? description, DateTime startTime, DateTime? endTime = null, string status = "completed", int? organizerId = null, List<int>? participantIds = null, CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
         public Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default) => Task.FromResult(new List<Meeting>());
@@ -489,5 +492,125 @@ public class FotoprintAiAgentTests
         public Task LogEventAsync(string traceId, string name, string level = "DEFAULT", string? message = null, object? metadata = null, CancellationToken ct = default) => Task.CompletedTask;
         public Task LogSecurityAlertAsync(string traceId, long telegramId, string toolOrAction, string requiredPermission, string reason, CancellationToken ct = default) => Task.CompletedTask;
         public Task LogScoreAsync(string traceId, string name, double value, string? comment = null, string? observationId = null, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    [Fact]
+    public void Every_Agent_Tool_Method_Has_RequireConfirmation_Attribute()
+    {
+        var toolMethods = typeof(FotoprintAiAgent)
+            .GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            .Where(m => m.Name.StartsWith("Tool_", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.NotEmpty(toolMethods);
+        foreach (var method in toolMethods)
+        {
+            var attr = System.Reflection.CustomAttributeExtensions.GetCustomAttribute<RequireConfirmationAttribute>(method);
+            Assert.NotNull(attr);
+        }
+
+        Assert.False(FotoprintAiAgent.RequiresConfirmation("search_typography_regulations"));
+        Assert.False(FotoprintAiAgent.RequiresConfirmation("search_meeting_rag"));
+        Assert.True(FotoprintAiAgent.RequiresConfirmation("create_task"));
+        Assert.True(FotoprintAiAgent.RequiresConfirmation("schedule_meeting"));
+    }
+
+    [Theory]
+    [InlineData("search_typography_regulations", ":8086/tools/search_typography_regulations")]
+    [InlineData("search_meeting_rag", ":8084/tools/search_meeting_rag")]
+    public async Task Agent_Routes_Rag_Tools_To_Dedicated_Mcp_Servers(string toolName, string expectedUrlFragment)
+    {
+        var capturedUrls = new List<string>();
+        var gemini = new SingleToolGeminiClient(toolName, JsonSerializer.SerializeToElement(new { query = "Heidelberg" }));
+        var httpFactory = new UrlCapturingHttpClientFactory(capturedUrls, System.Net.HttpStatusCode.OK, new { status = "ok" });
+        var agent = new FotoprintAiAgent(gemini, new FakeFotoprintRepository(), httpFactory, new FotoprintConfig(), null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(100001, 55555, $"Найди информацию ({toolName})");
+
+        Assert.True(res.IsSuccess);
+        Assert.Contains(toolName, res.ToolsInvoked);
+        Assert.Contains(capturedUrls, u => u.Contains(expectedUrlFragment, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Agent_Does_Not_Fallback_Locally_When_Mcp_Returns_403()
+    {
+        var capturedUrls = new List<string>();
+        var gemini = new SingleToolGeminiClient("search_meeting_rag", JsonSerializer.SerializeToElement(new { query = "секретный созвон" }));
+        var httpFactory = new UrlCapturingHttpClientFactory(capturedUrls, System.Net.HttpStatusCode.Forbidden, new { error = "Access Denied" });
+        var agent = new FotoprintAiAgent(gemini, new FakeFotoprintRepository(), httpFactory, new FotoprintConfig(), null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(100002, 55556, "Что обсуждали на секретном созвоне?");
+
+        Assert.True(res.IsSuccess);
+        Assert.Single(capturedUrls);
+        Assert.Contains(":8084/tools/search_meeting_rag", capturedUrls[0]);
+    }
+
+    private class SingleToolGeminiClient : IGeminiClient
+    {
+        private readonly string _toolName;
+        private readonly JsonElement _args;
+        private int _step;
+
+        public SingleToolGeminiClient(string toolName, JsonElement args)
+        {
+            _toolName = toolName;
+            _args = args;
+        }
+
+        public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => Task.FromResult(new GeminiGenerateResponse(true, "ok", "STOP", 1, 1, 2, 1, null));
+
+        public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            _step++;
+            if (_step == 1)
+            {
+                return Task.FromResult(new GeminiTurnResponse(true, null, new GeminiFunctionCall(_toolName, _args), "tool_calls", 20, 10, 30, 1, null));
+            }
+            return Task.FromResult(new GeminiTurnResponse(true, "Готово.", null, "STOP", 30, 10, 40, 1, null));
+        }
+
+        public GeminiCallStats GetStats() => new(2, 2, 60, 58, 1.0, null, 0);
+    }
+
+    private class UrlCapturingHttpClientFactory : IHttpClientFactory
+    {
+        private readonly List<string> _urls;
+        private readonly System.Net.HttpStatusCode _statusCode;
+        private readonly object _payload;
+
+        public UrlCapturingHttpClientFactory(List<string> urls, System.Net.HttpStatusCode statusCode, object payload)
+        {
+            _urls = urls;
+            _statusCode = statusCode;
+            _payload = payload;
+        }
+
+        public HttpClient CreateClient(string name) => new(new CapturingHandler(_urls, _statusCode, _payload));
+
+        private class CapturingHandler : HttpMessageHandler
+        {
+            private readonly List<string> _urls;
+            private readonly System.Net.HttpStatusCode _statusCode;
+            private readonly object _payload;
+
+            public CapturingHandler(List<string> urls, System.Net.HttpStatusCode statusCode, object payload)
+            {
+                _urls = urls;
+                _statusCode = statusCode;
+                _payload = payload;
+            }
+
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                _urls.Add(request.RequestUri?.ToString() ?? "");
+                return Task.FromResult(new HttpResponseMessage(_statusCode)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(_payload), System.Text.Encoding.UTF8, "application/json")
+                });
+            }
+        }
     }
 }

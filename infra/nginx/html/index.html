@@ -1847,7 +1847,7 @@
           console.warn('Base64 docx download error, falling back to endpoint', e);
         }
       }
-      window.open(`/api/meetings/${encodeURIComponent(meetingId)}/export-docx`, '_blank');
+      window.open(`/api/meetings/${encodeURIComponent(meetingId)}/export-docx?telegram_id=${encodeURIComponent(currentTelegramId)}`, '_blank');
     }
   </script>
 </body>

@@ -20,7 +20,7 @@ public class FotoprintConfigTests
         Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", config.Llm.Models.FastModel);
         Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", config.Llm.Models.FallbackModel);
         Assert.NotEqual(config.Llm.Models.ChatModel, config.Llm.Models.FallbackModel);
-        Assert.Equal("text-embedding-004", config.Llm.Models.EmbeddingModel);
+        Assert.Equal("gemini-embedding-2", config.Llm.Models.EmbeddingModel);
 
         // 2. Проверка гиперпараметров (температура, токены)
         Assert.Equal(0.2, config.Llm.Parameters.Temperature);

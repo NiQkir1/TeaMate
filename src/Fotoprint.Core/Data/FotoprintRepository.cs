@@ -31,8 +31,16 @@ public interface IFotoprintRepository
     // Corporate Documents & Chunks (RAG)
     Task<Guid> SaveDocumentAsync(string title, string sourceType, string? filePath, string? department, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default);
     Task SaveDocumentChunksAsync(Guid documentId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, CancellationToken ct = default);
+    Task<List<CorporateDocumentChunk>> GetChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default);
+    Task UpdateChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default);
     Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default);
     Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default);
+
+    // Meeting Chunks (Isolated Meeting RAG)
+    Task SaveMeetingChunksAsync(Guid meetingId, Guid? protocolId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default) => Task.CompletedTask;
+    Task<List<CorporateDocumentChunk>> GetMeetingChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+    Task UpdateMeetingChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default) => Task.CompletedTask;
+    Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default);
 
     // Meetings, Notes, Protocols, Action Items
     Task<Guid> CreateMeetingAsync(
@@ -59,11 +67,15 @@ public interface IFotoprintRepository
 public class FotoprintRepository : IFotoprintRepository
 {
     private readonly string _connectionString;
+    private static bool _meetingChunksEnsured;
+    private static readonly SemaphoreSlim _meetingSchemaLock = new(1, 1);
 
     static FotoprintRepository()
     {
         DefaultTypeMap.MatchNamesWithUnderscores = true;
         SqlMapper.AddTypeHandler(new VectorTypeHandler());
+        SqlMapper.AddTypeHandler(new JsonbListTypeHandler<int>());
+        SqlMapper.AddTypeHandler(new JsonbListTypeHandler<string>());
     }
 
     public FotoprintRepository(string connectionString)
@@ -510,20 +522,187 @@ public class FotoprintRepository : IFotoprintRepository
         }
     }
 
+    public async Task<List<CorporateDocumentChunk>> GetChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   c.chunk_text AS ChunkText, c.metadata::text AS MetadataJson
+            FROM corporate_document_chunks c
+            WHERE c.embedding IS NULL
+            ORDER BY c.created_at ASC, c.chunk_index ASC
+            LIMIT @Limit;
+        """;
+        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new { Limit = limit }, cancellationToken: ct));
+        return chunks.ToList();
+    }
+
+    public async Task UpdateChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var vec = new Vector(embedding);
+        const string sql = "UPDATE corporate_document_chunks SET embedding = @Embedding WHERE id = @Id;";
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = chunkId, Embedding = vec }, cancellationToken: ct));
+    }
+
+    private static async Task EnsureMeetingChunksSchemaAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        if (_meetingChunksEnsured) return;
+        await _meetingSchemaLock.WaitAsync(ct);
+        try
+        {
+            if (_meetingChunksEnsured) return;
+            const string ddl = """
+                CREATE TABLE IF NOT EXISTS meeting_chunks (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    meeting_id UUID NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+                    protocol_id UUID REFERENCES meeting_protocols(id) ON DELETE SET NULL,
+                    chunk_index INT NOT NULL,
+                    chunk_text TEXT NOT NULL,
+                    embedding vector(1536),
+                    allowed_access_groups JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    metadata JSONB DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_meeting_chunks_meeting_id ON meeting_chunks(meeting_id);
+                CREATE INDEX IF NOT EXISTS idx_meeting_chunks_allowed_groups ON meeting_chunks USING GIN(allowed_access_groups);
+                CREATE INDEX IF NOT EXISTS idx_meeting_chunks_embedding ON meeting_chunks USING hnsw (embedding vector_cosine_ops);
+            """;
+            await conn.ExecuteAsync(new CommandDefinition(ddl, cancellationToken: ct));
+            _meetingChunksEnsured = true;
+        }
+        finally
+        {
+            _meetingSchemaLock.Release();
+        }
+    }
+
+    public async Task SaveMeetingChunksAsync(Guid meetingId, Guid? protocolId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var groupsJson = JsonSerializer.Serialize(allowedAccessGroups ?? new List<string>());
+        var metaJson = metadata != null ? JsonSerializer.Serialize(metadata) : "{}";
+
+        for (int i = 0; i < chunkTexts.Count; i++)
+        {
+            var text = chunkTexts[i];
+            Vector? vec = embeddings.Count > i && embeddings[i] != null ? new Vector(embeddings[i]!) : null;
+
+            const string sql = """
+                INSERT INTO meeting_chunks (meeting_id, protocol_id, chunk_index, chunk_text, embedding, allowed_access_groups, metadata)
+                VALUES (@MeetingId, @ProtocolId, @ChunkIndex, @ChunkText, @Embedding, @Groups::jsonb, @Metadata::jsonb);
+            """;
+            await conn.ExecuteAsync(new CommandDefinition(sql, new
+            {
+                MeetingId = meetingId,
+                ProtocolId = protocolId,
+                ChunkIndex = i + 1,
+                ChunkText = text,
+                Embedding = vec,
+                Groups = groupsJson,
+                Metadata = metaJson
+            }, cancellationToken: ct));
+        }
+    }
+
+    public async Task<List<CorporateDocumentChunk>> GetMeetingChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        const string sql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText, mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            WHERE mc.embedding IS NULL
+            ORDER BY mc.created_at ASC, mc.chunk_index ASC
+            LIMIT @Limit;
+        """;
+        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new { Limit = limit }, cancellationToken: ct));
+        return chunks.ToList();
+    }
+
+    public async Task UpdateMeetingChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var vec = new Vector(embedding);
+        const string sql = "UPDATE meeting_chunks SET embedding = @Embedding WHERE id = @Id;";
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = chunkId, Embedding = vec }, cancellationToken: ct));
+    }
+
+    public static bool IsGeneralCatalogQuery(string? queryText)
+    {
+        var normalizedQuery = (queryText ?? "").Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(normalizedQuery)
+            || normalizedQuery is "*" or "all" or "все" or "раг" or "rag"
+            || normalizedQuery.Contains("что лежит")
+            || normalizedQuery.Contains("что есть")
+            || normalizedQuery.Contains("какие документ")
+            || normalizedQuery.Contains("какие регламент")
+            || normalizedQuery.Contains("список документ")
+            || normalizedQuery.Contains("база знаний")
+            || normalizedQuery.Contains(" в раг")
+            || normalizedQuery.Contains(" в rag");
+    }
+
     public async Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
         var vec = new Vector(queryEmbedding);
-        var groupsJson = JsonSerializer.Serialize(userAccessGroups);
+        var effectiveGroups = (userAccessGroups != null && userAccessGroups.Count > 0)
+            ? userAccessGroups.Union(new[] { "all" }, StringComparer.OrdinalIgnoreCase).ToList()
+            : new List<string> { "all" };
+        var groupsJson = JsonSerializer.Serialize(effectiveGroups);
 
         const string sql = """
-            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex, c.chunk_text AS ChunkText, c.embedding, c.metadata::text AS MetadataJson
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   COALESCE(NULLIF(c.metadata::text, '{}'), d.metadata::text) AS MetadataJson
             FROM corporate_document_chunks c
-            WHERE (
-                c.allowed_access_groups ? 'all' 
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
+            JOIN corporate_documents d ON d.id = c.document_id
+            WHERE d.source_type <> 'google_meet'
+              AND c.embedding IS NOT NULL
+              AND (
+                  c.allowed_access_groups ? 'all' 
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
             ORDER BY c.embedding <=> @QueryVec
+            LIMIT @TopK;
+        """;
+
+        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new
+        {
+            QueryVec = vec,
+            Groups = groupsJson,
+            TopK = topK
+        }, cancellationToken: ct));
+
+        return chunks.ToList();
+    }
+
+    public async Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+    {
+        if (meetingAccessGroups == null || meetingAccessGroups.Count == 0)
+        {
+            return new List<CorporateDocumentChunk>();
+        }
+
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var vec = new Vector(queryEmbedding);
+        var groupsJson = JsonSerializer.Serialize(meetingAccessGroups.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+
+        // Строгая изоляция созвонов в отдельной таблице meeting_chunks: доступ только по master:<id> участника или c-level (Директор), без 'all'
+        const string sql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText,
+                   mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            JOIN meetings m ON m.id = mc.meeting_id
+            WHERE mc.embedding IS NOT NULL
+              AND mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+            ORDER BY mc.embedding <=> @QueryVec
             LIMIT @TopK;
         """;
 
@@ -546,17 +725,7 @@ public class FotoprintRepository : IFotoprintRepository
         var groupsJson = JsonSerializer.Serialize(effectiveGroups);
 
         // Если запрос пустой или общий («что лежит в раг», «все документы», «база знаний») — возвращаем все доступные пользователю регламенты
-        var normalizedQuery = (queryText ?? "").Trim().ToLowerInvariant();
-        bool isGeneralCatalogQuery = string.IsNullOrWhiteSpace(normalizedQuery)
-            || normalizedQuery is "*" or "all" or "все" or "раг" or "rag"
-            || normalizedQuery.Contains("что лежит")
-            || normalizedQuery.Contains("что есть")
-            || normalizedQuery.Contains("какие документ")
-            || normalizedQuery.Contains("какие регламент")
-            || normalizedQuery.Contains("список документ")
-            || normalizedQuery.Contains("база знаний")
-            || normalizedQuery.Contains(" в раг")
-            || normalizedQuery.Contains(" в rag");
+        bool isGeneralCatalogQuery = IsGeneralCatalogQuery(queryText);
 
         const string allAccessibleSql = """
             SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
@@ -564,10 +733,11 @@ public class FotoprintRepository : IFotoprintRepository
                    c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
             JOIN corporate_documents d ON d.id = c.document_id
-            WHERE (
-                c.allowed_access_groups ? 'all'
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
+            WHERE d.source_type <> 'google_meet'
+              AND (
+                  c.allowed_access_groups ? 'all'
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
             ORDER BY d.created_at ASC, c.chunk_index ASC
             LIMIT @TopK;
         """;
@@ -588,11 +758,12 @@ public class FotoprintRepository : IFotoprintRepository
                    c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
             JOIN corporate_documents d ON d.id = c.document_id
-            WHERE (
-                c.allowed_access_groups ? 'all' 
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
-            AND (c.chunk_text ILIKE '%' || @QueryText || '%' OR d.title ILIKE '%' || @QueryText || '%')
+            WHERE d.source_type <> 'google_meet'
+              AND (
+                  c.allowed_access_groups ? 'all' 
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
+              AND (c.chunk_text ILIKE '%' || @QueryText || '%' OR d.title ILIKE '%' || @QueryText || '%')
             LIMIT @TopK;
         """;
 
@@ -640,11 +811,12 @@ public class FotoprintRepository : IFotoprintRepository
                    c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
             JOIN corporate_documents d ON d.id = c.document_id
-            WHERE (
-                c.allowed_access_groups ? 'all'
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
-            AND (c.chunk_text ILIKE ANY(@Patterns) OR d.title ILIKE ANY(@Patterns))
+            WHERE d.source_type <> 'google_meet'
+              AND (
+                  c.allowed_access_groups ? 'all'
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
+              AND (c.chunk_text ILIKE ANY(@Patterns) OR d.title ILIKE ANY(@Patterns))
             LIMIT @TopK;
         """;
 
@@ -806,6 +978,30 @@ public class FotoprintRepository : IFotoprintRepository
             WHERE id = @Id;
         """;
         await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = actionItemId, Status = status, BitrixTaskId = bitrix24TaskId }, cancellationToken: ct));
+    }
+}
+
+internal sealed class JsonbListTypeHandler<T> : SqlMapper.TypeHandler<List<T>>
+{
+    public override void SetValue(System.Data.IDbDataParameter parameter, List<T>? value)
+    {
+        parameter.Value = value == null ? "[]" : JsonSerializer.Serialize(value);
+    }
+
+    public override List<T> Parse(object value)
+    {
+        if (value is null or DBNull) return new List<T>();
+        if (value is List<T> typed) return typed;
+        var json = value.ToString();
+        if (string.IsNullOrWhiteSpace(json)) return new List<T>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<T>>(json) ?? new List<T>();
+        }
+        catch
+        {
+            return new List<T>();
+        }
     }
 }
 
