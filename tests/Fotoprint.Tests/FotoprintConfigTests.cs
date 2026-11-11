@@ -1,0 +1,67 @@
+using Fotoprint.Core.Configuration;
+using Xunit;
+
+namespace Fotoprint.Tests;
+
+public class FotoprintConfigTests
+{
+    [Fact]
+    public void Config_Loads_Successfully_From_Yaml_File()
+    {
+        // Ищем config.yaml относительно тестового запуска
+        var config = FotoprintConfigLoader.Load();
+
+        Assert.NotNull(config);
+        Assert.Equal("1.0", config.Version);
+
+        // 1. Проверка LLM параметров (Gemini по умолчанию)
+        Assert.Equal("gemini", config.Llm.Provider);
+        Assert.Equal("gemini-1.5-flash", config.Llm.Models.ChatModel);
+        Assert.Equal("gemini-1.5-flash", config.Llm.Models.FastModel);
+        Assert.Equal("text-embedding-004", config.Llm.Models.EmbeddingModel);
+
+        // 2. Проверка гиперпараметров (температура, токены)
+        Assert.Equal(0.2, config.Llm.Parameters.Temperature);
+        Assert.Equal(4096, config.Llm.Parameters.MaxTokens);
+        Assert.Equal(0.95, config.Llm.Parameters.TopP);
+
+        // 3. Проверка Rate Limits (расширенный RPM для автономного вызова инструментов)
+        Assert.Equal(60, config.Llm.RateLimits.Rpm);
+        Assert.Equal(1000000, config.Llm.RateLimits.Tpm);
+        Assert.Equal(5, config.Llm.RateLimits.MaxConcurrentRequests);
+
+        // 4. Проверка устойчивости и 3 повторов
+        Assert.Equal(3, config.Resilience.MaxRetries);
+        Assert.True(config.Resilience.AutoRollbackOnFailure);
+
+        // 5. Проверка RAG
+        Assert.Equal(1536, config.Rag.EmbeddingDimensions);
+        Assert.Equal(5, config.Rag.TopK);
+        Assert.Equal(800, config.Rag.Chunking.ChunkSize);
+
+        // 6. Проверка параметров защиты периметра и изоляции MCP
+        Assert.True(config.Security.EnforceInternalServiceAuth);
+        Assert.True(config.Security.AntiPortScanEnabled);
+        Assert.True(config.Security.BlockKnownScannerUserAgents);
+        Assert.NotEmpty(config.Security.ScannerProbePathPatterns);
+
+        // 7. Проверка конфигурации автономного агента
+        Assert.Equal("autonomous_tool_calling", config.Agent.Mode);
+    }
+
+    [Fact]
+    public void Config_Fallback_To_Defaults_If_File_Not_Found()
+    {
+        var config = FotoprintConfigLoader.Load("non_existing_file_9999.yaml");
+
+        Assert.NotNull(config);
+        Assert.Equal("gemini", config.Llm.Provider);
+        Assert.Equal("gemini-1.5-flash", config.Llm.Models.ChatModel);
+        Assert.Equal(60, config.Llm.RateLimits.Rpm);
+        Assert.Equal(0.2, config.Llm.Parameters.Temperature);
+        Assert.Equal(4096, config.Llm.Parameters.MaxTokens);
+        Assert.Equal(3, config.Resilience.MaxRetries);
+        Assert.True(config.Security.EnforceInternalServiceAuth);
+        Assert.Equal("autonomous_tool_calling", config.Agent.Mode);
+    }
+}

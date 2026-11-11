@@ -1,0 +1,75 @@
+# =============================================================================
+# Fotoprint AI Copilot - Декларативный манифест зависимостей и библиотек
+# =============================================================================
+version: "1.0"
+
+# 1. Пакеты .NET 9 (NuGet) для сервисов ядра, шлюза и MCP
+dotnet_packages:
+  core:
+    - name: "Npgsql"
+      version: "9.0.2"
+      description: "Высокопроизводительный драйвер PostgreSQL 16"
+    - name: "Pgvector"
+      version: "0.3.0"
+      description: "Поддержка векторного типа данных vector(1536)"
+    - name: "Pgvector.Dapper"
+      version: "0.3.0"
+      description: "Интеграция pgvector с Dapper micro-ORM"
+    - name: "Dapper"
+      version: "2.1.35"
+      description: "Micro-ORM для быстрых SQL-запросов"
+    - name: "DocumentFormat.OpenXml"
+      version: "3.1.1"
+      description: "Парсинг и генерация документов Word (.docx) и Excel (.xlsx)"
+    - name: "PdfPig"
+      version: "0.1.9"
+      description: "Извлечение текстового слоя из PDF-файлов без C++ зависимостей"
+    - name: "YamlDotNet"
+      version: "16.2.1"
+      description: "Парсинг и сериализация YAML конфигураций (config.yaml)"
+  
+  shared_runtimes:
+    - name: "Microsoft.Extensions.Caching.Memory"
+      version: "9.0.0"
+      description: "In-memory кэширование паспортов безопасности сотрудников"
+
+# 2. Модули и библиотеки для среды оркестрации n8n
+n8n_modules:
+  npm_packages:
+    - "axios@1.7.7"
+    - "lodash@4.17.21"
+    - "form-data@4.0.0"
+    - "pdf-parse@1.1.1"
+    - "docx@8.5.0"
+  allow_external: "axios,lodash,form-data,pdf-parse,docx"
+
+# 3. Внешние коннекторы и готовые MCP-серверы
+mcp_servers:
+  bitrix24:
+    type: "docker"
+    image: "bit2beat/bitrix24-mcp:latest"
+    enabled: true
+    port: 8085
+    env:
+      - "BITRIX24_WEBHOOK_URL"
+  
+  onec_odata:
+    type: "internal-proxy"
+    package: "Fotoprint.Mcp.OneC"
+    port: 8082
+    description: "Защищенный MCP фасад к 1С:Управление нашей типографией с RBAC"
+
+# 4. Инфраструктурные шлюзы и сетевые балансировщики
+infrastructure:
+  ingress_load_balancer:
+    image: "nginx:alpine"
+    port: 80
+    description: "Внешний reverse proxy, сетевой rate limiting (limit_req) и сглаживание burst-пиков"
+    config: "infra/nginx/nginx.conf"
+
+# 5. Вспомогательные Python-библиотеки (для standalone FastMCP)
+python_packages:
+  - "fastmcp>=0.1.0"
+  - "httpx>=0.27.0"
+  - "pydantic>=2.7.0"
+

@@ -1,0 +1,164 @@
+{
+  "name": "03_Pre_Meeting_Prep_Cron",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "name": "Cron Every 15 Min",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "id": "node-cron-trigger"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "manual-pre-meeting-prep",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Manual Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 480],
+      "id": "node-manual-prep-trigger"
+    },
+    {
+      "parameters": {
+        "url": "http://mcp-calendar:8084/tools/get_upcoming_meetings?time_window_minutes=30",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Telegram-Id",
+              "value": "100001"
+            },
+            {
+              "name": "X-Internal-Service-Key",
+              "value": "fotoprint-internal-service-secret-token-2026"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "name": "Get Upcoming Meetings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 380],
+      "id": "node-cal-meetings"
+    },
+    {
+      "parameters": {
+        "jsCode": "const meetings = $json;\nif (!Array.isArray(meetings) || meetings.length === 0) {\n  return [];\n}\n\nreturn meetings.map(m => ({\n  json: {\n    meeting_id: m.meeting_id,\n    title: m.title,\n    description: m.description,\n    start_time: m.start_time,\n    organizer: m.organizer,\n    participant_ids: m.participant_ids,\n    participants: m.participants\n  }\n}));"
+      },
+      "name": "Filter Upcoming Meetings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 380],
+      "id": "node-filter-meetings"
+    },
+    {
+      "parameters": {
+        "url": "=http://mcp-bitrix24:8083/tools/get_user_tasks?employee_id=2",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Telegram-Id",
+              "value": "100001"
+            },
+            {
+              "name": "X-Internal-Service-Key",
+              "value": "fotoprint-internal-service-secret-token-2026"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "name": "Get Participant Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 380],
+      "id": "node-fetch-tasks"
+    },
+    {
+      "parameters": {
+        "jsCode": "const meeting = $('Filter Upcoming Meetings').item.json;\nconst tasks = $json;\n\nlet taskBullets = Array.isArray(tasks) && tasks.length > 0\n  ? tasks.map(t => `  • ${t.title} (дедлайн: ${t.deadline || 'не указан'}, статус: ${t.status})`).join('\\n')\n  : '  • Нет незакрытых поручений.';\n\nconst briefText = `🔔 **Проактивный бриф к встрече за 20 минут**\\n\\n` +\n  `📌 **Тема**: ${meeting.title}\\n` +\n  `🕒 **Начало**: ${meeting.start_time}\\n` +\n  `👤 **Организатор**: ${meeting.organizer}\\n` +\n  `👥 **Участники**: ${meeting.participants.join(', ')}\\n\\n` +\n  `📝 **Повестка и цели**:\\n${meeting.description}\\n\\n` +\n  `⚠️ **Незакрытые задачи участников в Битрикс24**:\\n${taskBullets}\\n\\n` +\n  `📚 **Регламентные нормы (RAG)**:\\n  • Технологический регламент: допустимый брак офсета на Heidelberg Speedmaster не более 2.5%. Все инциденты перерасхода оформляются актом смены.`;\n\nreturn [{\n  json: {\n    meeting_id: meeting.meeting_id,\n    title: meeting.title,\n    brief_markdown: briefText\n  }\n}];"
+      },
+      "name": "Synthesize Pre-Meeting Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 380],
+      "id": "node-synth-brief"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "name": "Return Brief Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 380],
+      "id": "node-respond-brief"
+    }
+  ],
+  "connections": {
+    "Cron Every 15 Min": {
+      "main": [
+        [
+          { "node": "Get Upcoming Meetings", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Manual Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Get Upcoming Meetings", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Upcoming Meetings": {
+      "main": [
+        [
+          { "node": "Filter Upcoming Meetings", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Filter Upcoming Meetings": {
+      "main": [
+        [
+          { "node": "Get Participant Tasks", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Participant Tasks": {
+      "main": [
+        [
+          { "node": "Synthesize Pre-Meeting Brief", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Synthesize Pre-Meeting Brief": {
+      "main": [
+        [
+          { "node": "Return Brief Result", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  }
+}
+

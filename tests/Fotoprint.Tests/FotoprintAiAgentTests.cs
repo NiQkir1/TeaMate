@@ -1,0 +1,224 @@
+using System.Text.Json;
+using Fotoprint.Core.Agents;
+using Fotoprint.Core.Configuration;
+using Fotoprint.Core.Data;
+using Fotoprint.Core.Llm;
+using Fotoprint.Core.Models;
+using Fotoprint.Core.Security;
+using Fotoprint.Core.Telemetry;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace Fotoprint.Tests;
+
+public class FotoprintAiAgentTests
+{
+    private class FakeGeminiClient : IGeminiClient
+    {
+        private int _callStep = 0;
+        private readonly bool _triggerTool;
+
+        public FakeGeminiClient(bool triggerTool = true)
+        {
+            _triggerTool = triggerTool;
+        }
+
+        public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            return Task.FromResult(new GeminiGenerateResponse(true, "Ответ", "STOP", 10, 20, 30, 1, null));
+        }
+
+        public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            _callStep++;
+
+            if (!_triggerTool)
+            {
+                // Сразу текстовый ответ без инструментов
+                return Task.FromResult(new GeminiTurnResponse(
+                    IsSuccess: true,
+                    Text: "Здравствуйте! Я корпоративный AI-ассистент типографии Фотопринт.",
+                    FunctionCall: null,
+                    FinishReason: "STOP",
+                    PromptTokens: 25,
+                    CandidatesTokens: 15,
+                    TotalTokens: 40,
+                    AttemptsMade: 1,
+                    ErrorMessage: null));
+            }
+
+            if (_callStep == 1)
+            {
+                // Шаг 1: Модель автономно решает вызвать инструмент get_production_kpis
+                var argsJson = JsonSerializer.SerializeToElement(new { department = "Офсетный цех" });
+                return Task.FromResult(new GeminiTurnResponse(
+                    IsSuccess: true,
+                    Text: null,
+                    FunctionCall: new GeminiFunctionCall("get_production_kpis", argsJson),
+                    FinishReason: "STOP",
+                    PromptTokens: 50,
+                    CandidatesTokens: 12,
+                    TotalTokens: 62,
+                    AttemptsMade: 1,
+                    ErrorMessage: null));
+            }
+            else
+            {
+                // Шаг 2: Модель синтезирует отчет после получения данных инструмента
+                return Task.FromResult(new GeminiTurnResponse(
+                    IsSuccess: true,
+                    Text: "📊 **Сводный отчет по производству**:\nВыработка составила 485 000 оттисков, процент брака 1.9% (в норме).",
+                    FunctionCall: null,
+                    FinishReason: "STOP",
+                    PromptTokens: 90,
+                    CandidatesTokens: 45,
+                    TotalTokens: 135,
+                    AttemptsMade: 1,
+                    ErrorMessage: null));
+            }
+        }
+
+        public GeminiCallStats GetStats() =>
+            new(2, 2, 60, 58, 3.3, null, 0);
+    }
+
+    private class FakeFotoprintRepository : IFotoprintRepository
+    {
+        public Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default)
+        {
+            return Task.FromResult<EmployeeSecurityContext?>(new EmployeeSecurityContext
+            {
+                EmployeeId = 1,
+                MasterId = 100001,
+                FullName = "Алексей Смирнов",
+                TelegramId = telegramId,
+                Department = "Руководство",
+                Position = "Генеральный директор",
+                Roles = new() { "Director" },
+                Permissions = new() { "onec:read_production_kpis", "onec:read_orders" }
+            });
+        }
+
+        public Task<EmployeeSecurityContext?> GetEmployeeSecurityContextByMasterIdAsync(long masterId, CancellationToken ct = default) =>
+            Task.FromResult<EmployeeSecurityContext?>(new EmployeeSecurityContext
+            {
+                EmployeeId = 1,
+                MasterId = masterId,
+                FullName = "Алексей Смирнов",
+                TelegramId = 100001,
+                Department = "Руководство",
+                Position = "Генеральный директор",
+                Roles = new() { "Director" },
+                Permissions = new() { "onec:read_production_kpis", "onec:read_orders" }
+            });
+
+        public Task<long?> ResolveMasterIdByMessengerAsync(string messengerType, string messengerUserId, CancellationToken ct = default) =>
+            Task.FromResult<long?>(100001L);
+
+        public Task<ChatSession> GetOrCreateActiveSessionByMasterIdAsync(long masterId, long messengerChatId, string messengerType = "telegram", CancellationToken ct = default) =>
+            Task.FromResult(new ChatSession { Id = Guid.NewGuid(), MasterId = masterId, IsActive = true });
+
+        public Task<ChatSession> SwitchToNewSessionAsync(Guid currentSessionId, long masterId, long messengerChatId, string? newBranch = null, string messengerType = "telegram", CancellationToken ct = default) =>
+            Task.FromResult(new ChatSession { Id = Guid.NewGuid(), MasterId = masterId, IsActive = true, CurrentBranch = newBranch ?? "general" });
+
+        public Task<List<ChatMessage>> GetMessagesBySessionIdAsync(Guid sessionId, int limit = 20, CancellationToken ct = default) =>
+            Task.FromResult(new List<ChatMessage>());
+
+        public Task SaveMessageToSessionAsync(Guid sessionId, long masterId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default) => Task.FromResult<Employee?>(null);
+        public Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default) => Task.FromResult(new List<Employee>());
+        public Task<ChatSession> GetOrCreateSessionAsync(long telegramChatId, long? telegramUserId = null, CancellationToken ct = default) => Task.FromResult(new ChatSession { Id = Guid.NewGuid() });
+        public Task SaveMessageAsync(Guid sessionId, string contextId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<List<ChatMessage>> GetRecentMessagesAsync(Guid sessionId, int limit = 20, CancellationToken ct = default) => Task.FromResult(new List<ChatMessage>());
+        public Task FreezeContextAsync(Guid sessionId, string contextId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<Guid> SaveDocumentAsync(string title, string sourceType, string? filePath, string? department, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
+        public Task SaveDocumentChunksAsync(Guid documentId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+        public Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+        public Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default) => Task.FromResult(new List<Meeting>());
+        public Task<Meeting?> GetMeetingByIdAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult<Meeting?>(null);
+        public Task<List<MeetingNote>> GetMeetingNotesAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult(new List<MeetingNote>());
+        public Task SaveMeetingNoteAsync(Guid meetingId, int? authorId, string noteText, string category = "general", CancellationToken ct = default) => Task.CompletedTask;
+        public Task<Guid> SaveMeetingProtocolAsync(Guid meetingId, string title, string summary, List<string> decisions, string? rawTranscript = null, string? docxPath = null, string? pdfPath = null, CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
+        public Task<MeetingProtocol?> GetMeetingProtocolAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult<MeetingProtocol?>(null);
+        public Task<Guid> CreateActionItemAsync(Guid meetingId, Guid? protocolId, string title, string? description, int? responsibleId, DateTime? deadline, CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
+        public Task<List<ActionItem>> GetActionItemsByMeetingAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult(new List<ActionItem>());
+        public Task<List<ActionItem>> GetActionItemsByResponsibleAsync(int employeeId, string? statusFilter = null, CancellationToken ct = default) => Task.FromResult(new List<ActionItem>());
+        public Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    private class FakeHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name)
+        {
+            var handler = new FakeHttpHandler();
+            return new HttpClient(handler);
+        }
+
+        private class FakeHttpHandler : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                var kpiData = new
+                {
+                    department = "Офсетный цех",
+                    total_impressions = 485000,
+                    scrap_rate_percent = 1.9,
+                    equipment_utilization_percent = 87.4
+                };
+
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(kpiData), System.Text.Encoding.UTF8, "application/json")
+                });
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Agent_Answers_Directly_When_No_Tools_Required()
+    {
+        var gemini = new FakeGeminiClient(triggerTool: false);
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(100001, 55555, "Привет! Расскажи о себе.");
+
+        Assert.True(res.IsSuccess);
+        Assert.Equal(1, res.TotalLlmCalls);
+        Assert.Empty(res.ToolsInvoked);
+        Assert.Contains("корпоративный AI-ассистент", res.AnswerText);
+    }
+
+    [Fact]
+    public async Task Agent_Autonomously_Decides_To_Call_MCP_Tool_And_Synthesizes_Report()
+    {
+        var gemini = new FakeGeminiClient(triggerTool: true);
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(
+            telegramId: 100001,
+            chatId: 55555,
+            messageText: "Слушай, подготовь мне дайджест по показателям работы цехов за прошлую неделю");
+
+        // Проверяем:
+        // 1. Агент сделал ровно 2 вызова LLM (выбор инструмента + синтез ответа)
+        Assert.Equal(2, res.TotalLlmCalls);
+        // 2. Инструмент get_production_kpis был автономно выбран и вызван
+        Assert.Contains("get_production_kpis", res.ToolsInvoked);
+        // 3. Финальный ответ содержит синтезированную сводку на базе данных инструмента
+        Assert.Contains("Сводный отчет по производству", res.AnswerText);
+        Assert.Contains("485 000 оттисков", res.AnswerText);
+        Assert.True(res.IsSuccess);
+    }
+}
+

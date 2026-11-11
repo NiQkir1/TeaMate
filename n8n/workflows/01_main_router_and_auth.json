@@ -1,0 +1,166 @@
+{
+  "name": "01_Main_Router_And_Auth",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fotoprint-chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Gateway Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "id": "node-webhook-1"
+    },
+    {
+      "parameters": {
+        "url": "=http://mcp-employee-reader:8081/tools/get_employee_security_context?telegram_id={{ $json.body.user_id }}",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Service-Key",
+              "value": "fotoprint-internal-service-secret-token-2026"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "name": "Fetch Security Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "id": "node-auth-reader"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "equal",
+              "value2": 200
+            }
+          ]
+        }
+      },
+      "name": "Is Authorized Employee?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300],
+      "id": "node-if-auth"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"forbidden\",\n  \"message\": \"🚫 Доступ запрещен. Ваш Telegram аккаунт не зарегистрирован в системе корпоративного ассистента Fotoprint Copilot. Обратитесь к администратору.\"\n}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "name": "Return 403 Forbidden",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480],
+      "id": "node-respond-403"
+    },
+    {
+      "parameters": {
+        "jsCode": "const gw = $('Gateway Webhook').item.json.body;\nconst secContext = $json.body;\n\n// 2-й этап (LLM ContextSwitchDetector) уже выполнен в AiGateway.\n// Получаем строго определенные нейросетью флаги и ветку для вызова нужных MCP в n8n:\nconst is_context_switched = gw.is_context_switched ?? false;\nconst branch = gw.branch || 'doc_search';\n\nreturn [{\n  json: {\n    user_id: gw.user_id,\n    chat_id: gw.chat_id,\n    trace_id: gw.trace_id,\n    session_id: gw.session_id,\n    text: gw.text,\n    branch: branch,\n    is_context_switched: is_context_switched,\n    switch_reason: gw.switch_reason || '',\n    security_context: secContext\n  }\n}];"
+      },
+      "name": "ContextSwitchDetector",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 240],
+      "id": "node-context-detector"
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.branch }}",
+        "rules": {
+          "rules": [
+            { "value2": "meeting_prep", "output": 0 },
+            { "value2": "live_meeting_notes", "output": 1 },
+            { "value2": "meeting_summary", "output": 2 },
+            { "value2": "task_management", "output": 3 },
+            { "value2": "executive_report", "output": 4 },
+            { "value2": "doc_search", "output": 5 }
+          ]
+        }
+      },
+      "name": "Branch Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1120, 240],
+      "id": "node-branch-switch"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"processed\",\n  \"branch\": $json.branch,\n  \"user\": $json.security_context.FullName,\n  \"response_text\": \"✅ Запрос принят веткой '\" + $json.branch + \"'. Данные контекста безопасности успешно валидированы.\"\n}",
+        "options": {}
+      },
+      "name": "Return Success Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1400, 240],
+      "id": "node-respond-success"
+    }
+  ],
+  "connections": {
+    "Gateway Webhook": {
+      "main": [
+        [
+          { "node": "Fetch Security Context", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Security Context": {
+      "main": [
+        [
+          { "node": "Is Authorized Employee?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is Authorized Employee?": {
+      "main": [
+        [
+          { "node": "ContextSwitchDetector", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Return 403 Forbidden", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "ContextSwitchDetector": {
+      "main": [
+        [
+          { "node": "Branch Router", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Branch Router": {
+      "main": [
+        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
+        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
+        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
+        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
+        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
+        [{ "node": "Return Success Result", "type": "main", "index": 0 }]
+      ]
+    }
+  }
+}
+

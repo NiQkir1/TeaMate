@@ -1,0 +1,40 @@
+# .NET build artifacts
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+.idea/
+TestResults/
+*.trx
+*.coverage
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pfx
+*.key
+*.pem
+
+# Docker / local volumes / caches
+pgdata/
+clickhouse_data/
+minio_data/
+n8n_data/
+nuget_cache/
+
+# Node / Python
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
