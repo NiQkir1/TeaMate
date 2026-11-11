@@ -158,6 +158,25 @@ public class PerimeterDefenseTests
     }
 
     [Fact]
+    public void InternalServiceAuthMiddleware_IsAuthorized_ValidatesHeaderUsingConstantTimeMatch()
+    {
+        var config = new FotoprintConfig();
+        var validContext = new DefaultHttpContext();
+        validContext.Request.Headers[InternalServiceAuthMiddleware.InternalHeaderName] = config.Security.InternalServiceSecretKey;
+        Assert.True(InternalServiceAuthMiddleware.IsAuthorized(validContext.Request, config));
+
+        var missingContext = new DefaultHttpContext();
+        Assert.False(InternalServiceAuthMiddleware.IsAuthorized(missingContext.Request, config));
+
+        var invalidContext = new DefaultHttpContext();
+        invalidContext.Request.Headers[InternalServiceAuthMiddleware.InternalHeaderName] = "wrong-secret-key";
+        Assert.False(InternalServiceAuthMiddleware.IsAuthorized(invalidContext.Request, config));
+
+        config.Security.EnforceInternalServiceAuth = false;
+        Assert.True(InternalServiceAuthMiddleware.IsAuthorized(missingContext.Request, config));
+    }
+
+    [Fact]
     public async Task InternalServiceAuthMiddleware_Allows_Health_Check_Without_Secret_Key()
     {
         var config = new FotoprintConfig();

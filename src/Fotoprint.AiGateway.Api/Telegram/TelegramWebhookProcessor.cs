@@ -86,7 +86,7 @@ public sealed class TelegramWebhookProcessor
 
         if (rawUpdate.TryGetProperty("callback_query", out var cbQuery))
         {
-            return await HandleCallbackQueryAsync(cbQuery, traceId);
+            return await HandleCallbackQueryAsync(cbQuery, traceId, httpContext.RequestAborted);
         }
 
         if (rawUpdate.TryGetProperty("message", out var message) &&
@@ -110,7 +110,7 @@ public sealed class TelegramWebhookProcessor
         return Results.Ok(new { status = "ignored", trace_id = traceId });
     }
 
-    private async Task<IResult> HandleCallbackQueryAsync(JsonElement cbQuery, string traceId)
+    private async Task<IResult> HandleCallbackQueryAsync(JsonElement cbQuery, string traceId, CancellationToken ct)
     {
         var cbId = cbQuery.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? string.Empty : string.Empty;
         var cbData = cbQuery.TryGetProperty("data", out var dataProp) ? dataProp.GetString() ?? string.Empty : string.Empty;
@@ -129,6 +129,34 @@ public sealed class TelegramWebhookProcessor
             chatIdProp.TryGetInt64(out var parsedChatId))
         {
             chatId = parsedChatId;
+        }
+
+        if (cbData.StartsWith("notify:set:", StringComparison.OrdinalIgnoreCase))
+        {
+            var enable = cbData.EndsWith(":on", StringComparison.OrdinalIgnoreCase);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var repo = scope.ServiceProvider.GetRequiredService<IFotoprintRepository>();
+            var masterId = await ResolveMasterIdAsync(userId, repo, traceId, ct);
+            if (masterId.HasValue)
+            {
+                await repo.SetEmployeeNotificationsEnabledAsync(masterId.Value, enable, ct);
+            }
+
+            if (!string.IsNullOrWhiteSpace(cbId))
+            {
+                var toast = enable ? "🔔 Уведомления включены" : "🔕 Уведомления отключены";
+                await _telegramBot.AnswerCallbackQueryAsync(cbId, toast, showAlert: false);
+            }
+
+            if (chatId.HasValue)
+            {
+                var confirmation = enable
+                    ? "🔔 Проактивные уведомления о расписании и задачах включены."
+                    : "🔕 Проактивные уведомления приостановлены. Чтобы снова включить, нажмите /notifications on.";
+                await _telegramBot.SendMessageAsync(chatId.Value, confirmation, ct: ct);
+            }
+
+            return Results.Ok(new { status = "callback_notifications_updated", enabled = enable, trace_id = traceId });
         }
 
         if (cbData.StartsWith("rate:", StringComparison.OrdinalIgnoreCase))
@@ -278,6 +306,11 @@ public sealed class TelegramWebhookProcessor
             }
 
             var secContext = await repo.GetEmployeeSecurityContextByMasterIdAsync(masterId.Value, cts.Token);
+            if (text.TrimStart().StartsWith("/notifications", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleNotificationsCommandAsync(chatId, masterId.Value, text, repo, cts.Token);
+                return;
+            }
             if (text.TrimStart().StartsWith("/start", StringComparison.OrdinalIgnoreCase))
             {
                 var greeting = BuildStartGreeting(secContext, masterId.Value);
@@ -813,6 +846,54 @@ public sealed class TelegramWebhookProcessor
         return defaultReply;
     }
 
+    private async Task HandleNotificationsCommandAsync(
+        long chatId,
+        long masterId,
+        string commandText,
+        IFotoprintRepository repo,
+        CancellationToken ct)
+    {
+        var tokens = commandText.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var arg = tokens.Length > 1 ? tokens[1].ToLowerInvariant() : string.Empty;
+
+        if (arg is "on" or "вкл" or "enable" or "1")
+        {
+            await repo.SetEmployeeNotificationsEnabledAsync(masterId, true, ct);
+        }
+        else if (arg is "off" or "выкл" or "disable" or "0")
+        {
+            await repo.SetEmployeeNotificationsEnabledAsync(masterId, false, ct);
+        }
+
+        var secCtx = await repo.GetEmployeeSecurityContextByMasterIdAsync(masterId, ct);
+        var employee = secCtx is not null ? await repo.GetEmployeeByIdAsync(secCtx.EmployeeId, ct) : null;
+        var enabled = employee?.NotificationsEnabled ?? true;
+
+        var statusEmoji = enabled ? "🔔 Включены" : "🔕 Отключены";
+        var msg = new StringBuilder()
+            .AppendLine($"Статус проактивных уведомлений: {statusEmoji}")
+            .AppendLine()
+            .AppendLine("Что приходит автоматически (время МСК):")
+            .AppendLine("• Утренняя сводка встреч и задач в 09:00 по будням")
+            .AppendLine("• Напоминания за 30 минут до начала встречи")
+            .AppendLine("• Напоминания о дедлайнах задач (за 24 ч, за 2 ч и по просрочке)")
+            .AppendLine()
+            .Append("Быстрая команда: /notifications on или /notifications off")
+            .ToString();
+
+        var keyboard = new[]
+        {
+            new[]
+            {
+                enabled
+                    ? new TelegramInlineButton("🔕 Отключить уведомления", "notify:set:off")
+                    : new TelegramInlineButton("🔔 Включить уведомления", "notify:set:on")
+            }
+        };
+
+        await _telegramBot.SendMessageAsync(chatId, msg, inlineKeyboard: keyboard, ct: ct);
+    }
+
     private static string BuildStartGreeting(EmployeeSecurityContext? ctx, long masterId)
     {
         var sb = new StringBuilder();
@@ -838,6 +919,7 @@ public sealed class TelegramWebhookProcessor
         sb.AppendLine("• Какие задачи у меня сейчас в работе в Битрикс24?");
         sb.AppendLine("• Покажи мои встречи в календаре на завтра");
         sb.AppendLine("• Найди информацию в базе знаний и регламентах");
+        sb.AppendLine("• /notifications — управление утренней сводкой и напоминаниями о встречах/задачах");
         return sb.ToString().TrimEnd();
     }
 }

@@ -14,6 +14,7 @@ public class Employee
     public string Department { get; set; } = string.Empty;
     public string Position { get; set; } = string.Empty;
     public List<string> AccessGroups { get; set; } = new();
+    public bool NotificationsEnabled { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

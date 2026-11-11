@@ -62,6 +62,25 @@ public interface IFotoprintRepository
     Task<List<ActionItem>> GetActionItemsByMeetingAsync(Guid meetingId, CancellationToken ct = default);
     Task<List<ActionItem>> GetActionItemsByResponsibleAsync(int employeeId, string? statusFilter = null, CancellationToken ct = default);
     Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default);
+
+    // Проактивные уведомления (Telegram Notifications)
+    Task EnsureNotificationSchemaAsync(CancellationToken ct = default);
+    Task<Employee?> GetEmployeeByTelegramIdAsync(long telegramId, CancellationToken ct = default);
+    Task<bool> SetEmployeeNotificationsEnabledAsync(long masterId, bool enabled, CancellationToken ct = default);
+    Task<List<Meeting>> GetMeetingsInRangeUtcAsync(DateTime startUtc, DateTime endUtc, CancellationToken ct = default);
+    Task<List<ActionItem>> GetOpenActionItemsAsync(int? employeeId = null, CancellationToken ct = default);
+    Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId = null,
+        CancellationToken ct = default);
+    Task CompleteNotificationDeliveryAsync(
+        Guid deliveryId,
+        string status,
+        string? errorMessage = null,
+        CancellationToken ct = default);
 }
 
 public class FotoprintRepository : IFotoprintRepository
@@ -257,6 +276,7 @@ public class FotoprintRepository : IFotoprintRepository
                 whatsapp_id AS WhatsappId,
                 department AS Department,
                 position AS Position,
+                notifications_enabled AS NotificationsEnabled,
                 is_active AS IsActive,
                 created_at AS CreatedAt,
                 updated_at AS UpdatedAt
@@ -282,6 +302,7 @@ public class FotoprintRepository : IFotoprintRepository
                 whatsapp_id AS WhatsappId,
                 department AS Department,
                 position AS Position,
+                notifications_enabled AS NotificationsEnabled,
                 is_active AS IsActive,
                 created_at AS CreatedAt,
                 updated_at AS UpdatedAt
@@ -965,6 +986,256 @@ public class FotoprintRepository : IFotoprintRepository
 
         var items = await conn.QueryAsync<ActionItem>(new CommandDefinition(sql, new { ResponsibleId = employeeId, StatusFilter = statusFilter }, cancellationToken: ct));
         return items.ToList();
+    }
+
+    private sealed record MeetingRow(
+        Guid Id,
+        string Title,
+        string? Description,
+        DateTime StartTime,
+        DateTime? EndTime,
+        string Status,
+        int? OrganizerId,
+        string? ParticipantIdsJson,
+        string? CalendarEventId,
+        string? MetadataJson,
+        DateTime CreatedAt,
+        DateTime UpdatedAt);
+
+    public async Task EnsureNotificationSchemaAsync(CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            ALTER TABLE employees
+                ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+            CREATE TABLE IF NOT EXISTS notification_deliveries (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                dedup_key VARCHAR(255) NOT NULL UNIQUE,
+                notification_type VARCHAR(100) NOT NULL,
+                recipient_employee_id INT REFERENCES employees(id) ON DELETE SET NULL,
+                recipient_telegram_id BIGINT NOT NULL,
+                entity_id UUID,
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                error_message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                sent_at TIMESTAMPTZ
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_notification_deliveries_type_created
+                ON notification_deliveries(notification_type, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_notification_deliveries_telegram_id
+                ON notification_deliveries(recipient_telegram_id);
+        """;
+        await conn.ExecuteAsync(new CommandDefinition(sql, cancellationToken: ct));
+    }
+
+    public async Task<Employee?> GetEmployeeByTelegramIdAsync(long telegramId, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT
+                id AS Id,
+                master_id AS MasterId,
+                first_name AS FirstName,
+                last_name AS LastName,
+                middle_name AS MiddleName,
+                email AS Email,
+                telegram_id AS TelegramId,
+                telegram_username AS TelegramUsername,
+                whatsapp_id AS WhatsappId,
+                department AS Department,
+                position AS Position,
+                notifications_enabled AS NotificationsEnabled,
+                is_active AS IsActive,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM employees
+            WHERE telegram_id = @TelegramId
+            ORDER BY is_active DESC, id ASC
+            LIMIT 1;
+        """;
+        return await conn.QueryFirstOrDefaultAsync<Employee>(
+            new CommandDefinition(sql, new { TelegramId = telegramId }, cancellationToken: ct));
+    }
+
+    public async Task<bool> SetEmployeeNotificationsEnabledAsync(long masterId, bool enabled, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            UPDATE employees
+            SET notifications_enabled = @Enabled,
+                updated_at = NOW()
+            WHERE master_id = @MasterId;
+        """;
+        var affected = await conn.ExecuteAsync(
+            new CommandDefinition(sql, new { MasterId = masterId, Enabled = enabled }, cancellationToken: ct));
+        return affected > 0;
+    }
+
+    public async Task<List<Meeting>> GetMeetingsInRangeUtcAsync(DateTime startUtc, DateTime endUtc, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT
+                id AS Id,
+                title AS Title,
+                description AS Description,
+                start_time AS StartTime,
+                end_time AS EndTime,
+                status AS Status,
+                organizer_id AS OrganizerId,
+                participant_ids::text AS ParticipantIdsJson,
+                calendar_event_id AS CalendarEventId,
+                metadata::text AS MetadataJson,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM meetings
+            WHERE status = 'scheduled'
+              AND start_time >= @StartUtc
+              AND start_time <= @EndUtc
+            ORDER BY start_time ASC;
+        """;
+
+        var rows = await conn.QueryAsync<MeetingRow>(new CommandDefinition(sql, new
+        {
+            StartUtc = DateTime.SpecifyKind(startUtc, DateTimeKind.Utc),
+            EndUtc = DateTime.SpecifyKind(endUtc, DateTimeKind.Utc)
+        }, cancellationToken: ct));
+
+        return rows.Select(row => new Meeting
+        {
+            Id = row.Id,
+            Title = row.Title,
+            Description = row.Description,
+            StartTime = row.StartTime,
+            EndTime = row.EndTime,
+            Status = row.Status,
+            OrganizerId = row.OrganizerId,
+            ParticipantIds = ParseParticipantIds(row.ParticipantIdsJson),
+            CalendarEventId = row.CalendarEventId,
+            MetadataJson = row.MetadataJson ?? "{}",
+            CreatedAt = row.CreatedAt,
+            UpdatedAt = row.UpdatedAt
+        }).ToList();
+    }
+
+    public async Task<List<ActionItem>> GetOpenActionItemsAsync(int? employeeId = null, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var sql = """
+            SELECT
+                id AS Id,
+                meeting_id AS MeetingId,
+                protocol_id AS ProtocolId,
+                title AS Title,
+                description AS Description,
+                responsible_id AS ResponsibleId,
+                deadline AS Deadline,
+                status AS Status,
+                bitrix24_task_id AS Bitrix24TaskId,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM action_items
+            WHERE responsible_id IS NOT NULL
+              AND LOWER(status) NOT IN ('cancelled', 'completed', 'done', 'closed')
+        """;
+
+        if (employeeId.HasValue)
+        {
+            sql += "\n  AND responsible_id = @EmployeeId";
+        }
+
+        sql += "\nORDER BY deadline ASC NULLS LAST, created_at ASC;";
+
+        var items = await conn.QueryAsync<ActionItem>(
+            new CommandDefinition(sql, new { EmployeeId = employeeId }, cancellationToken: ct));
+        return items.ToList();
+    }
+
+    public async Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            INSERT INTO notification_deliveries (
+                dedup_key,
+                notification_type,
+                recipient_employee_id,
+                recipient_telegram_id,
+                entity_id,
+                status
+            )
+            VALUES (
+                @DedupKey,
+                @NotificationType,
+                @RecipientEmployeeId,
+                @RecipientTelegramId,
+                @EntityId,
+                'pending'
+            )
+            ON CONFLICT (dedup_key) DO UPDATE
+            SET status = 'pending',
+                created_at = NOW(),
+                error_message = NULL
+            WHERE notification_deliveries.status = 'pending'
+              AND notification_deliveries.created_at < NOW() - INTERVAL '10 minutes'
+            RETURNING id;
+        """;
+
+        return await conn.QueryFirstOrDefaultAsync<Guid?>(new CommandDefinition(sql, new
+        {
+            DedupKey = dedupKey,
+            NotificationType = notificationType,
+            RecipientEmployeeId = recipientEmployeeId,
+            RecipientTelegramId = recipientTelegramId,
+            EntityId = entityId
+        }, cancellationToken: ct));
+    }
+
+    public async Task CompleteNotificationDeliveryAsync(
+        Guid deliveryId,
+        string status,
+        string? errorMessage = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            UPDATE notification_deliveries
+            SET status = @Status,
+                error_message = @ErrorMessage,
+                sent_at = CASE WHEN @Status = 'sent' THEN NOW() ELSE sent_at END
+            WHERE id = @Id;
+        """;
+
+        await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            Id = deliveryId,
+            Status = status,
+            ErrorMessage = errorMessage
+        }, cancellationToken: ct));
+    }
+
+    private static List<int> ParseParticipantIds(string? participantIdsJson)
+    {
+        if (string.IsNullOrWhiteSpace(participantIdsJson))
+        {
+            return new List<int>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(participantIdsJson) ?? new List<int>();
+        }
+        catch (JsonException)
+        {
+            return new List<int>();
+        }
     }
 
     public async Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default)
