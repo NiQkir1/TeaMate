@@ -221,7 +221,7 @@ audio:
   provider: "auto"
   vocabulary_path: "config/vocabulary.yaml"
   engine:
-    timeout_seconds: 300
+    timeout_seconds: 1800
   gemini:
     model: "gemini-1.5-flash"
   max_file_size_mb: 100

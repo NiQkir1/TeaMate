@@ -165,7 +165,7 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
         var lang = string.IsNullOrWhiteSpace(language) ? "ru" : language.Trim();
         var timeoutSeconds = _config.Audio.Engine.TimeoutSeconds > 0
             ? _config.Audio.Engine.TimeoutSeconds
-            : 300;
+            : 1800;
 
         var tempWavPath = Path.Combine(Path.GetTempPath(), $"fotoprint_pcm_{Guid.NewGuid():N}.wav");
         var tempOutPrefix = Path.Combine(Path.GetTempPath(), $"fotoprint_out_{Guid.NewGuid():N}");
@@ -317,7 +317,7 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                 psi.ArgumentList.Add(targetWavPath);
             }
 
-            var (exitCode, _, stderr) = await ExecuteProcessAsync(psi, TimeSpan.FromSeconds(60), ct);
+            var (exitCode, _, stderr) = await ExecuteProcessAsync(psi, TimeSpan.FromSeconds(300), ct);
             if (exitCode == 0 && File.Exists(targetWavPath))
             {
                 return targetWavPath;

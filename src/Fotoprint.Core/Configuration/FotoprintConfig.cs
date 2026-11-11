@@ -44,7 +44,7 @@ public class AudioConfig
 
 public class LocalEngineAudioConfig
 {
-    public int TimeoutSeconds { get; set; } = 300;
+    public int TimeoutSeconds { get; set; } = 1800;
 }
 
 public class GeminiAudioConfig

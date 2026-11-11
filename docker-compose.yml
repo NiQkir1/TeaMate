@@ -134,7 +134,7 @@ services:
       - fotoprint-net
 
   langfuse-minio:
-    image: cgr.dev/chainguard/minio:latest
+    image: pgsty/minio:latest
     container_name: fotoprint-langfuse-storage
     restart: unless-stopped
     entrypoint: sh
