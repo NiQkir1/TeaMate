@@ -1,389 +1,275 @@
 # 🖨️ Fotoprint AI Copilot
 
-**Fotoprint AI Copilot** — интеллектуальная мультиагентная платформа и корпоративный ассистент типографии. Система автоматизирует подготовку к ежедневным планеркам, протоколирование совещаний (Minutes of Meeting), контроль производственных поручений, семантический поиск по регламентам с разграничением прав доступа (RBAC RAG), а также интеграцию с производственной системой 1С и CRM Битрикс24.
+**Fotoprint AI Copilot** — интеллектуальная мультиагентная платформа и корпоративный AI-ассистент типографии полного цикла («Фотопринт») на базе моделей семейства **NVIDIA Nemotron 3.5** (`nvidia/nemotron-3.5-lightning-30b-a3b` и `nvidia/nemotron-3.5-super-vl-120b-a12b`).
+
+Система автоматизирует:
+- подготовку к ежедневным планеркам и протоколирование совещаний (**Minutes of Meeting / DOCX**);
+- оперативный контроль тиражей, выработки и процента брака в **1С:Управление нашей типографией**;
+- управление поручениями и сделками в **CRM Битрикс24** и проверку расписания в **Корпоративном календаре**;
+- гибридный и векторный поиск по технологическим регламентам и базе знаний с жестким разграничением прав доступа (**RBAC RAG на базе PostgreSQL 16 + pgvector**);
+- сквозную наблюдаемость, расчет стоимости токенов (**FinOps**) и мониторинг качества в **Langfuse v3** (ClickHouse + PostgreSQL + Redis + MinIO).
 
 ---
 
 ## 🏗 Архитектура системы
 
-Платформа построена на микросервисной контейнеризированной архитектуре:
+Платформа построена на микросервисной контейнеризированной архитектуре с защищенным внутренним периметром MCP-серверов и автоматическим туннелированием вебхуков Telegram через **Cloudflare Quick Tunnel (`cloudflared`)**:
 
+```text
+             ┌──────────────────────────────┐     ┌──────────────────────────────┐
+             │   Telegram Bot API (Cloud)   │     │   Web Copilot UI (Browser)   │
+             └──────────────┬───────────────┘     └──────────────┬───────────────┘
+                            │ (HTTPS Quick Tunnel)               │ (HTTP :80)
+                            ▼                                    │
+             ┌──────────────────────────────┐                    │
+             │    fotoprint-cloudflared     │                    │
+             └──────────────┬───────────────┘                    │
+                            └─────────────────┬──────────────────┘
+                                              ▼
+    ┌────────────────────────────────────────────────────────────────────────────┐
+    │               ЕДИНАЯ ТОЧКА ВХОДА: NGINX Ingress Load Balancer              │
+    │  • Защита от сканеров портов и ботов (Anti-Scanner 444 Drop & Honeypots)   │
+    │  • Блокировка прямого внешнего доступа к /tools и /mcp (403 Forbidden)     │
+    │  • Буферизация пиковых нагрузок: burst=200 (Telegram) / burst=150 (Web API)│
+    └─────────────────────────────────────────┬──────────────────────────────────┘
+                                              │ (Внутренняя сеть fotoprint-net)
+                                              ▼
+    ┌────────────────────────────────────────────────────────────────────────────┐
+    │                     Fotoprint.AiGateway.Api (.NET 9, :8080)                │
+    │  • TelegramWebhookProcessor (мгновенный 200 OK, дедупликация, typing)      │
+    │  • Гибридный ContextSwitchDetector (FastPath < 1мс + LLM Fallback)         │
+    │  • FotoprintAiAgent (история до 10 сообщений, RBAC-кэш 45с, ReAct агент)   │
+    │  • LlmLoadBalancer (PriorityQueue + сглаживание 40 RPM) & RollbackManager  │
+    └──────────────┬──────────────────────────┬──────────────────────────┬───────┘
+                   │                          │                          │
+                   ▼                          ▼                          ▼
+        ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+        │   n8n Orchestrator  │    │   PostgreSQL 16     │    │    Langfuse v3      │
+        │  (6 AI Workflows)   │    │   + pgvector (RAG)  │    │  + ClickHouse OLAP  │
+        │      Порт 5678      │    │   127.0.0.1:5432    │    │      Порт 3000      │
+        └──────────┬──────────┘    └─────────────────────┘    └─────────────────────┘
+                   │
+                   ▼
+    ┌────────────────────────────────────────────────────────────────────────────┐
+    │               ИЗОЛИРОВАННЫЙ ВНУТРЕННИЙ ПЕРИМЕТР MCP-СЕРВЕРОВ               │
+    │  • Порты закрыты от внешнего мира (доступ только внутри fotoprint-net)     │
+    │  • InternalServiceAuthMiddleware (проверка X-Internal-Service-Key)         │
+    │  • SecurityInterceptorMiddleware (проверка RBAC-разрешений сотрудника)     │
+    ├───────────────────┬──────────────────┬──────────────────┬──────────────────┤
+    │ EmployeeReader    │ MCP-1C           │ MCP-Bitrix24     │ MCP-Calendar     │
+    │ (RBAC/Auth :8081) │ (1С:УНТ :8082)   │ (Задачи/CRM:8083)│ (Встречи :8084)  │
+    └───────────────────┴──────────────────┴──────────────────┴──────────────────┘
 ```
-                          ┌──────────────────────────┐
-                          │   Telegram / Web Client  │
-                          └─────────────┬────────────┘
-                                        │ (Входной порт 80 / 443)
-                                        ▼
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │          ЕДИНАЯ ТОЧКА ВХОДА: NGINX Ingress Load Balancer               │
-    │  • Защита от поиска портов (Anti-Port-Scanning & Scanner-Bot 444 Drop) │
-    │  • Honeypot-ловушки (блокировка зондирования /.env, wp-, phpmyadmin)   │
-    │  • Сетевой rate limiting (limit_req burst=40)                          │
-    └───────────────────────────────────┬────────────────────────────────────┘
-                                        │ (Внутренняя сеть fotoprint-net)
-                                        ▼
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │                       Fotoprint.AiGateway.Api                          │
-    │                   (Внутренний шлюз агента, 8080)                       │
-    └──────────────┬────────────────────┬────────────────────┬───────────────┘
-                   │                    │                    │
-                   ▼                    ▼                    ▼
-        ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-        │   n8n Workflows  │  │   PostgreSQL 16  │  │   Langfuse v3    │
-        │   (Оркестрация)  │  │   + pgvector     │  │  (Телеметрия &   │
-        │    Порт 5678     │  │   127.0.0.1:5432 │  │     LLM Traces)  │
-        └─────────┬────────┘  └──────────────────┘  │    Порт 3000     │
-                  │                                 └──────────────────┘
-                  ▼
-   ┌─────────────────────────────────────────────────────────────────────────┐
-   │            ИЗОЛИРОВАННЫЙ ВНУТРЕННИЙ ПЕРИМЕТР MCP-СЕРВЕРОВ               │
-   │  • Порты закрыты от внешнего мира (НЕТ публичного маппинга портов)     │
-   │  • PerimeterDefenseMiddleware: мгновенная отсечка сканеров портов       │
-   │  • InternalServiceAuthMiddleware: вызовы разрешены ТОЛЬКО из n8n/Gateway│
-   │    через защищенный заголовок X-Internal-Service-Key                    │
-   │  • SecurityInterceptor: валидация контекста прав сотрудника (RBAC)      │
-   ├───────────────────┬────────────────────┬────────────────────────────────┤
-   │ Fotoprint.Mcp.    │ Fotoprint.Mcp.     │ Fotoprint.Mcp.                 │
-   │ EmployeeReader    │ OneC               │ Bitrix24 & Calendar            │
-   │ (RBAC, :8081)     │ (Заказы/KPI, :8082)│ (CRM/Задачи :8083, План :8084) │
-   └───────────────────┴────────────────────┴────────────────────────────────┘
-```
-
-### Основные компоненты
-
-1. **`Fotoprint.AiGateway.Api` (.NET 9 / C# 13)** — центральный входной API-шлюз с 3-этапной обработкой:
-   - **Этап 1 (Периметр и резолвинг MasterId):** Прием вебхуков Telegram, защита периметра (`PerimeterDefenseMiddleware`), запрос в `Fotoprint.Mcp.EmployeeReader` для получения уникального числового `MasterId` пользователя, сглаживание пиков (`LlmLoadBalancer`) и роллбэк (`RollbackManager`).
-   - **Этап 2 (БД диалогов и LLM ContextSwitchDetector):** По `MasterId` находится активный диалог с UUID `SessionId`. В `ContextSwitchDetector` передается история текущей сессии (`GetMessagesBySessionIdAsync`) и новое сообщение. Если Gemini определяет смену контекста (`is_context_switched = true`) — **активный `SessionId` закрывается и генерируется новый UUID `SessionId`**, а старые сообщения замораживаются.
-   - **Этап 3 (Оркестрация MCP в n8n):** В n8n передается payload с `master_id`, актуальным `session_id`, флагом `is_context_switched` и веткой `branch`, где вызываются изолированные MCP-микросервисы (1C, Bitrix24, Calendar, RAG).
-2. **`Fotoprint.Core`** — общая библиотека ядра:
-   - Доменные модели (`Entities`).
-   - Репозиторий Dapper + Npgsql (`FotoprintRepository`) с поддержкой векторного поиска через pgvector.
-   - Парсер документов DOCX, XLSX, PDF (`DocumentParser`).
-   - Генератор протоколов встреч с таймкодами и задачами (`MeetingProtocolGenerator`).
-   - RBAC & Security Middleware (`SecurityInterceptorMiddleware`, `EmployeeSecurityContext`).
-   - Клиент аудита и трейсинга Langfuse v3 (`LangfuseClient`).
-3. **MCP-серверы (Model Context Protocol)**:
-   - `Fotoprint.Mcp.EmployeeReader` (порт 8081) — паспорт сотрудника, аутентификация по Telegram ID, роли и права доступа.
-   - `Fotoprint.Mcp.OneC` (порт 8082) — данные заказов 1С, статусы тиражей, загрузка печатных цехов, процент брака.
-   - `Fotoprint.Mcp.Bitrix24` (порт 8083) — сделки CRM, лиды, постановка задач и контроль исполнителей.
-   - `Fotoprint.Mcp.Calendar` (порт 8084) — корпоративный календарь, встречи, повестки планерок.
-   - `bitrix24-ready-mcp` (порт 8085) — готовый Docker-коннектор к REST API Битрикс24.
-4. **Оркестратор сценариев n8n (порт 5678)** — исполнение 6 ключевых цепочек:
-   - `01_main_router_and_auth` — входной роутер и авторизация.
-   - `02_rbac_rag_pipeline` — семантический поиск по регламентам с RBAC-фильтром.
-   - `03_pre_meeting_prep_cron` — CRON-сбор повестки, заказов и KPI перед утренней планеркой.
-   - `04_live_meeting_copilot` — быстрый AI-ассистент во время совещания.
-   - `05_post_meeting_mom_and_tasks` — разбор транскрипта, формирование протокола (MoM) и постановка задач.
-   - `06_executive_summary` — аналитическая сводка для руководства (C-level).
-5. **База данных PostgreSQL 16 + pgvector (порт 5432)** — реляционные данные, документы, векторные эмбеддинги (размерность 1536), журнал доступа.
-6. **Стек мониторинга Langfuse v3 (порт 3000)** — ClickHouse, Redis, MinIO и Web UI для аудита LLM-запросов, токенов, стоимости и алертов безопасности.
-7. **Манифест зависимостей (`libraries.yaml`) и `library-downloader`** — автоматическая предзагрузка и кэширование NuGet и npm пакетов.
 
 ---
 
-## 📋 Предварительные требования
+## 🔄 Диаграмма последовательности (Sequence Diagram)
 
-Для запуска необходимы:
-- **Docker Desktop** (версия 24+) с поддержкой **Docker Compose v2** (включен WSL2 на Windows или Docker Engine на Linux).
-- Выделенная память для Docker: рекомендуется **не менее 4–6 ГБ RAM** (так как запускаются ClickHouse, PostgreSQL, n8n и Langfuse).
-- Для локальной разработки и запуска тестов (без Docker): **.NET 9 SDK**.
+Ниже представлена полная последовательность обработки запроса пользователя (от входа через Nginx до вызова оркестратора `n8n`, автономного выбора MCP-инструментов, работы с `LlmLoadBalancer` на 40 RPM и записи телеметрии в `Langfuse v3`):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Сотрудник (Web UI / Telegram)
+    participant Nginx as Nginx Ingress (:80)<br/>[burst=200 / Anti-Scan]
+    participant GW as Fotoprint.AiGateway.Api<br/>[ContextSwitch + Agent]
+    participant Emp as MCP EmployeeReader (:8081)<br/>[RBAC Паспорт]
+    participant DB as PostgreSQL 16 + pgvector<br/>[Сессии & База знаний]
+    participant N8N as n8n Orchestrator (:5678)<br/>[01_main_router_and_auth]
+    participant LB as LlmLoadBalancer & NvidiaClient<br/>[PriorityQueue / 40 RPM / 3 Retries]
+    participant MCP as MCP Сервисы (:8082..8084)<br/>[1C / Bitrix24 / Calendar]
+    participant LF as Langfuse v3 + ClickHouse<br/>[Traces / Spans / Costs / Scores]
+
+    User->>Nginx: POST /api/agent/chat (или /api/telegram/webhook)
+    Nginx->>Nginx: Проверка Anti-Scanner & Rate Limit (burst=150..200)
+    Nginx->>GW: Проксирование запроса во внутреннюю сеть
+
+    Note over GW,DB: Этап 1: Идентификация сотрудника и управление сессией (MasterId -> SessionId)
+    GW->>DB: ResolveMasterId + GetOrCreateActiveSessionByMasterIdAsync()
+    DB-->>GW: Активная сессия (UUID SessionId) + последние сообщения (до 10 шт.)
+    GW->>GW: ContextSwitchDetector.DetectSwitchAsync()<br/>(Гибридный FastPath < 1мс или LLM)
+    alt Контекст сменился (IsSwitched == true)
+        GW->>DB: SwitchToNewSessionAsync() (архивация старой, новый UUID SessionId)
+    end
+    GW->>DB: SaveMessageToSessionAsync(role: "user")
+    GW--)LF: CreateTraceAsync(input, tags, sessionId)
+
+    Note over GW,N8N: Этап 2: Маршрутизация и авторизация в оркестраторе n8n
+    GW->>N8N: POST /webhook/fotoprint-chat (trace_id, session_id, branch, user_id)
+    N8N->>Emp: GET /tools/get_employee_security_context (X-Internal-Service-Key)
+    Emp->>DB: Загрузка ролей, разрешений и групп допуска RAG
+    DB-->>Emp: EmployeeSecurityContext (Director / Production / Sales / Accounting)
+    alt Сотрудник не найден (Guest / Не авторизован)
+        Emp-->>N8N: 404 Not Found
+        N8N-->>GW: 403 Forbidden ("Доступ запрещен")
+        GW--)LF: LogScore(agent_success: 0) + Trace(status:forbidden)
+        GW-->>User: 🚫 Доступ запрещен
+    else Сотрудник авторизован (200 OK)
+        Emp-->>N8N: 200 OK (Паспорт прав RBAC)
+        N8N->>GW: POST /api/agent/execute (вызов автономного ReAct-агента)
+    end
+
+    Note over GW,MCP: Этап 3: Автономный цикл FotoprintAiAgent (ReAct + 10 сообщений истории + Кэш 45с)
+    GW->>GW: Проверка RBAC Response Cache (TTL 45с по роли/отделу)
+    alt Ответ найден в кэше (Cache Hit)
+        GW--)LF: LogEvent("Agent:CacheHit", 0 вызовов LLM)
+    else Кэш пуст (Cache Miss)
+        GW->>DB: Загрузка истории сессии (.TakeLast(10) незамороженных сообщений)
+        GW->>LB: Шаг 1 ReAct: ChatTurnAsync(tools, thinking=true, model=30b)
+        LB->>LB: Очередь PriorityQueue + контроль окна 40 RPM
+        LB-->>GW: Выбранные tool_calls (напр. get_order_status, get_user_tasks)
+        GW--)LF: CreateGeneration("Gen:Main_Agent", usageDetails, costDetails)
+
+        par Параллельный вызов выбранных инструментов (MCP / RAG)
+            GW->>MCP: GET /tools/... (X-Internal-Service-Key, X-Telegram-Id)
+            MCP->>MCP: SecurityInterceptorMiddleware (проверка прав RBAC)
+            MCP-->>GW: Чистый UTF-8 JSON с производственными данными
+        and Поиск в базе знаний (если выбран search_typography_regulations)
+            GW->>DB: SearchTextChunksAsync(query, userAccessGroups)
+            DB-->>GW: Релевантные чанки документов (с учетом allowed_access_groups)
+        end
+        GW--)LF: CreateSpan("Span:MCP-*", startTime, endTime, input, output)
+
+        GW->>LB: Шаг 2 ReAct: ChatTurnNoThinkingAsync(toolResults UTF-8, thinking=false, model=30b)
+        LB-->>GW: Сформированный структурированный ответ
+        GW--)LF: CreateGeneration("Gen:Main_Agent", usageDetails, costDetails)
+        GW->>GW: Сохранение ответа в RBAC-кэш на 45 секунд
+    end
+
+    N8N-->>GW: 200 OK (answer, tools_invoked, total_tokens, branch)
+    GW->>DB: SaveMessageToSessionAsync(role: "assistant")
+    GW--)LF: CreateSpan("Span:N8n_Orchestrator") + Upsert Trace(output, status:ok)
+    GW--)LF: LogScore(agent_success, tools_invoked_count, context_switched, response_latency_sec)
+    GW-->>Nginx: 200 OK (JSON / Telegram Async Reply)
+    Nginx-->>User: Готовый ответ ассистента
+```
 
 ---
 
-## ⚙️ Настройка окружения
+## 🚀 Быстрый старт и управление проектом
 
-Перед первым запуском создайте файл `.env` в корне проекта на основе образца:
+### Предварительные требования
+- **Docker Desktop** (версия 24+) с поддержкой **Docker Compose v2**.
+- Выделенная оперативная память для Docker: рекомендуется **не менее 4–6 ГБ RAM** (PostgreSQL 16, ClickHouse, Redis, MinIO, n8n, Langfuse, .NET микросервисы).
+- Для локального запуска тестов вне Docker: **.NET 9 SDK**.
+
+### 1. Настройка `.env`
+Скопируйте шаблон переменных окружения и укажите ваш API-ключ NVIDIA NIM (`NVIDIA_API_KEY`) и при необходимости токен Telegram-бота (`TELEGRAM_BOT_TOKEN`):
 
 ```powershell
-# В PowerShell:
+# PowerShell (Windows):
 Copy-Item .env.example .env
 ```
 
 ```bash
-# В Bash / Linux:
+# Bash (Linux / macOS):
 cp .env.example .env
 ```
 
-Отредактируйте `.env` при необходимости (задайте токен вашего Telegram-бота `TELEGRAM_BOT_TOKEN`, API ключ LLM `OPENAI_API_KEY` и секретные ключи).
+> 💡 **Поддержка пула API-ключей (Key Rotation):** В переменной `NVIDIA_API_KEY` (или `NVIDIA_API_KEYS`) можно указать несколько ключей через запятую (`nvapi-key1,nvapi-key2,nvapi-key3`). `NvidiaClient` автоматически распределяет запросы между ними по алгоритму `Round-Robin`, кратно увеличивая лимит RPM (`2 ключа = 80 RPM`, `3 ключа = 120 RPM`).
 
----
-
-## 🚀 Как запускать проект
-
-### Вариант 1. Запуск всего стека через Docker Compose (Рекомендуемый)
-
-Сборка образов и фоновый запуск всех контейнеров:
-
+### 2. Запуск всего стека
 ```bash
 docker compose up -d --build
 ```
 
-> **Примечание:** При первом запуске сервис `library-downloader` запустит скрипт `bootstrap.sh`, восстановит NuGet-пакеты и установит npm-модули для n8n. База данных PostgreSQL автоматически инициализирует схему и тестовые данные из `infra/postgres/init/`.
-
-#### Проверка статуса запущенных контейнеров:
-
+Проверка статуса всех контейнеров:
 ```bash
 docker compose ps
 ```
 
-#### Просмотр логов в реальном времени:
-
+### 3. Пересборка только AI Gateway после изменений в коде .NET
 ```bash
-# Логи всех сервисов
-docker compose logs -f
-
-# Логи конкретного сервиса, например API Gateway или n8n:
-docker compose logs -f ai-gateway
-docker compose logs -f n8n
-docker compose logs -f mcp-1c
+docker compose up -d --build --no-deps ai-gateway
+docker restart fotoprint-nginx
 ```
 
----
-
-### Вариант 2. Запуск только инфраструктуры (для локальной разработки .NET)
-
-Если вы разрабатываете .NET сервисы локально в IDE (Visual Studio, Rider, VS Code):
-
-1. Запустите инфраструктурные сервисы (БД, Langfuse, n8n):
-   ```bash
-   docker compose up -d postgres n8n clickhouse langfuse-redis langfuse-minio langfuse-worker langfuse-web
-   ```
-
-2. Запустите тесты и убедитесь в работоспособности кода:
-   ```bash
-   dotnet test
-   ```
-
-3. Запустите нужный микросервис локально, например AI Gateway:
-   ```bash
-   dotnet run --project src/Fotoprint.AiGateway.Api
-   ```
-
----
-
-## 🛑 Как выключать проект
-
-### 1. Обычная штатная остановка контейнеров (данные сохраняются):
-
+### 4. Остановка проекта
 ```bash
+# Штатная остановка с сохранением всех данных:
 docker compose stop
-```
 
-Контейнеры останавливаются, все данные в томах (volumes: `pgdata`, `n8n_data`, `clickhouse_data`, `minio_data`, `nuget_cache`) остаются нетронутыми.
-
-Для повторного запуска после `stop`:
-```bash
-docker compose start
-```
-
----
-
-### 2. Полная остановка и удаление контейнеров (данные сохраняются):
-
-```bash
+# Остановка и удаление контейнеров (тома БД сохраняются):
 docker compose down
-```
 
-Останавливает и удаляет контейнеры и общую сеть `fotoprint-net`. Данные в томах БД сохраняются.
-
----
-
-### 3. Полный сброс с очисткой всех баз данных и томов (Fresh Install):
-
-> ⚠️ **Внимание:** Эта команда удалит все сохраненные данные баз данных, сессии n8n и трейсы Langfuse!
-
-```bash
+# Полный сброс вместе с томами БД (Fresh Install):
 docker compose down -v
 ```
 
-После этой команды следующий `docker compose up -d --build` поднимет чистую систему с повторным выполнением `infra/postgres/init/01_init_databases.sql`, `02_schema.sql` и `03_seed_data.sql`.
+---
+
+## 🌐 Веб-интерфейсы и точки входа
+
+| Сервис | URL | Назначение | Учетные данные (Dev) |
+| :--- | :--- | :--- | :--- |
+| **Web Copilot UI (через Nginx)** | [http://localhost](http://localhost) (`:80`) | Веб-чат сотрудника с переключением ролей (Директор, Производство, Продажи, Бухгалтерия, Гость), голосовой ввод (STT) и быстрые сценарии | — |
+| **Langfuse v3 UI** | [http://localhost:3000](http://localhost:3000) | Дашборд трейсов, стоимости моделей (`$`), задержек (`Spans`) и оценок (`Scores`) | `admin@fotoprint.ru` / `FotoprintAdmin2026!` |
+| **n8n Orchestrator** | [http://localhost:5678](http://localhost:5678) | Визуальные воркфлоу маршрутизации, авторизации и фоновых задач | Задаются при входе |
+| **MinIO Console** | [http://localhost:9091](http://localhost:9091) | Объектное S3-хранилище событий и батчей Langfuse | `minio` / `minio_secret_password` |
+| **Telegram Tunnel Status** | [http://localhost/api/telegram/info](http://localhost/api/telegram/info) | Текущий публичный HTTPS URL Cloudflare Quick Tunnel и статус вебхука Telegram | — |
+| **Статистика балансировщика и RPM** | [http://localhost/api/system/stats](http://localhost/api/system/stats) | Счетчик вызовов за 60 секунд, остаток квоты `40 RPM`, состояние очереди и роллбэков | — |
+| **MCP Серверы (`:8081..8084`)** | *Внутренняя сеть `fotoprint-net`* | Закрыты от внешнего доступа. Принимают запросы только с заголовком `X-Internal-Service-Key` | — |
 
 ---
 
-### 4. Перезапуск конкретного сервиса:
+## ⚡ Оптимизация под лимит `40 RPM` и пиковые нагрузки (40+ человек в минуту)
 
-Если вы изменили код одного из микросервисов:
+Чтобы корпоративный бот стабильно обслуживал **40–150+ обращений в минуту** без ошибок `HTTP 429 Too Many Requests` и без потерь сообщений, в системе работают 5 механизмов:
 
-```bash
-# Пересобрать и перезапустить только AI Gateway:
-docker compose up -d --build ai-gateway
-
-# Перезапустить n8n:
-docker compose restart n8n
-```
-
----
-
-## 🌐 Доступ к веб-интерфейсам и API
-
-После успешного старта доступны следующие адреса:
-
-| Сервис | URL | Назначение | Учетные данные по умолчанию |
-|---|---|---|---|
-| **Nginx (Единая точка входа)** | [http://localhost](http://localhost) (или `:80`) | Защищенный входной шлюз, anti-scanner, rate limiting | — |
-| **n8n Orchestrator** | [http://localhost:5678](http://localhost:5678) | Визуальные воркфлоу, AI-агенты, RAG | Задаются при первом входе |
-| **Langfuse UI** | [http://localhost:3000](http://localhost:3000) | Трейсинг LLM, аудит безопасности, метрики | `admin@fotoprint.ru` / `FotoprintAdmin2026!` |
-| **MinIO Console** | [http://localhost:9091](http://localhost:9091) | Хранилище объектов для Langfuse | `minio` / `minio_secret_password` |
-| **Fotoprint AI Gateway** | `127.0.0.1:8080` (или через Nginx) | Основной REST API (привязан к localhost) | — |
-| **MCP Серверы (1C, Bitrix, Calendar, EmployeeReader)** | *Внутренняя сеть Docker (порты 8081-8085 закрыты)* | Изолированный периметр. Доступен ТОЛЬКО n8n и Gateway через `X-Internal-Service-Key` | — |
-| **PostgreSQL 16** | `127.0.0.1:5432` | БД `fotoprint`, `n8n`, `langfuse` (только localhost) | `fotoprint` / `fotoprint_secret` |
+1. **Расширенный буфер Nginx (`infra/nginx/nginx.conf`):**
+   - Для `/api/telegram/webhook` настроен `rate=50r/s` с буфером всплеска `burst=200 delay=50`.
+   - Для `/api/*` настроен `rate=30r/s` с буфером `burst=150 nodelay`.
+   - Всплеск из 45+ одновременных запросов проходит в шлюз со 100% успешностью (`200 OK`), не отбрасывая пользователей на периметре.
+2. **Асинхронная очередь `LlmLoadBalancer` с приоритетами руководства (`PriorityQueue`):**
+   - Ограничитель параллелизма (`max_concurrent_requests: 5`) и минутного окна (`rpm: 40`, `min_interval_between_requests_ms: 250`) установлен **непосредственно перед HTTP-вызовом LLM** в `NvidiaClient`, не блокируя ожидание `n8n` и параллельные запросы к MCP/БД.
+   - Если в минуту приходит 41-й и последующие запросы к LLM, они **не падают с ошибкой**, а встают в очередь ожидания до точного момента освобождения соответствующего слота в 60-секундном окне. Запросы руководства (`priority > 0`) обслуживаются первыми.
+3. **Гибридный `ContextSwitchDetector` (`0` вызовов LLM в 90%+ случаев):**
+   - Классификация доменной ветки (`executive_report`, `task_management`, `meeting_prep`, `meeting_summary`, `doc_search`, `general_chat`) и распознавание фраз-продолжений выполняются детерминированно за `< 1 мс` без расхода квоты RPM. Вызов LLM выполняется только для нестандартных фраз.
+4. **Краткосрочный RBAC-кэш ответов (`45 секунд`):**
+   - Повторные идентичные read-only запросы от сотрудников с теми же правами доступа (например, когда несколько человек на планерке спрашивают статус тиража `44102` или сводку по цеху) возвращаются из кэша за **`~200 мс`** и тратят **`0` вызовов LLM**.
+5. **Чистая UTF-8 передача данных инструментов + гибридный режим `Thinking`:**
+   - Результаты всех MCP-сервисов передаются в LLM в чистом UTF-8 без `\u04XX`-экранирования кириллицы, что сокращает объем промпта в 3–4 раза и исключает галлюцинации.
+   - На шаге 1 (выбор MCP-инструмента) используется `nvidia/nemotron-3.5-lightning-30b-a3b` с `enable_thinking: true` (гарантирует точный вызов инструментов при истории до 10 сообщений), а на шаге 2 (синтез ответа по данным MCP) — с `enable_thinking: false` (ускоряет генерацию ответа до ~6–8 секунд на полный цикл).
 
 ---
 
-## 🚦 Балансировщик нагрузки и Роллбэк-система (3 повтора)
+## 📊 Расход вызовов LLM на одно сообщение пользователя
 
-В проекте реализована двухуровневая система защиты от перегрузок и отказоустойчивости:
-
-```
-[ Telegram / Пользователи ]
-           │
-           ▼
-┌────────────────────────────────────────────────────────┐
-│  УРОВЕНЬ 1: Внешний балансировщик NGINX (Reverse Proxy) │
-│  • Порт 80 (infra/nginx/nginx.conf)                    │
-│  • Сетевой rate limiting (limit_req с буфером burst=40)│
-│  • Защита от сетевого флуда и равномерное проксирование│
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│  УРОВЕНЬ 2: Внутренний Application-балансировщик       │
-│  • Класс LlmLoadBalancer (Token Bucket + Concurrency)  │
-│  • Сглаживание пиков сообщений (задержка между вызовами│
-│    к LLM, защита от HTTP 429 Too Many Requests)       │
-│  • Очередь задач без потери входящих вебхуков          │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│  СИСТЕМА РОЛЛБЭКА НА 3 ПОВТОРА (RollbackManager)       │
-│  • 3 повтора с экспоненциальным backoff при сбое узла  │
-│  • Автоматический откат (Compensating action) при крахе│
-│    (возврат статуса задачи, фиксация инцидента в БД)   │
-│  • Аудит и алерты в Langfuse (Node:RollbackTriggered)  │
-└────────────────────────────────────────────────────────┘
-```
-
-### Проверка метрик балансировщика и роллбэка
-
-Состояние очередей, активных запросов и откатов доступно в реальном времени:
-
-```bash
-curl http://localhost:8080/api/system/stats
-```
-
-Пример ответа:
-```json
-{
-  "service": "Fotoprint.AiGateway.Api",
-  "load_balancer": {
-    "totalProcessed": 42,
-    "totalThrottled": 5,
-    "queueLength": 0,
-    "activeExecutions": 1,
-    "currentRpmEstimate": 14
-  },
-  "rollback_system": {
-    "totalExecutions": 42,
-    "totalRecoveredOnRetry": 3,
-    "totalFailedAndRolledBack": 0
-  },
-  "timestamp": "2026-11-09T19:20:00Z"
-}
-```
+| Сценарий | Вызовов LLM | Время отклика | Как обрабатывается |
+| :--- | :---: | :---: | :--- |
+| **Кнопки в Telegram (`[👍]/[👎]`, `[✅ В Битрикс]`)** | **0** | `~20–80 мс` | Прямая запись оценки в Langfuse или постановка задачи в `mcp-bitrix24` с роллбэком на 3 повтора |
+| **Повторный типовой запрос в течение 45 сек (RBAC Cache Hit)** | **0** | `~180–250 мс` | `ContextSwitchDetector` (FastPath, 0 LLM) ➔ ответ из RBAC-кэша `FotoprintAiAgent` |
+| **Прямой диалоговый вопрос без вызова MCP (Приветствие / Уточнение)** | **1** | `~2.5–3.5 сек` | `ContextSwitchDetector` (FastPath, 0 LLM) ➔ 1 вызов `Gen:Main_Agent` |
+| **Запрос производственных данных из 1С / Битрикс24 / Календаря / RAG** | **2** | `~6.0–8.2 сек` | `ContextSwitchDetector` (FastPath, 0 LLM) ➔ Шаг 1 (выбор MCP-тулов) ➔ параллельный вызов MCP ➔ Шаг 2 (синтез отчета) |
 
 ---
 
-## 🧪 Запуск автоматических тестов
+## 📈 Телеметрия и метрики в дашборде Langfuse v3
 
-В репозитории подготовлены модульные и интеграционные тесты для проверки контекста безопасности (`SecurityInterceptor`), парсинга документов и генератора протоколов:
+В системе настроен полный сбор метрик в **Langfuse v3** ([http://localhost:3000](http://localhost:3000)):
+
+1. **Таблица Traces (`default.traces`):**
+   - Для каждого запроса в веб-чате (`web-agent-chat`) и Telegram (`telegram-chat-message`) записываются полный вопрос пользователя (`Input`), финальный ответ агента (`Output`), `SessionId`, `UserId`, метаданные (`tools_invoked_count`, `total_tokens`, `latency_sec`, `branch`) и теги статуса (`status:ok`, `status:error`, `status:forbidden`).
+2. **Стоимость токенов и FinOps (`Model Costs` / `default.observations`):**
+   - Каждая генерация (`Gen:Main_Agent`, `Gen:ContextSwitchDetector`, `Gen:Embedding_RAG`, `Gen:Protocol_And_Executive_Summarizer`) передает `usageDetails` (`input`, `output`, `total`) и `costDetails` (`input`, `output`, `total` в USD) по тарифам моделей, зарегистрированным в таблицах `models` и `prices` Langfuse.
+   - В метаданных `Gen:Main_Agent` фиксируется `history_messages_count` (число сообщений истории сессии, реально переданных в контекст — от `0` до `10`).
+3. **Детализация задержек по узлам (`Latency Spans`):**
+   - `Span:N8n_Orchestrator` — полное время прохождения сценария в `n8n`.
+   - `Span:MCP-EmployeeReader`, `Span:MCP-get_order_status`, `Span:MCP-get_production_kpis`, `Span:MCP-get_user_tasks`, `Span:MCP-get_crm_deal_info`, `Span:MCP-create_task`, `Span:MCP-get_upcoming_meetings`, `Span:MCP-get_meeting_history`, `Span:MCP-search_typography_regulations`.
+4. **Операционные и качественные оценки (`Scores` / `default.scores`):**
+   - На каждый запрос автоматически записываются 4 детерминированные метрики (не расходующие квоту LLM):
+     - `agent_success` (`1` — успех, `0` — сбой или отказ в доступе);
+     - `tools_invoked_count` (количество вызванных MCP/RAG инструментов);
+     - `context_switched` (`1` — смена темы и ротация `SessionId`, `0` — продолжение сессии);
+     - `response_latency_sec` (полное время ответа в секундах для построения перцентилей p50/p95/p99).
+   - Также поддерживаются оценки пользователей `user_feedback` (`👍`/`👎`), `task_extraction_accuracy` и фоновые проверки `ILlmJudgeService` (включаются флагом `telemetry.evaluations.enable_llm_as_judge: true` в `config.yaml`).
+
+---
+
+## 🧪 Тестирование
+
+В проекте **65 автоматических тестов (xUnit)**, покрывающих RBAC-безопасность, защиту периметра, автономного агента, пакетный вызов инструментов, устойчивость при отключении БД/MCP, балансировщик нагрузки, роллбэк на 3 повтора, парсинг SSE-стримов NVIDIA, детектор смены контекста и Telegram/Cloudflare-интеграцию:
 
 ```bash
 dotnet test
 ```
-
-Для вывода подробного лога тестирования:
-```bash
-dotnet test --logger "console;verbosity=detailed"
-```
-
----
-
-## 📦 Управление зависимостями (`libraries.yaml`)
-
-Все внешние пакеты и библиотеки зафиксированы в едином манифесте [libraries.yaml](file:///c:/Users/jotry/Photoprint/libraries.yaml):
-- Пакеты .NET 9 (Npgsql, Pgvector, Dapper, OpenXml, PdfPig, YamlDotNet).
-- npm-модули для n8n (axios, lodash, form-data, pdf-parse, docx).
-- MCP коннекторы и Python-библиотеки.
-
-При добавлении новых пакетов обязательно синхронизируйте манифест `libraries.yaml`.
-
----
-
-## ⚙️ Единый конфигурационный файл (`config.yaml`)
-
-Все динамические параметры системы вынесены в [config.yaml](file:///c:/Users/jotry/Photoprint/config.yaml) (Single Source of Truth), а [FotoprintConfig.cs](file:///c:/Users/jotry/Photoprint/src/Fotoprint.Core/Configuration/FotoprintConfig.cs) служит строго типизированным загрузчиком для C#:
-- **LLM & Proxy**: выбор провайдера (`gemini`, `openai`, `proxy`), API ключ Google AI Studio (`GEMINI_API_KEY`), модель (`gemini-1.5-flash` / `gemini-3.5`).
-- **Ограничения Rate Limits**: `rpm` (по умолчанию 60 RPM, гибко настраивается под тариф), `tpm` (1000000), `max_concurrent_requests` (5).
-- **Балансировщик**: интервал сглаживания `min_interval_between_requests_ms` (250мс), размер очереди `queue_capacity` (1000).
-- **Детекция смены контекста**: `context_switch` (`enabled: true`, `max_history_messages: 5`, `temperature: 0.0`, `auto_freeze_on_switch: true`).
-- **Отказоустойчивость**: `max_retries` (3 повтора), `initial_delay_ms`, параметры Circuit Breaker.
-- **RAG & Векторный поиск**: `embedding_dimensions` (1536), `top_k` (5), `chunk_size` (800), `chunk_overlap` (150).
-- **Планерки и протоколы**: `default_deadline_days` (3 дня), `pre_meeting_window_minutes` (30 мин).
-
----
-
-## 🤖 Интеграция с Google Gemini (AI Studio) и контроль Rate Limits
-
-В системе реализован клиент [GeminiClient.cs](file:///c:/Users/jotry/Photoprint/src/Fotoprint.Core/Llm/GeminiClient.cs), работающий по спецификации Google AI Studio:
-- **Аутентификация**: переменная `GEMINI_API_KEY` в файле `.env`, передаваемая в HTTP-заголовке `x-goog-api-key`.
-- **Эндпоинты генерации и чата**:
-  - `POST /api/gemini/generate` — прямой вызов Gemini.
-  - `POST /api/context/detect-switch` — вызов детектора смены контекста (2-й этап).
-  - `POST /api/agent/chat` — диалог с ReAct-агентом (автономный Tool Calling к 1С, CRM, Календарю).
-- **Трекинг скользящего окна RPM**: учет вызовов за 60 секунд (`CallsInLast60Seconds`, `RemainingQuotaInCurrentMinute`).
-- При пиковой нагрузке балансировщик ставит последующие запросы на микропаузу до освобождения слота, исключая ошибку `429 Too Many Requests`.
-
----
-
-## 📊 Статистика вызовов LLM на один цикл «вопрос ➔ ответ»
-
-| Режим | Количество вызовов к LLM | Сценарий |
-| :--- | :---: | :--- |
-| **Минимум (Min)** | **0 – 1** | • **0:** Кнопки подтверждения `[👍]/[👎]`, `[✅ В Битрикс]` (чистый SQL/REST).<br>• **1:** Первое сообщение в сессии или общий вопрос без вызова MCP. |
-| **Среднее (Average)** | **2** | Стандартный диалог с отчетом или запросом в 1С/CRM (~80% случаев):<br>1. `ContextSwitchDetector` (проверка смены темы).<br>2. Генерация понятного отчета на основе данных из MCP. |
-| **Максимум (Max)** | **3 – 4** | Составной аналитический запрос со сменой диалога и вызовом нескольких MCP (детекция ➔ вызов MCP 1C ➔ вызов RAG ➔ сводный отчет). |
-
----
-
-## 📈 Телеметрия Langfuse v3, FinOps и LLM-as-a-Judge (Эпик 6)
-
-Система интегрирована с **Langfuse v3** для обеспечения полной наблюдаемости (Observability), учета расходов (FinOps) и контроля качества ответов в реальном времени:
-
-### 1. Сквозной распределенный трейсинг (Distributed Tracing)
-- **Иерархия связывания**:
-  `SessionId` (ветка контекста диалога) $\rightarrow$ `TraceId` (конкретное сообщение / вебхук) $\rightarrow$ `Span / Generation` (вызовы MCP и LLM).
-- **Сквозные заголовки**: `X-Trace-Id`, `X-Session-Id`, `X-Master-Id`, `X-Telegram-Id`, `X-Internal-Service-Key` передаются между .NET Gateway, n8n и MCP.
-- **Обогащение трейса**: Каждый трейс маркируется тегами сотрудника: `dept:<department>`, `role:<roles>`, `branch:<branch>`, `context_switched:true/false`.
-
-### 2. FinOps: Раздельный учет токенов по 4 ключевым текстовым узлам
-Учет Input / Output / Total и Cached Tokens с расчетом стоимости в долларах США по тарифам из `config.yaml`:
-1. `Gen:ContextSwitchDetector` — классификация смены контекста и ветки диалога.
-2. `Gen:Embedding_RAG` — векторизация поисковых запросов и фрагментов регламентов.
-3. `Gen:Main_Agent` — автономный ReAct агент, выбор инструментов (Tool Calling) и формулирование ответа.
-4. `Gen:Protocol_And_Executive_Summarizer` — суммаризация стенограмм, генерация MoM и управленческих отчетов.
-
-### 3. Технические и Security-метрики (Latency & Alerts)
-- **Замеры задержек (Latency Spans)**: `Span:MCP-EmployeeReader`, `Span:MCP-1C`, `Span:MCP-Bitrix24`, `Span:MCP-Calendar`, `Span:PgVector_Search`.
-- **Логирование нарушений безопасности**: При попытке обращения к данным без прав (`403 Forbidden`) фиксируется событие `Event:Security_Violation`.
-
-### 4. Оценка качества (Evaluations & LLM-as-a-Judge)
-- **Пользовательский скоринг**:
-  - `user_feedback`: сбор реакций `[👍]` (score 1.0) и `[👎]` (score 0.0) под ответами.
-  - `task_extraction_accuracy`: 1.0 при клике `[✅ В Битрикс]` без ручных корректировок.
-- **Автоматические фоновые проверки (LLM Judges)**:
-  - **Faithfulness**: сверка фактов и числовых значений из ответа бота с сырыми данными MCP 1C и чанками RAG (проверка отсутствия галлюцинаций).
-  - **Context Switch Accuracy**: валидация решения детектора контекста (склеил или разделил сессии корректно).
-  - **Formatting & Policy Check**: проверка соответствия корпоративному шаблону и отсутствия утечки системных промптов, токенов и ключей.
-
-
