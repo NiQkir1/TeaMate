@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fotoprint AI Copilot — NVIDIA Nemotron 3.5</title>
+  <title>Fotoprint AI Copilot — NVIDIA Nemotron 3.5 &amp; Speech-to-Text</title>
   <style>
     :root {
       --bg-dark: #0f172a;
@@ -29,6 +29,23 @@
       overflow: hidden;
     }
 
+    .visually-hidden:where(:not(:focus-within, :active)) {
+      position: absolute !important;
+      clip-path: inset(50%) !important;
+      overflow: hidden !important;
+      width: 1px !important;
+      height: 1px !important;
+      margin: -1px !important;
+      padding: 0 !important;
+      border: 0 !important;
+      white-space: nowrap !important;
+    }
+
+    :where(a:any-link, button, select, .table-wrapper):focus-visible {
+      outline: 2px solid #38bdf8;
+      outline-offset: 2px;
+    }
+
     header {
       background-color: var(--card-bg);
       border-bottom: 1px solid var(--border);
@@ -36,6 +53,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 12px;
     }
 
     .brand {
@@ -100,6 +118,7 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      min-block-size: 32px;
     }
 
     .nav-btn:hover {
@@ -131,11 +150,10 @@
       border-radius: 7px;
       padding: 5px 10px;
       font-size: 13px;
-      outline: none;
       cursor: pointer;
     }
 
-    .user-switcher select:focus {
+    .user-switcher select:focus-visible {
       border-color: var(--msg-user);
     }
 
@@ -172,9 +190,14 @@
       padding: 4px 14px;
     }
 
+    .table-wrapper {
+      overflow: auto;
+      max-inline-size: 100%;
+      margin: 8px 0;
+    }
+
     .msg-content table {
       border-collapse: collapse;
-      margin: 8px 0;
       width: 100%;
       font-size: 13px;
     }
@@ -331,6 +354,7 @@
     }
 
     .pill {
+      font-family: inherit;
       background: var(--card-bg);
       border: 1px solid var(--border);
       color: var(--text-muted);
@@ -339,12 +363,34 @@
       font-size: 12.5px;
       cursor: pointer;
       transition: all 0.2s;
+      min-block-size: 30px;
     }
 
     .pill:hover {
       background: #334155;
       color: var(--text);
       border-color: #64748b;
+    }
+
+    .stt-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      align-self: flex-start;
+      transition: opacity 0.3s;
+    }
+
+    .input-area-wrapper {
+      position: relative;
+      width: 100%;
     }
 
     .input-bar {
@@ -354,18 +400,55 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 8px 12px;
+      align-items: center;
     }
 
-    .input-bar input {
+    .input-bar:focus-within {
+      border-color: #64748b;
+    }
+
+    .input-bar input[type="text"] {
       flex: 1;
       background: transparent;
       border: none;
       outline: none;
       color: var(--text);
       font-size: 15px;
+      min-width: 0;
     }
 
-    .input-bar button {
+    .btn-icon {
+      background: #334155;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-inline-size: 36px;
+      min-block-size: 36px;
+    }
+
+    .btn-icon:hover {
+      background: #475569;
+    }
+
+    .btn-icon.recording {
+      background: #ef4444;
+      color: white;
+      animation: pulse-red 1s infinite;
+    }
+
+    @keyframes pulse-red {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(0.95); }
+    }
+
+    .input-bar button#send-btn {
       background: var(--msg-user);
       border: none;
       color: white;
@@ -374,15 +457,139 @@
       font-weight: 600;
       cursor: pointer;
       transition: background 0.2s;
+      min-block-size: 36px;
     }
 
-    .input-bar button:hover:not(:disabled) {
+    .input-bar button#send-btn:hover:not(:disabled) {
       background: #1d4ed8;
     }
 
-    .input-bar button:disabled {
+    .input-bar button#send-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+
+    /* ChatGPT-style Voice Recording Bar */
+    .voice-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 6px 12px;
+      min-height: 52px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      animation: voice-bar-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes voice-bar-in {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .btn-voice-cancel {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .btn-voice-cancel:hover {
+      background: rgba(239, 68, 68, 0.25);
+      border-color: #ef4444;
+      color: #fca5a5;
+      transform: scale(1.08);
+    }
+
+    .btn-voice-cancel:active {
+      transform: scale(0.95);
+    }
+
+    .voice-timer-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .voice-rec-dot {
+      width: 8px;
+      height: 8px;
+      background: #ef4444;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #ef4444;
+      animation: pulse-red 1.2s infinite ease-in-out;
+    }
+
+    .voice-waveform-container {
+      flex: 1;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      min-width: 80px;
+    }
+
+    #voice-waveform {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .btn-voice-done {
+      background: linear-gradient(135deg, #10b981, #06b6d4);
+      border: none;
+      color: white;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 0 14px rgba(16, 185, 129, 0.45);
+      flex-shrink: 0;
+    }
+
+    .btn-voice-done:hover {
+      background: linear-gradient(135deg, #059669, #0891b2);
+      transform: scale(1.08);
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.65);
+    }
+
+    .btn-voice-done:active {
+      transform: scale(0.95);
     }
 
     .typing {
@@ -406,18 +613,214 @@
       0%, 80%, 100% { transform: scale(0); }
       40% { transform: scale(1); }
     }
+
+    /* MoM Card Styles */
+    .mom-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin: 4px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .mom-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+
+    .mom-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mom-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #38bdf8;
+      margin: 0;
+    }
+
+    .mom-badges {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .engine-badge {
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      border: 1px solid #10b981;
+    }
+
+    .engine-badge.gemini {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border-color: #3b82f6;
+    }
+
+    .duration-badge {
+      font-size: 11.5px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+
+    .mom-section {
+      font-size: 13.5px;
+      line-height: 1.55;
+    }
+
+    .mom-section h4 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .mom-summary {
+      color: #f1f5f9;
+      background: rgba(15, 23, 42, 0.5);
+      border-left: 3px solid #38bdf8;
+      padding: 8px 12px;
+      border-radius: 0 6px 6px 0;
+    }
+
+    .mom-section ul {
+      margin-left: 20px;
+      color: #e2e8f0;
+    }
+
+    .mom-section li {
+      margin-bottom: 4px;
+    }
+
+    .action-items-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .action-item-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .action-item-info {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .action-item-title {
+      font-weight: 600;
+      color: #f8fafc;
+      font-size: 13.5px;
+    }
+
+    .action-item-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .btn-bitrix {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      border: none;
+      color: white;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      min-block-size: 32px;
+    }
+
+    .btn-bitrix:hover:not(:disabled) {
+      background: linear-gradient(135deg, #0369a1, #075985);
+      transform: translateY(-1px);
+    }
+
+    .btn-bitrix:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    .btn-bitrix-success {
+      background: #059669 !important;
+      color: white !important;
+      cursor: default !important;
+      transform: none !important;
+    }
+
+    .mom-footer {
+      display: flex;
+      justify-content: flex-end;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .btn-docx-download {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid #475569;
+      color: #f8fafc;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-block-size: 36px;
+    }
+
+    .btn-docx-download:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: #94a3b8;
+      transform: translateY(-1px);
+    }
   </style>
 </head>
 <body>
 
   <header>
     <div class="brand">
-      <div class="logo">🖨️</div>
+      <div class="logo" aria-hidden="true">🖨️</div>
       <div class="title-group">
         <h1>Fotoprint AI Copilot</h1>
         <div class="model-badge">
-          <div class="pulse"></div>
-          NVIDIA Nemotron-3.5 120B
+          <div class="pulse" aria-hidden="true"></div>
+          NVIDIA Nemotron-3.5 120B &amp; Whisper STT
         </div>
       </div>
     </div>
@@ -426,41 +829,74 @@
       <select id="user-select" onchange="onUserChange()"></select>
       <span id="role-badge" class="role-badge">Director</span>
     </div>
-    <div class="nav-links">
-      <a href="http://localhost:5678" target="_blank" class="nav-btn">
+    <nav class="nav-links" aria-label="Внешние сервисы">
+      <a href="http://localhost:5678" target="_blank" rel="noopener noreferrer" class="nav-btn">
         ⚡ n8n Оркестратор
       </a>
-      <a href="http://localhost:3000" target="_blank" class="nav-btn">
+      <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer" class="nav-btn">
         📊 Langfuse Трейсинг
       </a>
-      <a href="/api/system/stats" target="_blank" class="nav-btn">
+      <a href="/api/system/stats" target="_blank" rel="noopener noreferrer" class="nav-btn">
         ⚙️ Метрики
       </a>
-    </div>
+    </nav>
   </header>
 
   <main>
     <div id="chat-window">
       <div class="msg-row bot">
-        <div class="avatar">🤖</div>
+        <div class="avatar" aria-hidden="true">🤖</div>
         <div class="msg-content">
           Здравствуйте! Я — корпоративный ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
-          Я могу проверить статус тиража в 1С, рассчитать выработку машин Heidelberg, проверить задачи/сделки в Битрикс24, посмотреть планерки в календаре или подсказать технологический регламент.
+          Я могу проверить статус тиража в 1С, рассчитать выработку машин Heidelberg, проверить задачи и сделки в Битрикс24, посмотреть планерки в календаре или подсказать технологический регламент.<br><br>
+          Для голосовых сценариев доступны кнопки <strong>🎙️</strong> (голосовой ввод) и <strong>📎</strong> (загрузка аудиозаписи совещания для протокола MoM).
         </div>
       </div>
     </div>
 
     <div class="quick-prompts">
-      <div class="pill" onclick="sendPrompt('Какой статус заказа 44102?')">📦 Статус заказа 44102</div>
-      <div class="pill" onclick="sendPrompt('Покажи выработку и KPI офсетного цеха')">📈 KPI цеха</div>
-      <div class="pill" onclick="sendPrompt('Какие у меня задачи в Битрикс24?')">✅ Мои задачи Битрикс24</div>
-      <div class="pill" onclick="sendPrompt('Какие планерки запланированы на ближайший час?')">📅 Планерки</div>
-      <div class="pill" onclick="sendPrompt('Какая норма брака для печатной машины Heidelberg?')">📖 Нормы брака</div>
+      <button type="button" class="pill" onclick="sendPrompt('Какой статус заказа 44102?')">📦 Статус заказа 44102</button>
+      <button type="button" class="pill" onclick="sendPrompt('Покажи выработку и KPI офсетного цеха')">📈 KPI цеха</button>
+      <button type="button" class="pill" onclick="sendPrompt('Какие у меня задачи в Битрикс24?')">✅ Мои задачи Битрикс24</button>
+      <button type="button" class="pill" onclick="sendPrompt('Какие планерки запланированы на ближайший час?')">📅 Планерки</button>
+      <button type="button" class="pill" onclick="sendPrompt('Какая норма брака для печатной машины Heidelberg?')">📖 Нормы брака</button>
+      <button type="button" class="pill" onclick="document.getElementById('audio-file-input').click()">📎 Загрузить аудио встречи (MoM)</button>
     </div>
 
-    <div class="input-bar">
-      <input type="text" id="user-input" placeholder="Введите ваш вопрос по производству, заказам или регламентам..." autofocus>
-      <button id="send-btn" onclick="handleSend()">Отправить</button>
+    <div id="stt-status-badge" class="stt-badge" role="status" aria-live="polite" style="display: none;"></div>
+
+    <div class="input-area-wrapper">
+      <div class="input-bar" id="input-bar">
+        <!-- Hidden file input for meeting audio -->
+        <input type="file" id="audio-file-input" accept="audio/*,.m4a,.wav,.mp3,.ogg,.oga" style="display: none;" onchange="handleAudioUpload(this)">
+
+        <!-- Attachment button for meeting recording -->
+        <button type="button" class="btn-icon" id="attach-btn" aria-label="Загрузить аудиозапись встречи" title="Загрузить аудиозапись встречи (.m4a, .wav, .mp3, .ogg)" onclick="document.getElementById('audio-file-input').click()">📎</button>
+
+        <!-- Microphone button for voice input -->
+        <button type="button" class="btn-icon" id="mic-btn" aria-label="Голосовой ввод с микрофона" title="Голосовой ввод (Микрофон)" onclick="toggleRecording()">🎙️</button>
+
+        <label for="user-input" class="visually-hidden">Сообщение ассистенту</label>
+        <input type="text" id="user-input" placeholder="Введите ваш вопрос по производству, заказам или регламентам..." autofocus>
+        <button type="button" id="send-btn" onclick="handleSend()">Отправить</button>
+      </div>
+
+      <!-- ChatGPT-style modern voice recording bar -->
+      <div class="voice-bar" id="voice-bar" style="display: none;">
+        <button type="button" class="btn-voice-cancel" id="voice-cancel-btn" aria-label="Отменить запись аудио" title="Отменить запись" onclick="cancelRecording()">✕</button>
+
+        <div class="voice-timer-badge" title="Идет запись аудио">
+          <span class="voice-rec-dot" aria-hidden="true"></span>
+          <span id="voice-timer">00:00</span>
+          <span id="record-timer" style="display: none;">00:00</span>
+        </div>
+
+        <div class="voice-waveform-container">
+          <canvas id="voice-waveform" aria-label="Индикатор уровня звука записи"></canvas>
+        </div>
+
+        <button type="button" class="btn-voice-done" id="voice-done-btn" aria-label="Остановить запись и распознать речь" title="Готово (распознать)" onclick="stopRecordingAndSend()">✓</button>
+      </div>
     </div>
   </main>
 
@@ -488,6 +924,16 @@
 
     let availableUsers = [];
     let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 100001;
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
 
     function getCurrentUser() {
       return availableUsers.find(u => u.telegram_id === currentTelegramId) || availableUsers[0] || FALLBACK_USERS[0];
@@ -564,14 +1010,11 @@
     }
 
     function formatMarkdown(text) {
-      const lines = text.split('\n');
+      const lines = String(text ?? '').split('\n');
       const out = [];
       let i = 0;
 
-      const inlineFmt = (s) => s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
+      const inlineFmt = (s) => escapeHtml(s)
         .replace(/`([^`]+)`/g, '<code>$1</code>')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>');
@@ -586,11 +1029,13 @@
             rows.push(lines[i].trim().slice(1, -1).split('|').map(c => c.trim()));
             i++;
           }
-          let tbl = '<table><thead><tr>' + headers.map(h => `<th>${inlineFmt(h)}</th>`).join('') + '</tr></thead><tbody>';
+          let tbl = '<div class="table-wrapper" tabindex="0" role="region" aria-label="Таблица данных"><table><thead><tr>'
+            + headers.map(h => `<th scope="col">${inlineFmt(h)}</th>`).join('')
+            + '</tr></thead><tbody>';
           for (const r of rows) {
             tbl += '<tr>' + r.map(c => `<td>${inlineFmt(c)}</td>`).join('') + '</tr>';
           }
-          tbl += '</tbody></table>';
+          tbl += '</tbody></table></div>';
           out.push(tbl);
           continue;
         }
@@ -616,6 +1061,7 @@
 
       const avatar = document.createElement('div');
       avatar.className = 'avatar';
+      avatar.setAttribute('aria-hidden', 'true');
       avatar.textContent = role === 'user' ? '👤' : '🤖';
 
       const content = document.createElement('div');
@@ -643,6 +1089,46 @@
       chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
+    function showLoading(text = '') {
+      const id = 'loading-' + Date.now();
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+      row.id = id;
+      row.innerHTML = `
+        <div class="avatar" aria-hidden="true">🤖</div>
+        <div class="msg-content">
+          ${text ? `<div style="font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">${escapeHtml(text)}</div>` : ''}
+          <div class="typing" aria-label="Загрузка ответа"><span></span><span></span><span></span></div>
+        </div>
+      `;
+      chatWindow.appendChild(row);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+      return id;
+    }
+
+    function removeLoading(id) {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+
+    let sttBadgeTimeout = null;
+    function showSttBadge(text, isError = false) {
+      const badge = document.getElementById('stt-status-badge');
+      if (!badge) return;
+      badge.textContent = text;
+      badge.style.display = 'inline-flex';
+      badge.style.borderColor = isError ? '#ef4444' : 'var(--accent)';
+      badge.style.color = isError ? '#fca5a5' : 'var(--accent)';
+      badge.style.background = isError ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+
+      if (sttBadgeTimeout) clearTimeout(sttBadgeTimeout);
+      if (!text.startsWith('⏳')) {
+        sttBadgeTimeout = setTimeout(() => {
+          badge.style.display = 'none';
+        }, 6000);
+      }
+    }
+
     async function handleSend() {
       const text = input.value.trim();
       if (!text) return;
@@ -651,18 +1137,7 @@
       input.value = '';
       sendBtn.disabled = true;
 
-      // Индикатор загрузки
-      const typingRow = document.createElement('div');
-      typingRow.className = 'msg-row bot';
-      typingRow.id = 'typing-indicator';
-      typingRow.innerHTML = `
-        <div class="avatar">🤖</div>
-        <div class="msg-content">
-          <div class="typing"><span></span><span></span><span></span></div>
-        </div>
-      `;
-      chatWindow.appendChild(typingRow);
-      chatWindow.scrollTop = chatWindow.scrollHeight;
+      const loadingId = showLoading();
 
       try {
         const res = await fetch('/api/agent/chat', {
@@ -675,27 +1150,705 @@
           })
         });
 
-        const data = await res.json();
-        const indicator = document.getElementById('typing-indicator');
-        if (indicator) indicator.remove();
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (_) {}
 
-        if (data.answer) {
+        removeLoading(loadingId);
+
+        if (data && data.answer) {
           appendMessage(data.answer, 'bot', data.tools_invoked, data);
-        } else if (data.errorMessage) {
+        } else if (data && data.errorMessage) {
           appendMessage('Ошибка: ' + data.errorMessage, 'bot');
+        } else if (!res.ok) {
+          appendMessage(`Ошибка сервера (HTTP ${res.status}).`, 'bot');
         } else {
           appendMessage('Не удалось получить ответ от ассистента.', 'bot');
         }
       } catch (err) {
-        const indicator = document.getElementById('typing-indicator');
-        if (indicator) indicator.remove();
+        removeLoading(loadingId);
         appendMessage('Ошибка соединения со шлюзом: ' + err.message, 'bot');
       } finally {
         sendBtn.disabled = false;
         input.focus();
       }
     }
+
+    // ========================================================================
+    // ГОЛОСОВОЙ ВВОД (CHATGPT-STYLE VOICE BAR + WEB AUDIO API WAVEFORM)
+    // ========================================================================
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let audioContext = null;
+    let analyserNode = null;
+    let audioSourceNode = null;
+    let animFrameId = null;
+    let audioChunks = [];
+    let recordingInterval = null;
+    let recordingSeconds = 0;
+    let isRecordingCancelled = false;
+    let isConnectingMic = false;
+    let isTranscribing = false;
+
+    const NUM_WAVE_BARS = 32;
+    const smoothedHeights = new Float32Array(NUM_WAVE_BARS).fill(3.0);
+
+    document.addEventListener('keydown', (e) => {
+      const voiceBar = document.getElementById('voice-bar');
+      if (voiceBar && voiceBar.style.display !== 'none') {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelRecording();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          stopRecordingAndSend();
+        }
+      }
+    });
+
+    function drawRoundedBar(ctx, x, y, width, height, radius) {
+      if (height < radius * 2) radius = height / 2;
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, radius);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    function startWaveformVisualizer() {
+      const canvas = document.getElementById('voice-waveform');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      smoothedHeights.fill(3.0);
+      const freqData = new Uint8Array(analyserNode ? analyserNode.frequencyBinCount : 64);
+      const timeData = new Uint8Array(analyserNode ? analyserNode.fftSize : 128);
+
+      function render() {
+        const voiceBar = document.getElementById('voice-bar');
+        if (!voiceBar || voiceBar.style.display === 'none') {
+          return;
+        }
+
+        animFrameId = requestAnimationFrame(render);
+
+        let rms = 0;
+        if (analyserNode) {
+          try {
+            analyserNode.getByteFrequencyData(freqData);
+            analyserNode.getByteTimeDomainData(timeData);
+
+            let sumSquares = 0;
+            for (let i = 0; i < timeData.length; i++) {
+              const norm = (timeData[i] - 128) / 128;
+              sumSquares += norm * norm;
+            }
+            rms = Math.sqrt(sumSquares / timeData.length);
+          } catch (e) {
+            console.warn('AnalyserNode read error:', e);
+          }
+        }
+
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        const cssWidth = rect.width;
+        const cssHeight = rect.height;
+
+        if (cssWidth === 0 || cssHeight === 0) return;
+
+        const targetW = Math.round(cssWidth * dpr);
+        const targetH = Math.round(cssHeight * dpr);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          canvas.width = targetW;
+          canvas.height = targetH;
+        }
+
+        ctx.save();
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+        const now = performance.now();
+        const totalBars = NUM_WAVE_BARS;
+        const centerY = cssHeight / 2;
+
+        let barWidth = 3.5;
+        let gap = 3.5;
+        let totalWaveWidth = totalBars * barWidth + (totalBars - 1) * gap;
+        const maxWaveWidth = Math.max(0, cssWidth - 12);
+        if (totalWaveWidth > maxWaveWidth && maxWaveWidth > 0) {
+          const step = maxWaveWidth / totalBars;
+          barWidth = Math.max(2, step * 0.5);
+          gap = Math.max(1.5, step * 0.5);
+          totalWaveWidth = totalBars * barWidth + (totalBars - 1) * gap;
+        }
+
+        const startX = Math.max(0, (cssWidth - totalWaveWidth) / 2);
+
+        const grad = ctx.createLinearGradient(startX, 0, startX + totalWaveWidth, 0);
+        grad.addColorStop(0, '#10b981');
+        grad.addColorStop(0.5, '#06b6d4');
+        grad.addColorStop(1, '#38bdf8');
+        ctx.fillStyle = grad;
+
+        const isSpeaking = rms > 0.018;
+
+        for (let i = 0; i < totalBars; i++) {
+          let targetHeight = 3.0;
+
+          if (isSpeaking && analyserNode) {
+            const distFromCenter = Math.abs(i - (totalBars - 1) / 2) / ((totalBars - 1) / 2);
+            const binIdx = Math.min(Math.floor((1 - distFromCenter * 0.75) * 20) + 1, freqData.length - 1);
+            const freqVal = freqData[binIdx] / 255;
+            const amplitude = Math.min(rms * 4.5, 1.0);
+
+            targetHeight = 3.0 + (freqVal * 0.6 + amplitude * 0.4) * (cssHeight - 6);
+          } else {
+            const idleWave = Math.sin(now * 0.0035 + i * 0.35) * 0.75;
+            targetHeight = 2.5 + idleWave;
+          }
+
+          smoothedHeights[i] += (targetHeight - smoothedHeights[i]) * 0.22;
+          const h = Math.max(2.5, Math.min(cssHeight - 4, smoothedHeights[i]));
+          const x = startX + i * (barWidth + gap);
+          const y = centerY - h / 2;
+
+          drawRoundedBar(ctx, x, y, barWidth, h, barWidth / 2);
+        }
+
+        ctx.restore();
+      }
+
+      render();
+    }
+
+    function cleanupAudioResources() {
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+      }
+      if (recordingInterval) {
+        clearInterval(recordingInterval);
+        recordingInterval = null;
+      }
+      if (mediaStream) {
+        try {
+          mediaStream.getTracks().forEach(t => t.stop());
+        } catch (e) {
+          console.warn('Error stopping media tracks:', e);
+        }
+        mediaStream = null;
+      }
+      if (audioContext && audioContext.state !== 'closed') {
+        try {
+          audioContext.close();
+        } catch (e) {
+          console.warn('Error closing audioContext:', e);
+        }
+        audioContext = null;
+      }
+      analyserNode = null;
+      audioSourceNode = null;
+    }
+
+    async function toggleRecording() {
+      if (isConnectingMic) return;
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        stopRecordingAndSend();
+      } else {
+        await startRecording();
+      }
+    }
+
+    async function startRecording() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Ваш браузер не поддерживает запись аудио через getUserMedia.');
+        return;
+      }
+
+      const inputBar = document.getElementById('input-bar');
+      const voiceBar = document.getElementById('voice-bar');
+      const timerSpan = document.getElementById('voice-timer');
+      const legacyTimerSpan = document.getElementById('record-timer');
+
+      isConnectingMic = true;
+      isRecordingCancelled = false;
+
+      if (inputBar) inputBar.style.display = 'none';
+      if (voiceBar) voiceBar.style.display = 'flex';
+      if (timerSpan) timerSpan.textContent = 'Подключение...';
+      if (legacyTimerSpan) legacyTimerSpan.textContent = 'Подключение...';
+
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        isConnectingMic = false;
+
+        if (isRecordingCancelled) {
+          cleanupAudioResources();
+          if (voiceBar) voiceBar.style.display = 'none';
+          if (inputBar) inputBar.style.display = 'flex';
+          return;
+        }
+
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) {
+            audioContext = new AudioCtx();
+            if (audioContext.state === 'suspended') {
+              await audioContext.resume();
+            }
+            analyserNode = audioContext.createAnalyser();
+            analyserNode.fftSize = 256;
+            analyserNode.smoothingTimeConstant = 0.75;
+            audioSourceNode = audioContext.createMediaStreamSource(mediaStream);
+            audioSourceNode.connect(analyserNode);
+          }
+        } catch (audioCtxErr) {
+          console.warn('Web Audio API not supported or failed to initialize:', audioCtxErr);
+        }
+
+        let options = {};
+        if (typeof MediaRecorder.isTypeSupported === 'function') {
+          const isApple = /Macintosh|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+          if (isApple && MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+          } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { mimeType: 'audio/webm;codecs=opus' };
+          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            options = { mimeType: 'audio/webm' };
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+          }
+        }
+
+        mediaRecorder = new MediaRecorder(mediaStream, options);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunks.push(e.data);
+          }
+        };
+
+        mediaRecorder.onstop = handleRecordingStop;
+        mediaRecorder.start();
+
+        recordingSeconds = 0;
+        if (timerSpan) timerSpan.textContent = '00:00';
+        if (legacyTimerSpan) legacyTimerSpan.textContent = '00:00';
+
+        if (recordingInterval) clearInterval(recordingInterval);
+        recordingInterval = setInterval(() => {
+          recordingSeconds++;
+          const mins = String(Math.floor(recordingSeconds / 60)).padStart(2, '0');
+          const secs = String(recordingSeconds % 60).padStart(2, '0');
+          const timeStr = `${mins}:${secs}`;
+          if (timerSpan) timerSpan.textContent = timeStr;
+          if (legacyTimerSpan) legacyTimerSpan.textContent = timeStr;
+        }, 1000);
+
+        startWaveformVisualizer();
+
+      } catch (err) {
+        isConnectingMic = false;
+        cleanupAudioResources();
+        if (voiceBar) voiceBar.style.display = 'none';
+        if (inputBar) inputBar.style.display = 'flex';
+        alert('Не удалось получить доступ к микрофону: ' + err.message);
+      }
+    }
+
+    function cancelRecording() {
+      isRecordingCancelled = true;
+      isConnectingMic = false;
+      cleanupAudioResources();
+
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+          mediaRecorder.stop();
+        } catch (e) {
+          console.warn('Error stopping mediaRecorder on cancel:', e);
+        }
+      }
+
+      const voiceBar = document.getElementById('voice-bar');
+      const inputBar = document.getElementById('input-bar');
+      if (voiceBar) voiceBar.style.display = 'none';
+      if (inputBar) inputBar.style.display = 'flex';
+      input.focus();
+    }
+
+    function stopRecordingAndSend() {
+      if (isConnectingMic) return;
+      isRecordingCancelled = false;
+      cleanupAudioResources();
+
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+          mediaRecorder.stop();
+        } catch (e) {
+          console.warn('Error stopping mediaRecorder on send:', e);
+        }
+      }
+
+      const voiceBar = document.getElementById('voice-bar');
+      const inputBar = document.getElementById('input-bar');
+      if (voiceBar) voiceBar.style.display = 'none';
+      if (inputBar) inputBar.style.display = 'flex';
+    }
+
+    async function handleRecordingStop() {
+      if (isRecordingCancelled) {
+        audioChunks = [];
+        return;
+      }
+
+      if (audioChunks.length === 0) {
+        input.focus();
+        return;
+      }
+
+      if (isTranscribing) {
+        return;
+      }
+      isTranscribing = true;
+
+      const mime = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+      const audioBlob = new Blob(audioChunks, { type: mime });
+      audioChunks = [];
+      const extension = mime.includes('mp4') ? 'm4a' : 'webm';
+      const audioFile = new File([audioBlob], `mic_recording.${extension}`, { type: mime });
+
+      showSttBadge('⏳ Распознавание речи...');
+
+      try {
+        const formData = new FormData();
+        formData.append('file', audioFile);
+
+        const res = await fetch('/api/audio/transcribe?language=ru', {
+          method: 'POST',
+          body: formData
+        });
+
+        const rawText = await res.text();
+        let data = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch (_) {}
+
+        if (res.status === 404 || res.status === 405 || res.status === 501) {
+          showSttBadge('⚠️ Аудио-модуль (/api/audio/transcribe) пока не подключён на сервере.', true);
+          return;
+        }
+
+        if (!res.ok) {
+          const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
+          showSttBadge(`⚠️ Ошибка (${res.status}): ${errMsg}`, true);
+          return;
+        }
+
+        if (data && data.success && data.text) {
+          input.value = data.text.trim();
+          input.focus();
+          const sec = data.duration_ms ? (data.duration_ms / 1000).toFixed(1) : '0.0';
+          showSttBadge(`🎙️ Распознано: ${data.provider || 'local-metal'}, ${sec}s`);
+        } else {
+          const errMsg = (data && (data.error || data.message)) || 'Речь не распознана';
+          showSttBadge(`⚠️ Ошибка: ${errMsg}`, true);
+        }
+      } catch (err) {
+        showSttBadge(`⚠️ Ошибка сети: ${err.message}`, true);
+      } finally {
+        isTranscribing = false;
+        input.focus();
+      }
+    }
+
+    // ========================================================================
+    // ОБРАБОТКА АУДИОЗАПИСИ ВСТРЕЧИ (/api/meetings/process-audio -> MoM Card)
+    // ========================================================================
+    async function handleAudioUpload(inputEl) {
+      if (!inputEl.files || !inputEl.files[0]) return;
+      const file = inputEl.files[0];
+      inputEl.value = '';
+
+      appendMessage(`📎 Загружена аудиозапись встречи: **${file.name}** (${(file.size / (1024 * 1024)).toFixed(1)} МБ). Запущен цикл расшифровки и составления протокола (MoM)...`, 'user');
+
+      const loadingId = showLoading('Идет транскрибация аудио и интеллектуальный анализ протокола встречи...');
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('title', file.name.replace(/\.[^/.]+$/, ''));
+
+        const res = await fetch('/api/meetings/process-audio?language=ru', {
+          method: 'POST',
+          body: formData
+        });
+
+        const rawText = await res.text();
+        let data = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch (_) {}
+
+        removeLoading(loadingId);
+
+        if (res.status === 404 || res.status === 405 || res.status === 501) {
+          appendMessage('⚠️ Сервис обработки аудио встреч (/api/meetings/process-audio) пока не подключён на сервере (раздел в разработке).', 'bot');
+          return;
+        }
+
+        if (res.ok && data && data.success) {
+          renderMeetingProtocolCard(data);
+        } else {
+          const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
+          appendMessage('⚠️ Ошибка обработки аудиозаписи совещания: ' + errMsg, 'bot');
+        }
+      } catch (err) {
+        removeLoading(loadingId);
+        appendMessage('⚠️ Ошибка соединения со шлюзом при загрузке аудиозаписи: ' + err.message, 'bot');
+      }
+    }
+
+    function renderMeetingProtocolCard(data) {
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.setAttribute('aria-hidden', 'true');
+      avatar.textContent = '📋';
+
+      const content = document.createElement('div');
+      content.className = 'msg-content';
+      content.style.maxWidth = '100%';
+
+      const proto = data.protocol || {};
+      const trans = data.transcription || {};
+      const meetingId = data.meeting_id || '';
+      const provider = trans.provider || 'local-metal';
+      const durationSec = trans.duration_ms ? (trans.duration_ms / 1000).toFixed(1) : '—';
+      const providerClass = provider.includes('gemini') ? 'gemini' : 'local';
+      const providerLabel = provider.includes('gemini') ? 'Gemini 1.5 Flash' : `Whisper (${provider})`;
+
+      let decisionsHtml = '';
+      if (proto.decisions && proto.decisions.length > 0) {
+        decisionsHtml = `
+          <div class="mom-section">
+            <h4>✅ Принятые решения:</h4>
+            <ul>
+              ${proto.decisions.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let discussedHtml = '';
+      if (proto.discussed && proto.discussed.length > 0) {
+        discussedHtml = `
+          <div class="mom-section">
+            <h4>💬 Обсуждали:</h4>
+            <ul>
+              ${proto.discussed.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let risksHtml = '';
+      if (proto.risks && proto.risks.length > 0) {
+        risksHtml = `
+          <div class="mom-section">
+            <h4>⚠️ Риски и блокеры:</h4>
+            <ul>
+              ${proto.risks.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let clarificationsHtml = '';
+      if (proto.requires_clarification && proto.requires_clarification.length > 0) {
+        clarificationsHtml = `
+          <div class="mom-section">
+            <h4>❓ Требует уточнения:</h4>
+            <ul>
+              ${proto.requires_clarification.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let actionItemsHtml = '';
+      const items = data.action_items || [];
+      if (items.length > 0) {
+        actionItemsHtml = `
+          <div class="mom-section">
+            <h4>📌 Поручения (Задачи):</h4>
+            <div class="action-items-list">
+              ${items.map((item, idx) => `
+                <div class="action-item-card">
+                  <div class="action-item-info">
+                    <div class="action-item-title">${escapeHtml(item.title)}</div>
+                    <div class="action-item-meta">
+                      👤 Отв.: <strong>${escapeHtml(item.responsible || 'требует уточнения')}</strong> |
+                      📅 Срок: <strong>${escapeHtml(item.deadline || item.deadline_text || 'требует уточнения')}</strong>
+                    </div>
+                  </div>
+                  <button type="button" class="btn-bitrix" data-action-idx="${idx}">
+                    ✅ В Битрикс24
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      const cardHtml = `
+        <div class="mom-card">
+          <div class="mom-header">
+            <div class="mom-title-row">
+              <span class="mom-icon" aria-hidden="true" style="font-size: 20px;">📋</span>
+              <h3 class="mom-title">${escapeHtml(proto.title || 'Протокол совещания')}</h3>
+            </div>
+            <div class="mom-badges">
+              <span class="engine-badge ${providerClass}">⚡ ${escapeHtml(providerLabel)}</span>
+              <span class="duration-badge">⏱️ ${escapeHtml(durationSec)}s</span>
+            </div>
+          </div>
+
+          <div class="mom-section">
+            <h4>📝 Резюме встречи:</h4>
+            <p class="mom-summary">${escapeHtml(proto.summary || 'Сводка отсутствует.')}</p>
+          </div>
+
+          ${decisionsHtml}
+          ${discussedHtml}
+          ${risksHtml}
+          ${clarificationsHtml}
+          ${actionItemsHtml}
+
+          <div class="mom-footer">
+            <button type="button" class="btn-docx-download">
+              📥 Скачать протокол .DOCX
+            </button>
+          </div>
+        </div>
+      `;
+
+      content.innerHTML = cardHtml;
+
+      content.querySelectorAll('.btn-bitrix[data-action-idx]').forEach(btn => {
+        const idx = Number(btn.getAttribute('data-action-idx'));
+        const item = items[idx];
+        if (item) {
+          btn.addEventListener('click', () => createBitrixTask(item.id, item.title, btn));
+        }
+      });
+
+      const downloadBtn = content.querySelector('.btn-docx-download');
+      if (downloadBtn) {
+        downloadBtn.addEventListener('click', () => {
+          downloadDocx(meetingId, proto.docx_base64 || '', proto.title || 'Protocol');
+        });
+      }
+
+      row.appendChild(avatar);
+      row.appendChild(content);
+      chatWindow.appendChild(row);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    // ========================================================================
+    // СОЗДАНИЕ ЗАДАЧИ В БИТРИКС24 (/api/telegram/webhook с callback_query)
+    // ========================================================================
+    async function createBitrixTask(actionItemId, title, buttonEl) {
+      if (!buttonEl) return;
+      const originalText = buttonEl.textContent;
+      buttonEl.disabled = true;
+      buttonEl.textContent = '⏳ Создание...';
+
+      try {
+        const res = await fetch('/api/telegram/webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            callback_query: {
+              id: 'web_cb_' + Date.now(),
+              from: { id: currentTelegramId, first_name: getCurrentUser().full_name || 'WebUser' },
+              message: { chat: { id: currentTelegramId } },
+              data: `create_bitrix_task:${actionItemId}`
+            }
+          })
+        });
+
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (_) {}
+
+        const textMsg = data && typeof data.text === 'string' ? data.text : '';
+        if (res.ok && data && data.show_alert && (textMsg.includes('успешно') || textMsg.includes('✅'))) {
+          buttonEl.textContent = '✅ Задача создана в Битрикс24';
+          buttonEl.classList.add('btn-bitrix-success');
+          buttonEl.disabled = true;
+        } else {
+          alert(textMsg || (res.status === 401 ? 'Вебхук защищён секретным токеном на шлюзе.' : 'Не удалось создать задачу в Битрикс24.'));
+          buttonEl.textContent = originalText;
+          buttonEl.disabled = false;
+        }
+      } catch (err) {
+        alert('Ошибка сети при создании задачи: ' + err.message);
+        buttonEl.textContent = originalText;
+        buttonEl.disabled = false;
+      }
+    }
+
+    // ========================================================================
+    // СКАЧИВАНИЕ ПРОТОКОЛА .DOCX
+    // ========================================================================
+    function downloadDocx(meetingId, base64Data, title) {
+      const fileName = (title || 'Protocol') + '.docx';
+      if (base64Data && base64Data.length > 50) {
+        try {
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          return;
+        } catch (e) {
+          console.warn('Base64 docx download error, falling back to endpoint', e);
+        }
+      }
+      window.open(`/api/meetings/${encodeURIComponent(meetingId)}/export-docx`, '_blank');
+    }
   </script>
 </body>
 </html>
-
