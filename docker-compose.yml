@@ -221,6 +221,17 @@ services:
   # =========================================================================
   # 4. .NET 9 Сервисы (API Gateway + MCP Серверы)
   # =========================================================================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: fotoprint-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --protocol http2 --metrics 0.0.0.0:2000 --url http://nginx:80
+    depends_on:
+      nginx:
+        condition: service_healthy
+    networks:
+      - fotoprint-net
+
   ai-gateway:
     build:
       context: .
@@ -235,6 +246,8 @@ services:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-fotoprint};Username=${POSTGRES_USER:-fotoprint};Password=${POSTGRES_PASSWORD:-fotoprint_secret}
       N8n__WebhookBaseUrl: http://n8n:5678/webhook
       Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-demo-bot-token}
+      Telegram__WebhookSecret: ${TELEGRAM_WEBHOOK_SECRET:-}
+      Telegram__CloudflaredMetricsUrl: http://cloudflared:2000/quicktunnel
       LLM_PROVIDER: ${LLM_PROVIDER:-nvidia}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
       LLM_MODEL: ${LLM_MODEL:-nvidia/nemotron-3.5-super-vl-120b-a12b}
