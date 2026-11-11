@@ -134,9 +134,16 @@ app.MapGet("/api/system/stats", (
 app.MapPost("/api/llm/generate", async (
     [FromBody] GeminiPromptRequest req,
     INvidiaClient llm,
-    ILangfuseClient langfuse) =>
+    ILangfuseClient langfuse,
+    FotoprintConfig config) =>
 {
     var traceId = langfuse.GenerateTraceId();
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "api-llm-generate",
+        metadata: new { prompt_length = req.Prompt?.Length ?? 0, model = config.Llm.Models.ChatModel },
+        tags: new[] { "channel:api", $"provider:{config.Llm.Provider}" });
+
     var response = await llm.GenerateContentAsync(
         prompt: req.Prompt,
         systemInstruction: req.SystemInstruction,
@@ -156,9 +163,16 @@ app.MapPost("/api/llm/generate", async (
 app.MapPost("/api/gemini/generate", async (
     [FromBody] GeminiPromptRequest req,
     IGeminiClient gemini,
-    ILangfuseClient langfuse) =>
+    ILangfuseClient langfuse,
+    FotoprintConfig config) =>
 {
     var traceId = langfuse.GenerateTraceId();
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "api-gemini-generate",
+        metadata: new { prompt_length = req.Prompt?.Length ?? 0, model = config.Llm.Models.ChatModel },
+        tags: new[] { "channel:api", $"provider:{config.Llm.Provider}" });
+
     var response = await gemini.GenerateContentAsync(
         prompt: req.Prompt,
         systemInstruction: req.SystemInstruction,
@@ -178,9 +192,18 @@ app.MapPost("/api/gemini/generate", async (
 app.MapPost("/api/agent/chat", async (
     [FromBody] AgentChatRequest req,
     IFotoprintAgent agent,
-    ILangfuseClient langfuse) =>
+    ILangfuseClient langfuse,
+    FotoprintConfig config) =>
 {
     var traceId = langfuse.GenerateTraceId();
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "web-agent-chat",
+        userId: req.TelegramId.ToString(),
+        sessionId: $"web-chat-{req.ChatId}",
+        metadata: new { telegram_id = req.TelegramId, chat_id = req.ChatId, message = req.Message },
+        tags: new[] { "channel:web-chat", $"provider:{config.Llm.Provider}" });
+
     var response = await agent.ProcessMessageAsync(
         telegramId: req.TelegramId,
         chatId: req.ChatId,

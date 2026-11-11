@@ -499,14 +499,50 @@ public class FotoprintRepository : IFotoprintRepository
             LIMIT @TopK;
         """;
 
-        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new
+        var chunks = (await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new
         {
             QueryText = queryText,
             Groups = groupsJson,
             TopK = topK
+        }, cancellationToken: ct))).ToList();
+
+        if (chunks.Count > 0 || string.IsNullOrWhiteSpace(queryText))
+        {
+            return chunks;
+        }
+
+        // Фолбэк по отдельным ключевым словам (>= 3 символов), если точная фраза не совпала целиком
+        var patterns = queryText
+            .Split(new[] { ' ', ',', '.', ';', '?', '!' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(t => t.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(t => $"%{t}%")
+            .ToArray();
+
+        if (patterns.Length == 0)
+        {
+            return chunks;
+        }
+
+        const string kwSql = """
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex, c.chunk_text AS ChunkText, c.metadata::text AS MetadataJson
+            FROM corporate_document_chunks c
+            WHERE (
+                c.allowed_access_groups ? 'all'
+                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+            )
+            AND c.chunk_text ILIKE ANY(@Patterns)
+            LIMIT @TopK;
+        """;
+
+        var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
+        {
+            Patterns = patterns,
+            Groups = groupsJson,
+            TopK = topK
         }, cancellationToken: ct));
 
-        return chunks.ToList();
+        return kwChunks.ToList();
     }
 
     public async Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default)
@@ -607,7 +643,7 @@ public class FotoprintRepository : IFotoprintRepository
     {
         await using var conn = await CreateConnectionAsync(ct);
         var sql = "SELECT * FROM action_items WHERE responsible_id = @ResponsibleId";
-        if (!string.IsNullOrWhiteSpace(statusFilter))
+        if (!string.IsNullOrWhiteSpace(statusFilter) && !statusFilter.Equals("all", StringComparison.OrdinalIgnoreCase))
         {
             sql += " AND status = @StatusFilter";
         }

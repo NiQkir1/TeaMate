@@ -369,7 +369,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                 // Проверяем наличие content в OpenAI формате (строка или массив мультимодальных блоков)
                 if (root.TryGetProperty("content", out var contentProp))
                 {
-                    if (contentProp.ValueKind == JsonValueKind.Array)
+                    if (role != "tool" && contentProp.ValueKind == JsonValueKind.Array)
                     {
                         var blocks = new List<object>();
                         foreach (var b in contentProp.EnumerateArray())
@@ -380,10 +380,17 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                     }
                     else
                     {
+                        var contentText = contentProp.ValueKind switch
+                        {
+                            JsonValueKind.String => contentProp.GetString() ?? "",
+                            JsonValueKind.Null or JsonValueKind.Undefined => "",
+                            _ => contentProp.GetRawText()
+                        };
+
                         var msgObj = new Dictionary<string, object>
                         {
                             ["role"] = role,
-                            ["content"] = contentProp.GetString() ?? ""
+                            ["content"] = contentText
                         };
                         if (root.TryGetProperty("tool_call_id", out var tcid))
                         {
