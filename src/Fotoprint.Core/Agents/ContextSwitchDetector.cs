@@ -73,10 +73,26 @@ public class ContextSwitchDetector : IContextSwitchDetector
         // Если истории нет - это начало диалога, смены контекста нет
         if (activeHistory == null || activeHistory.Count == 0)
         {
-            return new ContextSwitchResult(false, "general_chat", "Первое сообщение в сессии");
+            var initialBranch = ClassifyDomainBranch(currentMessage) ?? "general_chat";
+            return new ContextSwitchResult(false, initialBranch, "Первое сообщение в сессии");
         }
 
-        // Форматируем предыдущую сессию
+        // Быстрый детерминированный гибридный классификатор (экономит 1 вызов LLM из квоты 40 RPM в 90%+ случаев)
+        if (TryClassifyFastPath(activeHistory, currentMessage, out var fastResult))
+        {
+            if (_langfuse != null && !string.IsNullOrEmpty(traceId))
+            {
+                _ = _langfuse.LogEventAsync(
+                    traceId,
+                    "ContextSwitch:Detected",
+                    "DEFAULT",
+                    $"FastPath: Switch={fastResult.IsSwitched}, Branch={fastResult.SuggestedBranch}, Reason={fastResult.Reason}",
+                    ct: ct);
+            }
+            return fastResult;
+        }
+
+        // Форматируем предыдущую сессию (резервный LLM-путь для нестандартных/неоднозначных фраз)
         var historyContext = string.Join("\n", activeHistory.Select(m => $"[{m.Role.ToUpperInvariant()}]: {m.Content}"));
 
         var prompt = $$"""
@@ -234,5 +250,131 @@ public class ContextSwitchDetector : IContextSwitchDetector
 
             return new ContextSwitchResult(isSwitched, "general_chat", $"Parsed from text: {raw.Trim()}");
         }
+    }
+
+    private static bool TryClassifyFastPath(
+        List<ChatMessage> activeHistory,
+        string currentMessage,
+        out ContextSwitchResult result)
+    {
+        result = default!;
+        if (string.IsNullOrWhiteSpace(currentMessage))
+        {
+            return false;
+        }
+
+        // Определяем домен предыдущего сообщения пользователя (или последнего сообщения в сессии)
+        var lastUserMsg = activeHistory.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content
+                          ?? activeHistory[^1].Content;
+        var prevBranch = ClassifyDomainBranch(lastUserMsg) ?? ClassifyDomainBranch(activeHistory[^1].Content);
+        var currentBranch = ClassifyDomainBranch(currentMessage);
+
+        // 1. Явная фраза-продолжение ("а для ...", "а по нему", "подробнее", "еще", "а какие там...") без жесткой смены домена
+        if (IsContinuationPhrase(currentMessage))
+        {
+            if (currentBranch == null || prevBranch == null || string.Equals(currentBranch, prevBranch, StringComparison.OrdinalIgnoreCase))
+            {
+                var targetBranch = currentBranch ?? prevBranch ?? "doc_search";
+                result = new ContextSwitchResult(
+                    IsSwitched: false,
+                    SuggestedBranch: targetBranch,
+                    Reason: $"Пользователь продолжает обсуждение в ветке '{targetBranch}'");
+                return true;
+            }
+        }
+
+        // 2. Если домен текущего сообщения четко определен
+        if (currentBranch != null && prevBranch != null)
+        {
+            if (string.Equals(currentBranch, prevBranch, StringComparison.OrdinalIgnoreCase))
+            {
+                result = new ContextSwitchResult(
+                    IsSwitched: false,
+                    SuggestedBranch: currentBranch,
+                    Reason: $"Пользователь продолжает обсуждение темы '{currentBranch}'");
+                return true;
+            }
+
+            // Если это явная команда на постановку задачи / встречу / другой модуль — фиксируем смену темы,
+            // но для обычных вопросов по заказам/КПИ/документам внутри рабочего диалога сохраняем сессию
+            bool hardSwitch = currentBranch is "task_management" or "meeting_prep" or "meeting_summary"
+                              && currentMessage.Contains("поставь", StringComparison.OrdinalIgnoreCase)
+                              || currentMessage.Contains("создай задач", StringComparison.OrdinalIgnoreCase)
+                              || currentMessage.Contains("назначь встреч", StringComparison.OrdinalIgnoreCase);
+
+            if (hardSwitch)
+            {
+                result = new ContextSwitchResult(
+                    IsSwitched: true,
+                    SuggestedBranch: currentBranch,
+                    Reason: $"Пользователь резко сменил тему с '{prevBranch}' на '{currentBranch}'");
+                return true;
+            }
+
+            // Мягкий переход внутри рабочего ассистента (например, проверил заказ 44102 и спросил про задачи) — не рвем контекст сессии!
+            result = new ContextSwitchResult(
+                IsSwitched: false,
+                SuggestedBranch: currentBranch,
+                Reason: $"Пользователь продолжает обсуждение в рабочей сессии (переход к '{currentBranch}')");
+            return true;
+        }
+
+        if (currentBranch != null)
+        {
+            result = new ContextSwitchResult(
+                IsSwitched: false,
+                SuggestedBranch: currentBranch,
+                Reason: $"Пользователь продолжает обсуждение ('{currentBranch}')");
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsContinuationPhrase(string text)
+    {
+        var t = text.Trim().ToLowerInvariant();
+        return t.StartsWith("а ") ||
+               t.StartsWith("и ") ||
+               t.StartsWith("ну ") ||
+               t.StartsWith("тогда ") ||
+               t.StartsWith("подробнее") ||
+               t.StartsWith("уточни") ||
+               t.StartsWith("расскажи подробнее") ||
+               t.StartsWith("а что ") ||
+               t.StartsWith("а как") ||
+               t.StartsWith("а для ") ||
+               t.StartsWith("а по ");
+    }
+
+    private static string? ClassifyDomainBranch(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var t = text.ToLowerInvariant();
+
+        if (t.Contains("задач") || t.Contains("битрикс") || t.Contains("bitrix") || t.Contains("поручен") || t.Contains("сделк") || t.Contains("crm") || t.Contains("дедлайн"))
+            return "task_management";
+
+        if (t.Contains("протокол") || t.Contains("итоги встреч") || t.Contains("резюме встреч"))
+            return "meeting_summary";
+
+        if (t.Contains("встреч") || t.Contains("планерк") || t.Contains("совещан") || t.Contains("календар") || t.Contains("расписан"))
+            return "meeting_prep";
+
+        if (t.Contains("регламент") || t.Contains("heidelberg") || t.Contains("краск") || t.Contains("бумаг") ||
+            t.Contains("плотн") || t.Contains("раг") || t.Contains("rag") || t.Contains("база знаний") ||
+            t.Contains("базе знаний") || t.Contains("скидк") || t.Contains("сверхуроч") || t.Contains("отход") ||
+            t.Contains("документ") || t.Contains("правил"))
+            return "doc_search";
+
+        if (t.Contains("выработк") || t.Contains("kpi") || t.Contains("кпи") || t.Contains("брак") ||
+            t.Contains("оттиск") || t.Contains("загрузк") || t.Contains("сводк") || t.Contains("дайджест") ||
+            t.Contains("заказ") || t.Contains("тираж") || t.Contains("44102") || t.Contains("1с") || t.Contains("1c") || t.Contains("офсет"))
+            return "executive_report";
+
+        if (t.Contains("привет") || t.Contains("здравствуй") || t.Contains("спасибо") || t.Contains("кто ты") || t.Contains("помощь"))
+            return "general_chat";
+
+        return null;
     }
 }

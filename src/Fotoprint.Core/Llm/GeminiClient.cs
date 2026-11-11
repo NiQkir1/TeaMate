@@ -117,12 +117,20 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
     private readonly ILangfuseClient? _langfuse;
     private readonly ILogger<NvidiaClient>? _logger;
 
+    private static readonly JsonSerializerOptions Utf8JsonOptions = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private readonly string _apiKey;
+    private readonly string[] _apiKeys;
+    private int _keyIndex = -1;
     private readonly string _model;
     private readonly string _fastModel;
     private readonly string _fallbackModel;
     private readonly string _baseUrl;
     private readonly int _rpmLimit;
+    private DateTime _primaryModelCircuitOpenUntilUtc = DateTime.MinValue;
 
     // Счётчик вызовов в скользящем окне 60 секунд
     private readonly Queue<DateTime> _callTimestamps = new();
@@ -148,9 +156,15 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         if (string.IsNullOrWhiteSpace(apiKeyEnvVar)) apiKeyEnvVar = "NVIDIA_API_KEY";
 
         _apiKey = Environment.GetEnvironmentVariable(apiKeyEnvVar)
+            ?? Environment.GetEnvironmentVariable("NVIDIA_API_KEYS")
             ?? Environment.GetEnvironmentVariable("NVIDIA_API_KEY")
             ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY")
             ?? string.Empty;
+
+        _apiKeys = _apiKey
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
         _model = Environment.GetEnvironmentVariable("LLM_MODEL")
             ?? _config.Llm.Models.ChatModel;
@@ -244,7 +258,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
-        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: _model, ct: ct);
+        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: tools != null ? _fastModel : _model, ct: ct);
 
     public Task<GeminiTurnResponse> ChatTurnNoThinkingAsync(
         List<object> contents,
@@ -254,7 +268,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
-        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, preferredModel: _model, ct: ct);
+        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, preferredModel: _fastModel, ct: ct);
 
     private async Task<GeminiTurnResponse> ChatTurnCoreAsync(
         List<object> contents,
@@ -280,8 +294,11 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                     {
                         RecordCall();
 
-                        // На 1-й попытке используем целевую модель, а при сбое (например 503 content safety screening) автоматически переключаемся на резервную модель семейства Nemotron 3.5
-                        var activeModel = attempt == 1 ? preferredModel : _fallbackModel;
+                        // Если основная тяжелая модель временно недоступна (Circuit Breaker открыт после таймаута/503) или это повторная попытка — сразу используем быструю модель
+                        bool isCircuitOpen = DateTime.UtcNow < _primaryModelCircuitOpenUntilUtc &&
+                                             string.Equals(preferredModel, _model, StringComparison.OrdinalIgnoreCase);
+
+                        var activeModel = (attempt == 1 && !isCircuitOpen) ? preferredModel : _fallbackModel;
                         if (attempt > 1 && !string.Equals(activeModel, preferredModel, StringComparison.OrdinalIgnoreCase))
                         {
                             _logger?.LogInformation("🔀 [NVIDIA Fallback] Попытка {Attempt}: переключение с '{Primary}' на резервную модель '{Fallback}'",
@@ -292,35 +309,66 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                         var requestBody = BuildNvidiaRequestBody(contents, tools, systemInstruction, temp, maxTokens, activeModel, enableThinking);
 
                         using var request = new HttpRequestMessage(HttpMethod.Post, endpointUrl);
-                        request.Content = JsonContent.Create(requestBody);
+                        request.Content = JsonContent.Create(requestBody, options: Utf8JsonOptions);
 
-                        if (!string.IsNullOrWhiteSpace(_apiKey))
+                        var activeKey = GetNextApiKey();
+                        if (!string.IsNullOrWhiteSpace(activeKey))
                         {
-                            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiKey);
+                            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", activeKey);
                         }
 
-                        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, retryToken);
-
-                        if (!response.IsSuccessStatusCode)
+                        // Защита от зависаний тяжелой модели (TTFT timeout 10 сек на 1-й попытке, чтобы не ждать 30 сек перед фоллбэком)
+                        using var ttftCts = CancellationTokenSource.CreateLinkedTokenSource(retryToken);
+                        if (attempt == 1 && string.Equals(activeModel, _model, StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(_model, _fallbackModel, StringComparison.OrdinalIgnoreCase))
                         {
-                            var errContent = await response.Content.ReadAsStringAsync(retryToken);
-                            var statusCode = (int)response.StatusCode;
-                            _logger?.LogWarning("⚠️ [NVIDIA API] Ошибка {StatusCode}: {ErrorBody}", statusCode, errContent);
-
-                            throw new NodeTransientException(
-                                $"LLM API вернул код {statusCode}: {response.ReasonPhrase}. Детали: {errContent}",
-                                statusCode);
+                            ttftCts.CancelAfter(TimeSpan.FromSeconds(10));
                         }
 
-                        var mediaType = response.Content.Headers.ContentType?.MediaType;
-                        if (!string.IsNullOrWhiteSpace(mediaType) &&
-                            mediaType.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+                        HttpResponseMessage response;
+                        try
                         {
-                            return await ParseNvidiaStreamResponseAsync(response, attempt, retryToken);
+                            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ttftCts.Token);
+                        }
+                        catch (Exception ex) when (!retryToken.IsCancellationRequested)
+                        {
+                            if (string.Equals(activeModel, _model, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _primaryModelCircuitOpenUntilUtc = DateTime.UtcNow.AddMinutes(3);
+                                _logger?.LogWarning("⚡ [CircuitBreaker] Основная модель '{Model}' не ответила вовремя ({Message}). Переключаем трафик на '{Fallback}' на 3 мин.",
+                                    _model, ex.Message, _fallbackModel);
+                            }
+                            throw new NodeTransientException($"Таймаут или обрыв соединения с моделью {activeModel}: {ex.Message}", 503, ex);
                         }
 
-                        var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
-                        return ParseNvidiaTurnResponse(json, attempt);
+                        using (response)
+                        {
+                            if (!response.IsSuccessStatusCode)
+                            {
+                                var errContent = await response.Content.ReadAsStringAsync(retryToken);
+                                var statusCode = (int)response.StatusCode;
+                                _logger?.LogWarning("⚠️ [NVIDIA API] Ошибка {StatusCode}: {ErrorBody}", statusCode, errContent);
+
+                                if (string.Equals(activeModel, _model, StringComparison.OrdinalIgnoreCase) && statusCode >= 500)
+                                {
+                                    _primaryModelCircuitOpenUntilUtc = DateTime.UtcNow.AddMinutes(3);
+                                }
+
+                                throw new NodeTransientException(
+                                    $"LLM API вернул код {statusCode}: {response.ReasonPhrase}. Детали: {errContent}",
+                                    statusCode);
+                            }
+
+                            var mediaType = response.Content.Headers.ContentType?.MediaType;
+                            if (!string.IsNullOrWhiteSpace(mediaType) &&
+                                mediaType.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return await ParseNvidiaStreamResponseAsync(response, attempt, retryToken);
+                            }
+
+                            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
+                            return ParseNvidiaTurnResponse(json, attempt);
+                        }
                     },
                     compensatingRollbackAction: (ex, rollbackToken) =>
                     {
@@ -392,6 +440,14 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         }
     }
 
+    private string GetNextApiKey()
+    {
+        if (_apiKeys.Length == 0) return _apiKey;
+        if (_apiKeys.Length == 1) return _apiKeys[0];
+        var idx = (Interlocked.Increment(ref _keyIndex) & 0x7FFFFFFF) % _apiKeys.Length;
+        return _apiKeys[idx];
+    }
+
     private void RecordCall()
     {
         lock (_counterLock)
@@ -435,7 +491,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             }
             else
             {
-                var jsonStr = JsonSerializer.Serialize(c);
+                var jsonStr = JsonSerializer.Serialize(c, Utf8JsonOptions);
                 using var doc = JsonDocument.Parse(jsonStr);
                 var root = doc.RootElement;
 

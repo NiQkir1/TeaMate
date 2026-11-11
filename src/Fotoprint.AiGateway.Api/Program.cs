@@ -40,10 +40,13 @@ var lbOptions = new LoadBalancerOptions
     MinIntervalBetweenRequestsMs = appConfig.LoadBalancer.MinIntervalBetweenRequestsMs,
     QueueCapacity = appConfig.LoadBalancer.QueueCapacity
 };
-builder.Services.AddSingleton<ILlmLoadBalancer>(_ => new LlmLoadBalancer(lbOptions));
+builder.Services.AddSingleton<ILlmLoadBalancer>(sp => new LlmLoadBalancer(
+    lbOptions,
+    sp.GetService<ILogger<LlmLoadBalancer>>(),
+    sp.GetService<ILangfuseClient>()));
 builder.Services.AddSingleton<IRollbackManager, RollbackManager>();
 
-// NVIDIA NIM LLM Client с контролем нагрузки, повторами, защитой от обрывов пула сокетов и трейсингом
+// NVIDIA NIM LLM Client с контролем нагрузки, повторами, защитой от обрывов пула сокетов и трейсингом (единый Singleton для общего счетчика RPM и Circuit Breaker)
 var llmTimeout = TimeSpan.FromSeconds(Math.Max(90, appConfig.Llm.Parameters.TimeoutSeconds));
 static SocketsHttpHandler CreateLlmSocketsHandler() => new()
 {
@@ -55,14 +58,19 @@ static SocketsHttpHandler CreateLlmSocketsHandler() => new()
     ConnectTimeout = TimeSpan.FromSeconds(15)
 };
 
-builder.Services.AddHttpClient<ILlmClient, NvidiaClient>(c => c.Timeout = llmTimeout)
+builder.Services.AddHttpClient("NvidiaHttpClient", c => c.Timeout = llmTimeout)
     .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
-builder.Services.AddHttpClient<INvidiaClient, NvidiaClient>(c => c.Timeout = llmTimeout)
-    .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
-builder.Services.AddHttpClient<IGeminiClient, NvidiaClient>(c => c.Timeout = llmTimeout)
-    .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
-builder.Services.AddHttpClient<NvidiaClient>(c => c.Timeout = llmTimeout)
-    .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
+
+builder.Services.AddSingleton<NvidiaClient>(sp => new NvidiaClient(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("NvidiaHttpClient"),
+    sp.GetRequiredService<FotoprintConfig>(),
+    sp.GetRequiredService<ILlmLoadBalancer>(),
+    sp.GetRequiredService<IRollbackManager>(),
+    sp.GetService<ILangfuseClient>(),
+    sp.GetService<ILogger<NvidiaClient>>()));
+builder.Services.AddSingleton<ILlmClient>(sp => sp.GetRequiredService<NvidiaClient>());
+builder.Services.AddSingleton<INvidiaClient>(sp => sp.GetRequiredService<NvidiaClient>());
+builder.Services.AddSingleton<IGeminiClient>(sp => sp.GetRequiredService<NvidiaClient>());
 
 // 2-й этап: Детекция смены контекста через LLM перед передачей в n8n
 builder.Services.AddSingleton<IContextSwitchDetector, ContextSwitchDetector>();
@@ -334,41 +342,34 @@ app.MapPost("/api/agent/chat", async (
     };
 
     var n8nStart = DateTime.UtcNow;
-    var n8nCallResult = await loadBalancer.ScheduleAsync(
-        taskName: "WebChatToN8n",
-        work: async lbToken =>
+    var n8nCallResult = await rollbackManager.ExecuteWithRollbackAsync<(bool Forbidden, JsonElement Body)>(
+        nodeName: "N8n:WebChat",
+        action: async (attempt, retryToken) =>
         {
-            return await rollbackManager.ExecuteWithRollbackAsync<(bool Forbidden, JsonElement Body)>(
-                nodeName: "N8n:WebChat",
-                action: async (attempt, retryToken) =>
-                {
-                    var n8nClient = httpFactory.CreateClient("N8nClient");
-                    n8nClient.DefaultRequestHeaders.Remove("X-Trace-Id");
-                    n8nClient.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
-                    n8nClient.DefaultRequestHeaders.Remove("X-Telegram-Id");
-                    n8nClient.DefaultRequestHeaders.Add("X-Telegram-Id", req.TelegramId.ToString());
-                    n8nClient.DefaultRequestHeaders.Remove("X-Internal-Service-Key");
-                    n8nClient.DefaultRequestHeaders.Add("X-Internal-Service-Key", config.Security.InternalServiceSecretKey);
+            var n8nClient = httpFactory.CreateClient("N8nClient");
+            n8nClient.DefaultRequestHeaders.Remove("X-Trace-Id");
+            n8nClient.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
+            n8nClient.DefaultRequestHeaders.Remove("X-Telegram-Id");
+            n8nClient.DefaultRequestHeaders.Add("X-Telegram-Id", req.TelegramId.ToString());
+            n8nClient.DefaultRequestHeaders.Remove("X-Internal-Service-Key");
+            n8nClient.DefaultRequestHeaders.Add("X-Internal-Service-Key", config.Security.InternalServiceSecretKey);
 
-                    var resp = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, retryToken);
-                    if (resp.StatusCode == System.Net.HttpStatusCode.Forbidden)
-                    {
-                        var errJson = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
-                        return (true, errJson);
-                    }
+            var resp = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, retryToken);
+            if (resp.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                var errJson = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
+                return (true, errJson);
+            }
 
-                    if (!resp.IsSuccessStatusCode)
-                    {
-                        throw new NodeTransientException($"n8n вернул код {(int)resp.StatusCode}: {resp.ReasonPhrase}", (int)resp.StatusCode);
-                    }
+            if (!resp.IsSuccessStatusCode)
+            {
+                throw new NodeTransientException($"n8n вернул код {(int)resp.StatusCode}: {resp.ReasonPhrase}", (int)resp.StatusCode);
+            }
 
-                    var okJson = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
-                    return (false, okJson);
-                },
-                compensatingRollbackAction: (ex, token) => Task.CompletedTask,
-                traceId: traceId,
-                ct: lbToken);
+            var okJson = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
+            return (false, okJson);
         },
+        compensatingRollbackAction: (ex, token) => Task.CompletedTask,
         traceId: traceId,
         ct: ct);
     var n8nEnd = DateTime.UtcNow;

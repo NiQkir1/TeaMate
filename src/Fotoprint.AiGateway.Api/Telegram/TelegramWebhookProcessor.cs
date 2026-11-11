@@ -384,47 +384,40 @@ public sealed class TelegramWebhookProcessor
                     raw_update = rawUpdateClone
                 };
 
-                var scheduledResult = await loadBalancer.ScheduleAsync(
-                    taskName: "ForwardToN8nChat",
-                    work: async ct =>
+                var scheduledResult = await rollbackManager.ExecuteWithRollbackAsync<N8nForwardOutcome>(
+                    nodeName: "N8n:FotoprintChat",
+                    action: async (attempt, token) =>
                     {
-                        return await rollbackManager.ExecuteWithRollbackAsync<N8nForwardOutcome>(
-                            nodeName: "N8n:FotoprintChat",
-                            action: async (attempt, token) =>
-                            {
-                                var n8nClient = _httpFactory.CreateClient("N8nClient");
-                                AttachTracingHeaders(n8nClient, traceId, effectiveSessionId, masterId.Value, userId);
+                        var n8nClient = _httpFactory.CreateClient("N8nClient");
+                        AttachTracingHeaders(n8nClient, traceId, effectiveSessionId, masterId.Value, userId);
 
-                                var n8nResponse = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, token);
-                                if (n8nResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-                                {
-                                    var errBody = await n8nResponse.Content.ReadAsStringAsync(token);
-                                    return new N8nForwardOutcome(false, ErrorMessage: errBody);
-                                }
+                        var n8nResponse = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, token);
+                        if (n8nResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                        {
+                            var errBody = await n8nResponse.Content.ReadAsStringAsync(token);
+                            return new N8nForwardOutcome(false, ErrorMessage: errBody);
+                        }
 
-                                if (!n8nResponse.IsSuccessStatusCode)
-                                {
-                                    throw new NodeTransientException(
-                                        $"n8n вернул код {(int)n8nResponse.StatusCode}: {n8nResponse.ReasonPhrase}",
-                                        (int)n8nResponse.StatusCode);
-                                }
+                        if (!n8nResponse.IsSuccessStatusCode)
+                        {
+                            throw new NodeTransientException(
+                                $"n8n вернул код {(int)n8nResponse.StatusCode}: {n8nResponse.ReasonPhrase}",
+                                (int)n8nResponse.StatusCode);
+                        }
 
-                                var json = await n8nResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
-                                return new N8nForwardOutcome(true, Payload: json);
-                            },
-                            compensatingRollbackAction: async (ex, token) =>
-                            {
-                                await repo.SaveMessageToSessionAsync(
-                                    effectiveSessionId,
-                                    masterId.Value,
-                                    "assistant",
-                                    "⚠️ Узел обработки n8n временно перегружен после 3 попыток. Ваше сообщение сохранено, состояние сессии безопасно зафиксировано.",
-                                    isFrozen: false,
-                                    metadata: new { rollback = true, error = ex.Message, trace_id = traceId },
-                                    ct: token);
-                            },
-                            traceId: traceId,
-                            ct: ct);
+                        var json = await n8nResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
+                        return new N8nForwardOutcome(true, Payload: json);
+                    },
+                    compensatingRollbackAction: async (ex, token) =>
+                    {
+                        await repo.SaveMessageToSessionAsync(
+                            effectiveSessionId,
+                            masterId.Value,
+                            "assistant",
+                            "⚠️ Узел обработки n8n временно перегружен после 3 попыток. Ваше сообщение сохранено, состояние сессии безопасно зафиксировано.",
+                            isFrozen: false,
+                            metadata: new { rollback = true, error = ex.Message, trace_id = traceId },
+                            ct: token);
                     },
                     traceId: traceId,
                     ct: cts.Token);

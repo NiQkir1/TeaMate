@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Fotoprint.Core.Configuration;
@@ -34,6 +35,14 @@ public record AgentResponse(
 
 public class FotoprintAiAgent : IFotoprintAgent
 {
+    private static readonly JsonSerializerOptions Utf8JsonOptions = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    private static readonly TimeSpan ResponseCacheTtl = TimeSpan.FromSeconds(45);
+    private readonly ConcurrentDictionary<string, (AgentResponse Response, DateTime ExpiresAtUtc)> _responseCache = new(StringComparer.Ordinal);
+
     private readonly IGeminiClient _gemini;
     private readonly IFotoprintRepository _repo;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -86,6 +95,37 @@ public class FotoprintAiAgent : IFotoprintAgent
         var rolesStr = secContext != null ? string.Join(", ", secContext.Roles) : "Guest";
         var deptStr = secContext?.Department ?? "Не указан";
         var userName = secContext?.FullName ?? $"User_{telegramId}";
+        var empIdForCache = secContext?.EmployeeId ?? 0;
+        var accessKey = secContext?.AccessGroups is { Count: > 0 } agCache
+            ? string.Join(",", agCache.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            : "all";
+
+        // Краткосрочный RBAC-кэш (45 сек) для одинаковых read-only запросов (экономит квоту 40 RPM при массовых вопросах в минуту)
+        string? cacheKey = null;
+        if (IsCacheableReadQuery(messageText))
+        {
+            var isPersonalQuery = messageText.Contains("мои", StringComparison.OrdinalIgnoreCase) ||
+                                  messageText.Contains("у меня", StringComparison.OrdinalIgnoreCase) ||
+                                  messageText.Contains("мне", StringComparison.OrdinalIgnoreCase);
+            var scopeKey = isPersonalQuery ? $"emp:{empIdForCache}" : $"dept:{deptStr}|roles:{rolesStr}|ag:{accessKey}";
+            cacheKey = $"{scopeKey}|msg:{messageText.Trim().ToLowerInvariant()}";
+
+            if (_responseCache.TryGetValue(cacheKey, out var cached) && DateTime.UtcNow < cached.ExpiresAtUtc)
+            {
+                _logger?.LogInformation("⚡ [AgentCache] Возвращен кэшированный ответ (0 вызовов LLM) для '{Message}'", messageText);
+                if (_langfuse != null)
+                {
+                    _ = _langfuse.LogEventAsync(
+                        traceId,
+                        "Agent:CacheHit",
+                        "DEFAULT",
+                        "Ответ возвращен из краткосрочного RBAC-кэша (0 вызовов LLM)",
+                        metadata: new { department = deptStr, role = rolesStr },
+                        ct: ct);
+                }
+                return cached.Response with { TotalLlmCalls = 0, TotalTokensUsed = 0 };
+            }
+        }
 
         var systemInstruction = $"""
             Ты — корпоративный AI-ассистент типографии «Фотопринт» (Fotoprint Copilot).
@@ -198,7 +238,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                 await _langfuse.CreateGenerationAsync(
                     traceId: traceId,
                     name: "Gen:Main_Agent",
-                    model: _config.Llm.Models.ChatModel,
+                    model: _config.Llm.Models.FastModel,
                     startTime: startTurn,
                     endTime: endTurn,
                     promptTokens: turn.PromptTokens,
@@ -215,7 +255,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                 return new AgentResponse(
                     IsSuccess: false,
                     AnswerText: lastToolResult != null
-                        ? JsonSerializer.Serialize(lastToolResult)
+                        ? JsonSerializer.Serialize(lastToolResult, Utf8JsonOptions)
                         : "Извините, произошла ошибка при обращении к нейросети.",
                     ToolsInvoked: toolsInvoked,
                     TotalLlmCalls: llmCallsCount,
@@ -307,7 +347,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             {
                 var toolResultJson = r.Result is string strResult
                     ? strResult
-                    : JsonSerializer.Serialize(r.Result);
+                    : JsonSerializer.Serialize(r.Result, Utf8JsonOptions);
 
                 contents.Add(new
                 {
@@ -321,21 +361,28 @@ public class FotoprintAiAgent : IFotoprintAgent
 
         if (toolsInvoked.Count == 0)
         {
-            return new AgentResponse(
+            var directResponse = new AgentResponse(
                 IsSuccess: true,
                 AnswerText: finalAnswer ?? "Запрос обработан.",
                 ToolsInvoked: toolsInvoked,
                 TotalLlmCalls: llmCallsCount,
                 TotalTokensUsed: totalTokens,
                 ErrorMessage: null);
+
+            if (cacheKey != null)
+            {
+                _responseCache[cacheKey] = (directResponse, DateTime.UtcNow.Add(ResponseCacheTtl));
+            }
+
+            return directResponse;
         }
 
-        var finalText = finalAnswer ?? (lastToolResult != null ? JsonSerializer.Serialize(lastToolResult) : "Запрос обработан.");
+        var finalText = finalAnswer ?? (lastToolResult != null ? JsonSerializer.Serialize(lastToolResult, Utf8JsonOptions) : "Запрос обработан.");
 
         // 4. Фоновая оценка адекватности и качества (LLM-as-a-Judge)
         if (_judgeService != null && _config.Telemetry.Evaluations.EnableLlmAsJudge)
         {
-            var rawContextJson = JsonSerializer.Serialize(lastToolResult);
+            var rawContextJson = JsonSerializer.Serialize(lastToolResult, Utf8JsonOptions);
             _ = Task.Run(async () =>
             {
                 try
@@ -355,13 +402,32 @@ public class FotoprintAiAgent : IFotoprintAgent
             });
         }
 
-        return new AgentResponse(
+        var finalResponse = new AgentResponse(
             IsSuccess: lastTurn?.IsSuccess ?? true,
             AnswerText: finalText,
             ToolsInvoked: toolsInvoked,
             TotalLlmCalls: llmCallsCount,
             TotalTokensUsed: totalTokens,
             ErrorMessage: lastTurn?.ErrorMessage);
+
+        if (cacheKey != null && finalResponse.IsSuccess && !toolsInvoked.Contains("create_task", StringComparer.OrdinalIgnoreCase))
+        {
+            _responseCache[cacheKey] = (finalResponse, DateTime.UtcNow.Add(ResponseCacheTtl));
+        }
+
+        return finalResponse;
+    }
+
+    private static bool IsCacheableReadQuery(string messageText)
+    {
+        if (string.IsNullOrWhiteSpace(messageText) || messageText.Length < 4) return false;
+        var t = messageText.Trim().ToLowerInvariant();
+        if (t.Contains("поставь") || t.Contains("создай") || t.Contains("назначь") || t.Contains("добавь") || t.Contains("удали") || t.Contains("измени"))
+            return false;
+        // Не кэшируем короткие местоименные фразы, зависящие от предыдущей реплики диалога
+        if (t.StartsWith("а ") || t.StartsWith("и ") || t.StartsWith("подробнее") || t.StartsWith("уточни"))
+            return false;
+        return true;
     }
 
     private HttpClient CreateMcpClient(long telegramId, string traceId)
