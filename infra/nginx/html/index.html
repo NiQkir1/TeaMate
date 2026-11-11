@@ -242,22 +242,6 @@
       border-color: #64748b;
     }
 
-    .recording-banner {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(239, 68, 68, 0.18);
-      border: 1px solid #ef4444;
-      color: #fca5a5;
-      padding: 6px 14px;
-      border-radius: 8px;
-      font-size: 12.5px;
-      font-weight: 600;
-      margin-bottom: 8px;
-      align-self: flex-start;
-      animation: pulse-red 1.5s infinite;
-    }
-
     .stt-badge {
       display: inline-flex;
       align-items: center;
@@ -340,6 +324,134 @@
     .input-bar button#send-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+
+    /* ChatGPT-style Voice Recording Bar */
+    .input-area-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .voice-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 6px 12px;
+      min-height: 52px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      animation: voice-bar-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes voice-bar-in {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .btn-voice-cancel {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .btn-voice-cancel:hover {
+      background: rgba(239, 68, 68, 0.25);
+      border-color: #ef4444;
+      color: #fca5a5;
+      transform: scale(1.08);
+    }
+
+    .btn-voice-cancel:active {
+      transform: scale(0.95);
+    }
+
+    .voice-timer-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .voice-rec-dot {
+      width: 8px;
+      height: 8px;
+      background: #ef4444;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #ef4444;
+      animation: pulse-red 1.2s infinite ease-in-out;
+    }
+
+    .voice-waveform-container {
+      flex: 1;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      min-width: 80px;
+    }
+
+    #voice-waveform {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .btn-voice-done {
+      background: linear-gradient(135deg, #10b981, #06b6d4);
+      border: none;
+      color: white;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 0 14px rgba(16, 185, 129, 0.45);
+      flex-shrink: 0;
+    }
+
+    .btn-voice-done:hover {
+      background: linear-gradient(135deg, #059669, #0891b2);
+      transform: scale(1.08);
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.65);
+    }
+
+    .btn-voice-done:active {
+      transform: scale(0.95);
     }
 
     .typing {
@@ -604,25 +716,43 @@
       <div class="pill" onclick="document.getElementById('audio-file-input').click()">📎 Загрузить аудио встречи (MoM)</div>
     </div>
 
-    <div id="recording-banner" class="recording-banner" style="display: none;">
-      🔴 Запись: <span id="record-timer">00:00</span>
-      <span style="font-size: 11px; opacity: 0.8; margin-left: 8px;">(нажмите 🎙️ для завершения и распознавания)</span>
-    </div>
-
     <div id="stt-status-badge" class="stt-badge" style="display: none;"></div>
 
-    <div class="input-bar">
-      <!-- Hidden file input for meeting audio -->
-      <input type="file" id="audio-file-input" accept="audio/*,.m4a,.wav,.mp3,.ogg,.oga" style="display: none;" onchange="handleAudioUpload(this)">
-      
-      <!-- Attachment button for meeting recording -->
-      <button type="button" class="btn-icon" id="attach-btn" title="Загрузить аудиозапись встречи (.m4a, .wav, .mp3, .ogg)" onclick="document.getElementById('audio-file-input').click()">📎</button>
+    <div class="input-area-wrapper">
+      <div class="input-bar" id="input-bar">
+        <!-- Hidden file input for meeting audio -->
+        <input type="file" id="audio-file-input" accept="audio/*,.m4a,.wav,.mp3,.ogg,.oga" style="display: none;" onchange="handleAudioUpload(this)">
+        
+        <!-- Attachment button for meeting recording -->
+        <button type="button" class="btn-icon" id="attach-btn" title="Загрузить аудиозапись встречи (.m4a, .wav, .mp3, .ogg)" onclick="document.getElementById('audio-file-input').click()">📎</button>
 
-      <!-- Microphone button for voice input -->
-      <button type="button" class="btn-icon" id="mic-btn" title="Голосовой ввод (Микрофон)" onclick="toggleRecording()">🎙️</button>
+        <!-- Microphone button for voice input -->
+        <button type="button" class="btn-icon" id="mic-btn" title="Голосовой ввод (Микрофон)" onclick="toggleRecording()">🎙️</button>
 
-      <input type="text" id="user-input" placeholder="Введите ваш вопрос или используйте голосовой ввод..." autofocus>
-      <button id="send-btn" onclick="handleSend()">Отправить</button>
+        <input type="text" id="user-input" placeholder="Введите ваш вопрос или используйте голосовой ввод..." autofocus>
+        <button id="send-btn" onclick="handleSend()">Отправить</button>
+      </div>
+
+      <!-- ChatGPT-style modern voice recording bar -->
+      <div class="voice-bar" id="voice-bar" style="display: none;">
+        <!-- Cancel button -->
+        <button type="button" class="btn-voice-cancel" id="voice-cancel-btn" title="Отменить запись" onclick="cancelRecording()">✕</button>
+
+        <!-- Recording indicator & live elapsed timer -->
+        <div class="voice-timer-badge" title="Идет запись аудио">
+          <span class="voice-rec-dot"></span>
+          <span id="voice-timer">00:00</span>
+          <span id="record-timer" style="display: none;">00:00</span>
+        </div>
+
+        <!-- Waveform Visualizer canvas -->
+        <div class="voice-waveform-container">
+          <canvas id="voice-waveform"></canvas>
+        </div>
+
+        <!-- Done / Send button -->
+        <button type="button" class="btn-voice-done" id="voice-done-btn" title="Готово (распознать)" onclick="stopRecordingAndSend()">✓</button>
+      </div>
     </div>
   </main>
 
@@ -766,30 +896,234 @@
     }
 
     // ========================================================================
-    // ГОЛОСОВОЙ ВВОД (МИКРОФОН + MediaRecorder + /api/audio/transcribe)
+    // ГОЛОСОВОЙ ВВОД (CHATGPT-STYLE VOICE BAR + WEB AUDIO API WAVEFORM)
     // ========================================================================
     let mediaRecorder = null;
+    let mediaStream = null;
+    let audioContext = null;
+    let analyserNode = null;
+    let audioSourceNode = null;
+    let animFrameId = null;
     let audioChunks = [];
     let recordingInterval = null;
     let recordingSeconds = 0;
+    let isRecordingCancelled = false;
 
-    async function toggleRecording() {
-      const micBtn = document.getElementById('mic-btn');
-      const banner = document.getElementById('recording-banner');
-      const timerSpan = document.getElementById('record-timer');
+    const NUM_WAVE_BARS = 32;
+    const smoothedHeights = new Float32Array(NUM_WAVE_BARS).fill(3.0);
 
-      if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
-        return;
+    // Global keyboard listener for voice recording shortcuts (Escape: cancel, Enter: done)
+    document.addEventListener('keydown', (e) => {
+      const voiceBar = document.getElementById('voice-bar');
+      if (voiceBar && voiceBar.style.display !== 'none') {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelRecording();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          stopRecordingAndSend();
+        }
+      }
+    });
+
+    function drawRoundedBar(ctx, x, y, width, height, radius) {
+      if (height < radius * 2) radius = height / 2;
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, radius);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    function startWaveformVisualizer() {
+      const canvas = document.getElementById('voice-waveform');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      smoothedHeights.fill(3.0);
+      const freqData = new Uint8Array(analyserNode ? analyserNode.frequencyBinCount : 64);
+      const timeData = new Uint8Array(analyserNode ? analyserNode.fftSize : 128);
+
+      function render() {
+        const voiceBar = document.getElementById('voice-bar');
+        if (!voiceBar || voiceBar.style.display === 'none') {
+          return;
+        }
+
+        animFrameId = requestAnimationFrame(render);
+
+        let rms = 0;
+        if (analyserNode) {
+          try {
+            analyserNode.getByteFrequencyData(freqData);
+            analyserNode.getByteTimeDomainData(timeData);
+
+            let sumSquares = 0;
+            for (let i = 0; i < timeData.length; i++) {
+              const norm = (timeData[i] - 128) / 128;
+              sumSquares += norm * norm;
+            }
+            rms = Math.sqrt(sumSquares / timeData.length);
+          } catch (e) {
+            console.warn('AnalyserNode read error:', e);
+          }
+        }
+
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        const cssWidth = rect.width;
+        const cssHeight = rect.height;
+
+        if (cssWidth === 0 || cssHeight === 0) return;
+
+        const targetW = Math.round(cssWidth * dpr);
+        const targetH = Math.round(cssHeight * dpr);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          canvas.width = targetW;
+          canvas.height = targetH;
+        }
+
+        ctx.save();
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+        const now = performance.now();
+        const totalBars = NUM_WAVE_BARS;
+        const centerY = cssHeight / 2;
+
+        // Adaptive bar sizing
+        let barWidth = 3.5;
+        let gap = 3.5;
+        let totalWaveWidth = totalBars * barWidth + (totalBars - 1) * gap;
+        const maxWaveWidth = Math.max(0, cssWidth - 12);
+        if (totalWaveWidth > maxWaveWidth && maxWaveWidth > 0) {
+          const step = maxWaveWidth / totalBars;
+          barWidth = Math.max(2, step * 0.5);
+          gap = Math.max(1.5, step * 0.5);
+          totalWaveWidth = totalBars * barWidth + (totalBars - 1) * gap;
+        }
+
+        const startX = Math.max(0, (cssWidth - totalWaveWidth) / 2);
+
+        // Gradient: emerald green -> electric cyan -> sky blue
+        const grad = ctx.createLinearGradient(startX, 0, startX + totalWaveWidth, 0);
+        grad.addColorStop(0, '#10b981');
+        grad.addColorStop(0.5, '#06b6d4');
+        grad.addColorStop(1, '#38bdf8');
+        ctx.fillStyle = grad;
+
+        const isSpeaking = rms > 0.018;
+
+        for (let i = 0; i < totalBars; i++) {
+          let targetHeight = 3.0;
+
+          if (isSpeaking && analyserNode) {
+            // Symmetrical distribution around center line
+            const distFromCenter = Math.abs(i - (totalBars - 1) / 2) / ((totalBars - 1) / 2);
+            // Speech frequency mapping: bins 1 to ~24
+            const binIdx = Math.min(Math.floor((1 - distFromCenter * 0.75) * 20) + 1, freqData.length - 1);
+            const freqVal = freqData[binIdx] / 255;
+            const amplitude = Math.min(rms * 4.5, 1.0);
+
+            targetHeight = 3.0 + (freqVal * 0.6 + amplitude * 0.4) * (cssHeight - 6);
+          } else {
+            // Idle subtle breathing wave (2.5px baseline dots/lines)
+            const idleWave = Math.sin(now * 0.0035 + i * 0.35) * 0.75;
+            targetHeight = 2.5 + idleWave;
+          }
+
+          // Smooth interpolation
+          smoothedHeights[i] += (targetHeight - smoothedHeights[i]) * 0.22;
+          const h = Math.max(2.5, Math.min(cssHeight - 4, smoothedHeights[i]));
+          const x = startX + i * (barWidth + gap);
+          const y = centerY - h / 2;
+
+          drawRoundedBar(ctx, x, y, barWidth, h, barWidth / 2);
+        }
+
+        ctx.restore();
       }
 
+      render();
+    }
+
+    function cleanupAudioResources() {
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+      }
+      if (recordingInterval) {
+        clearInterval(recordingInterval);
+        recordingInterval = null;
+      }
+      if (mediaStream) {
+        try {
+          mediaStream.getTracks().forEach(t => t.stop());
+        } catch (e) {
+          console.warn('Error stopping media tracks:', e);
+        }
+        mediaStream = null;
+      }
+      if (audioContext && audioContext.state !== 'closed') {
+        try {
+          audioContext.close();
+        } catch (e) {
+          console.warn('Error closing audioContext:', e);
+        }
+        audioContext = null;
+      }
+      analyserNode = null;
+      audioSourceNode = null;
+    }
+
+    async function toggleRecording() {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        stopRecordingAndSend();
+      } else {
+        await startRecording();
+      }
+    }
+
+    async function startRecording() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         alert('Ваш браузер не поддерживает запись аудио через getUserMedia.');
         return;
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // Initialize Web Audio API for real-time waveform visualizer
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) {
+            audioContext = new AudioCtx();
+            if (audioContext.state === 'suspended') {
+              await audioContext.resume();
+            }
+            analyserNode = audioContext.createAnalyser();
+            analyserNode.fftSize = 256;
+            analyserNode.smoothingTimeConstant = 0.75;
+            audioSourceNode = audioContext.createMediaStreamSource(mediaStream);
+            audioSourceNode.connect(analyserNode);
+          }
+        } catch (audioCtxErr) {
+          console.warn('Web Audio API not supported or failed to initialize:', audioCtxErr);
+        }
 
         let options = {};
         if (typeof MediaRecorder.isTypeSupported === 'function') {
@@ -805,8 +1139,9 @@
           }
         }
 
-        mediaRecorder = new MediaRecorder(stream, options);
+        mediaRecorder = new MediaRecorder(mediaStream, options);
         audioChunks = [];
+        isRecordingCancelled = false;
 
         mediaRecorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) {
@@ -814,77 +1149,132 @@
           }
         };
 
-        mediaRecorder.onstop = async () => {
-          stream.getTracks().forEach(track => track.stop());
-
-          clearInterval(recordingInterval);
-          recordingSeconds = 0;
-          micBtn.classList.remove('recording');
-          banner.style.display = 'none';
-
-          if (audioChunks.length === 0) return;
-
-          const mime = mediaRecorder.mimeType || 'audio/webm';
-          const audioBlob = new Blob(audioChunks, { type: mime });
-          const extension = mime.includes('mp4') ? 'm4a' : 'webm';
-          const audioFile = new File([audioBlob], `mic_recording.${extension}`, { type: mime });
-
-          showSttBadge('⏳ Распознавание речи...');
-
-          try {
-            const formData = new FormData();
-            formData.append('file', audioFile);
-
-            const res = await fetch('/api/audio/transcribe?language=ru', {
-              method: 'POST',
-              body: formData
-            });
-
-            const rawText = await res.text();
-            let data = null;
-            try {
-              data = JSON.parse(rawText);
-            } catch (jsonErr) {
-              // Not JSON (e.g. gateway error HTML or plain text)
-            }
-
-            if (!res.ok) {
-              const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
-              showSttBadge(`⚠️ Ошибка (${res.status}): ${errMsg}`, true);
-              return;
-            }
-
-            if (data && data.success && data.text) {
-              const currentVal = input.value.trim();
-              input.value = currentVal ? `${currentVal} ${data.text.trim()}` : data.text.trim();
-              input.focus();
-              const sec = data.duration_ms ? (data.duration_ms / 1000).toFixed(1) : '0.0';
-              showSttBadge(`🎙️ Распознано: ${data.provider || 'local-metal'}, ${sec}s`);
-            } else {
-              const errMsg = (data && (data.error || data.message)) || 'Речь не распознана';
-              showSttBadge(`⚠️ Ошибка: ${errMsg}`, true);
-            }
-          } catch (err) {
-            showSttBadge(`⚠️ Ошибка сети: ${err.message}`, true);
-          }
-        };
-
+        mediaRecorder.onstop = handleRecordingStop;
         mediaRecorder.start();
 
-        micBtn.classList.add('recording');
-        banner.style.display = 'inline-flex';
+        // Switch to sleek voice recording bar
+        const inputBar = document.getElementById('input-bar');
+        const voiceBar = document.getElementById('voice-bar');
+        const timerSpan = document.getElementById('voice-timer');
+        const legacyTimerSpan = document.getElementById('record-timer');
+
+        if (inputBar) inputBar.style.display = 'none';
+        if (voiceBar) voiceBar.style.display = 'flex';
+
         recordingSeconds = 0;
-        timerSpan.textContent = '00:00';
+        if (timerSpan) timerSpan.textContent = '00:00';
+        if (legacyTimerSpan) legacyTimerSpan.textContent = '00:00';
 
         recordingInterval = setInterval(() => {
           recordingSeconds++;
           const mins = String(Math.floor(recordingSeconds / 60)).padStart(2, '0');
           const secs = String(recordingSeconds % 60).padStart(2, '0');
-          timerSpan.textContent = `${mins}:${secs}`;
+          const timeStr = `${mins}:${secs}`;
+          if (timerSpan) timerSpan.textContent = timeStr;
+          if (legacyTimerSpan) legacyTimerSpan.textContent = timeStr;
         }, 1000);
 
+        startWaveformVisualizer();
+
       } catch (err) {
+        cleanupAudioResources();
         alert('Не удалось получить доступ к микрофону: ' + err.message);
+      }
+    }
+
+    function cancelRecording() {
+      isRecordingCancelled = true;
+      cleanupAudioResources();
+
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+          mediaRecorder.stop();
+        } catch (e) {
+          console.warn('Error stopping mediaRecorder on cancel:', e);
+        }
+      }
+
+      const voiceBar = document.getElementById('voice-bar');
+      const inputBar = document.getElementById('input-bar');
+      if (voiceBar) voiceBar.style.display = 'none';
+      if (inputBar) inputBar.style.display = 'flex';
+      input.focus();
+    }
+
+    function stopRecordingAndSend() {
+      isRecordingCancelled = false;
+      cleanupAudioResources();
+
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+          mediaRecorder.stop();
+        } catch (e) {
+          console.warn('Error stopping mediaRecorder on send:', e);
+        }
+      }
+
+      const voiceBar = document.getElementById('voice-bar');
+      const inputBar = document.getElementById('input-bar');
+      if (voiceBar) voiceBar.style.display = 'none';
+      if (inputBar) inputBar.style.display = 'flex';
+    }
+
+    async function handleRecordingStop() {
+      if (isRecordingCancelled) {
+        audioChunks = [];
+        return;
+      }
+
+      if (audioChunks.length === 0) {
+        input.focus();
+        return;
+      }
+
+      const mime = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+      const audioBlob = new Blob(audioChunks, { type: mime });
+      audioChunks = [];
+      const extension = mime.includes('mp4') ? 'm4a' : 'webm';
+      const audioFile = new File([audioBlob], `mic_recording.${extension}`, { type: mime });
+
+      showSttBadge('⏳ Распознавание речи...');
+
+      try {
+        const formData = new FormData();
+        formData.append('file', audioFile);
+
+        const res = await fetch('/api/audio/transcribe?language=ru', {
+          method: 'POST',
+          body: formData
+        });
+
+        const rawText = await res.text();
+        let data = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch (jsonErr) {
+          // Not JSON (e.g. gateway error HTML or plain text)
+        }
+
+        if (!res.ok) {
+          const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
+          showSttBadge(`⚠️ Ошибка (${res.status}): ${errMsg}`, true);
+          return;
+        }
+
+        if (data && data.success && data.text) {
+          const currentVal = input.value.trim();
+          input.value = currentVal ? `${currentVal} ${data.text.trim()}` : data.text.trim();
+          input.focus();
+          const sec = data.duration_ms ? (data.duration_ms / 1000).toFixed(1) : '0.0';
+          showSttBadge(`🎙️ Распознано: ${data.provider || 'local-metal'}, ${sec}s`);
+        } else {
+          const errMsg = (data && (data.error || data.message)) || 'Речь не распознана';
+          showSttBadge(`⚠️ Ошибка: ${errMsg}`, true);
+        }
+      } catch (err) {
+        showSttBadge(`⚠️ Ошибка сети: ${err.message}`, true);
+      } finally {
+        input.focus();
       }
     }
 
