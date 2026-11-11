@@ -213,4 +213,19 @@ context_switch:
   # Автоматическая заморозка (изоляция) предыдущих сообщений в БД при смене темы
   auto_freeze_on_switch: true
 
+# -----------------------------------------------------------------------------
+# 11. РАСПОЗНАВАНИЕ РЕЧИ И АУДИОПРОТОКОЛИРОВАНИЕ (SPEECH-TO-TEXT & AUDIO MOM)
+# -----------------------------------------------------------------------------
+audio:
+  enabled: true
+  provider: "auto" # "auto" | "tsukiko" | "gemini"
+  tsukiko:
+    cli_path: "/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe"
+    http_url: "http://127.0.0.1:8756"
+    timeout_seconds: 300
+  gemini:
+    model: "gemini-1.5-flash"
+  max_file_size_mb: 100
+
+
 

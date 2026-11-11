@@ -29,6 +29,28 @@ public class FotoprintConfig
     public SecurityConfig Security { get; set; } = new();
     public AgentConfig Agent { get; set; } = new();
     public ContextSwitchConfig ContextSwitch { get; set; } = new();
+    public AudioConfig Audio { get; set; } = new();
+}
+
+public class AudioConfig
+{
+    public bool Enabled { get; set; } = true;
+    public string Provider { get; set; } = "auto";
+    public TsukikoAudioConfig Tsukiko { get; set; } = new();
+    public GeminiAudioConfig Gemini { get; set; } = new();
+    public int MaxFileSizeMb { get; set; } = 100;
+}
+
+public class TsukikoAudioConfig
+{
+    public string CliPath { get; set; } = "/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe";
+    public string HttpUrl { get; set; } = "http://127.0.0.1:8756";
+    public int TimeoutSeconds { get; set; } = 300;
+}
+
+public class GeminiAudioConfig
+{
+    public string Model { get; set; } = "gemini-1.5-flash";
 }
 
 public class ContextSwitchConfig
