@@ -126,6 +126,8 @@
 | `06_executive_summary.json` | Управленческая сводка для руководства |
 | `07_google_meet_post_processing.json` | Окончание Google Meet (webhook/cron) → Whisper STT → LLM саммари → БД + `gemini-embedding-2` RAG |
 | `08_meeting_recall_rag_and_export.json` | Вопрос по созвону → `MasterId` + `gemini-embedding-2` RAG (участники + Директор) → саммари или полный файл DOCX/PDF |
+| `09_morning_schedule_digest_cron.json` | Утренний дайджест расписания и плана на день в Telegram по CRON (`/api/notifications/dispatch/morning-digest`) |
+| `10_task_deadline_reminders_cron.json` | Напоминания о приближающихся/просроченных дедлайнах задач в Telegram (`/api/notifications/dispatch/task-deadlines`) |
 
 ---
 
@@ -277,7 +279,7 @@ docker compose down -v
 | :--- | :--- | :--- | :--- |
 | **Web Copilot UI (через Nginx)** | [http://localhost](http://localhost) (`:80`) | Веб-чат сотрудника с переключением ролей (Директор, Производство, Продажи, Бухгалтерия, Гость), голосовой ввод (STT) и быстрые сценарии | — |
 | **Langfuse v3 UI** | [http://localhost:3000](http://localhost:3000) | Дашборд трейсов, стоимости моделей (`$`), задержек (`Spans`) и оценок (`Scores`) | `admin@fotoprint.ru` / `FotoprintAdmin2026!` |
-| **n8n Orchestrator** | [http://localhost:5678](http://localhost:5678) | Визуальные 8 воркфлоу маршрутизации, авторизации, RAG и обработки созвонов | Задаются при входе |
+| **n8n Orchestrator** | [http://localhost:5678](http://localhost:5678) | Визуальные 10 воркфлоу маршрутизации, авторизации, RAG, обработки созвонов и уведомлений | Задаются при входе |
 | **MinIO Console** | [http://localhost:9091](http://localhost:9091) | Объектное S3-хранилище событий и батчей Langfuse | `minio` / `minio_secret_password` |
 | **Telegram Tunnel Status** | [http://localhost/api/telegram/info](http://localhost/api/telegram/info) | Текущий публичный HTTPS URL Cloudflare Quick Tunnel и статус вебхука Telegram | — |
 | **Статистика балансировщика и RPM** | [http://localhost/api/system/stats](http://localhost/api/system/stats) | Счетчик вызовов за 60 секунд, остаток квоты `40 RPM`, состояние очереди и роллбэков | — |
@@ -342,7 +344,7 @@ docker compose down -v
 
 ## 🧪 Тестирование
 
-В проекте **110 автоматических тестов (xUnit)**, покрывающих RBAC-безопасность, anti-IDOR, защиту периметра, автономного агента, пакетный вызов инструментов, HITL-подтверждение мутирующих действий, устойчивость при отключении БД/MCP, балансировщик нагрузки, роллбэк на 3 повтора, эмбеддинги `gemini-embedding-2`, генерацию протоколов (DOCX/HTML с полной стенограммой), детектор смены контекста и Telegram/Cloudflare-интеграцию:
+В проекте **119 автоматических тестов (xUnit)**, покрывающих RBAC-безопасность, anti-IDOR, защиту периметра, автономного агента, пакетный вызов инструментов, HITL-подтверждение мутирующих действий, проактивные Telegram-уведомления, устойчивость при отключении БД/MCP, балансировщик нагрузки, роллбэк на 3 повтора, эмбеддинги `gemini-embedding-2`, генерацию протоколов (DOCX/HTML с полной стенограммой), детектор смены контекста и Telegram/Cloudflare-интеграцию:
 
 ```bash
 dotnet test

@@ -47,7 +47,7 @@ Photoprint/
 │   └── scripts/
 │       └── bootstrap.sh               # Скрипт автоматической предзагрузки NuGet и npm модулей
 │
-├── n8n/                               # Сценарии оркестрации n8n (8 воркфлоу)
+├── n8n/                               # Сценарии оркестрации n8n (10 воркфлоу)
 │   └── workflows/
 │       ├── 01_main_router_and_auth.json           # Входной роутер, проверка сотрудника в EmployeeReader и вызов агента
 │       ├── 02_rbac_rag_pipeline.json              # Векторный RAG-поиск с фильтрацией по ролям
@@ -56,7 +56,9 @@ Photoprint/
 │       ├── 05_post_meeting_mom_and_tasks.json     # Постобработка заметок протокола (MoM) и постановка задач
 │       ├── 06_executive_summary.json              # Аналитическая сводка для генерального директора
 │       ├── 07_google_meet_post_processing.json    # Google Meet (webhook/cron) -> Whisper STT -> LLM саммари -> БД + RAG
-│       └── 08_meeting_recall_rag_and_export.json  # Поиск созвона (MasterId + gemini-embedding-2 + RBAC) -> саммари / DOCX|PDF
+│       ├── 08_meeting_recall_rag_and_export.json  # Поиск созвона (MasterId + gemini-embedding-2 + RBAC) -> саммари / DOCX|PDF
+│       ├── 09_morning_schedule_digest_cron.json   # Утренний CRON-дайджест расписания в Telegram
+│       └── 10_task_deadline_reminders_cron.json   # CRON-напоминания по дедлайнам задач в Telegram
 │
 ├── src/                               # Исходный код сервисов на .NET 9 (C# 13)
 │   ├── Fotoprint.Core/                # Общая библиотека ядра предметной области
@@ -116,7 +118,7 @@ Photoprint/
 │   └── Fotoprint.Mcp.KnowledgeBase/   # Изолированный MCP-сервер базы знаний регламентов (внутренний порт 8086: search_typography_regulations, index_corporate_document)
 │
 └── tests/
-    └── Fotoprint.Tests/               # Модульные и интеграционные тесты (xUnit, 110 тестов)
+    └── Fotoprint.Tests/               # Модульные и интеграционные тесты (xUnit, 119 тестов)
         ├── AudioTranscriptionTests.cs         # Тесты Whisper/Gemini STT, постобработки словаря и MoM-анализатора
         ├── ContextSwitchDetectorTests.cs      # Тесты классификации смены контекста (FastPath + LLM)
         ├── DocumentParserAndProtocolTests.cs  # Тесты парсинга документов и генератора MoM (включая RawTranscript)
@@ -212,11 +214,11 @@ Photoprint/
 
 ## 🧪 4. Обязательный чек-лист верификации после внесения правок
 
-1. **Проверить сборку и прогнать все 110 тестов**:
+1. **Проверить сборку и прогнать все 119 тестов**:
    ```powershell
    dotnet test
    ```
-   *Результат должен быть: не пройдено 0, пройдено 110.*
+   *Результат должен быть: не пройдено 0, пройдено 119.*
 
 2. **При изменении сервисов пересобрать нужный контейнер (`ai-gateway` / MCP) и перезапустить Nginx**:
    ```powershell

@@ -228,6 +228,13 @@ public class GeminiEmbeddingClientTests
         public Task<List<ActionItem>> GetActionItemsByMeetingAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult(new List<ActionItem>());
         public Task<List<ActionItem>> GetActionItemsByResponsibleAsync(int employeeId, string? statusFilter = null, CancellationToken ct = default) => Task.FromResult(new List<ActionItem>());
         public Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default) => Task.CompletedTask;
+        public Task EnsureNotificationSchemaAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task<Employee?> GetEmployeeByTelegramIdAsync(long telegramId, CancellationToken ct = default) => Task.FromResult<Employee?>(null);
+        public Task<bool> SetEmployeeNotificationsEnabledAsync(long masterId, bool enabled, CancellationToken ct = default) => Task.FromResult(false);
+        public Task<List<Meeting>> GetMeetingsInRangeUtcAsync(DateTime startUtc, DateTime endUtc, CancellationToken ct = default) => Task.FromResult(new List<Meeting>());
+        public Task<List<ActionItem>> GetOpenActionItemsAsync(int? employeeId = null, CancellationToken ct = default) => Task.FromResult(new List<ActionItem>());
+        public Task<Guid?> TryClaimNotificationDeliveryAsync(string dedupKey, string notificationType, int? recipientEmployeeId, long recipientTelegramId, Guid? entityId = null, CancellationToken ct = default) => Task.FromResult<Guid?>(Guid.NewGuid());
+        public Task CompleteNotificationDeliveryAsync(Guid deliveryId, string status, string? errorMessage = null, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private sealed class DummyHttpClientFactory : IHttpClientFactory
