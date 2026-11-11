@@ -194,7 +194,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ answer: $json.answer, tools_invoked: $json.tools_invoked || [], total_llm_calls: $json.total_llm_calls || 0, total_tokens: $json.total_tokens || 0, is_success: $json.is_success !== false, trace_id: $json.trace_id || $('ContextSwitchDetector').item.json.trace_id, orchestrator: 'n8n', branch: $('ContextSwitchDetector').item.json.branch, user: $('ContextSwitchDetector').item.json.security_context.fullName || $('ContextSwitchDetector').item.json.security_context.FullName || '' }) }}",
+        "responseBody": "={{ JSON.stringify({ answer: $json.answer, reply: $json.reply || $json.answer, action_card: $json.action_card || null, tools_invoked: $json.tools_invoked || [], total_llm_calls: $json.total_llm_calls || 0, total_tokens: $json.total_tokens || 0, is_success: $json.is_success !== false, trace_id: $json.trace_id || $('ContextSwitchDetector').item.json.trace_id, orchestrator: 'n8n', branch: $('ContextSwitchDetector').item.json.branch, user: $('ContextSwitchDetector').item.json.security_context.fullName || $('ContextSwitchDetector').item.json.security_context.FullName || '' }) }}",
         "options": {}
       },
       "name": "Return Agent Result",
