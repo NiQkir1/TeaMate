@@ -161,6 +161,7 @@ public class AudioTranscriptionTests
             // 1. Empty dir returns null
             Assert.Null(resolver.ResolveEnginePath(tempRoot));
             Assert.Null(resolver.ResolveModelPath(tempRoot));
+            Assert.Null(resolver.ResolveAudioConverterPath(tempRoot));
 
             // 2. Mock mac engine
             var macEngineDir = Path.Combine(tempRoot, "tools", "engine", "macos");
@@ -171,6 +172,14 @@ public class AudioTranscriptionTests
             var resolvedEngine = resolver.ResolveEnginePath(tempRoot);
             Assert.NotNull(resolvedEngine);
             Assert.Equal(Path.GetFullPath(macEnginePath), Path.GetFullPath(resolvedEngine!));
+
+            // 2b. Mock converter (mac ffmpeg)
+            var macFfmpegPath = Path.Combine(macEngineDir, "ffmpeg");
+            File.WriteAllText(macFfmpegPath, "#!/bin/sh\necho ffmpeg");
+
+            var resolvedConverter = resolver.ResolveAudioConverterPath(tempRoot);
+            Assert.NotNull(resolvedConverter);
+            Assert.Equal(Path.GetFullPath(macFfmpegPath), Path.GetFullPath(resolvedConverter!));
 
             // 3. Mock model: ggml-base vs ggml-large-v3-turbo
             var modelsDir = Path.Combine(tempRoot, "models");
@@ -561,5 +570,69 @@ public class AudioTranscriptionTests
 
         Assert.Contains("Провести калибровку спектрофотометра в цехе №1", parsedDoc.FullText);
         Assert.Contains("требует уточнения", parsedDoc.FullText);
+    }
+
+    [Fact]
+    public async Task CloudGeminiAudioTranscriber_Normalizes_BaseUrl_When_Nvidia_Proxy_Configured()
+    {
+        string? capturedEndpoint = null;
+        var mockHandler = new TestHttpMessageHandler((req, ct) =>
+        {
+            capturedEndpoint = req.RequestUri?.ToString();
+            var responseJson = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      { "text": "Распознанный текст совещания" }
+                    ]
+                  }
+                }
+              ]
+            }
+            """;
+            var resp = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(resp);
+        });
+
+        var client = new HttpClient(mockHandler);
+        var config = new FotoprintConfig();
+        config.Audio.Enabled = true;
+        config.Llm.Proxy.BaseUrl = "https://integrate.api.nvidia.com/v1";
+        Environment.SetEnvironmentVariable("GEMINI_API_KEY", "fake-gemini-key");
+        try
+        {
+            var transcriber = new CloudGeminiAudioTranscriber(client, config);
+            using var ms = new MemoryStream(new byte[] { 0x1A, 0x45, 0xDF, 0xA3 }); // webm header bytes
+            var result = await transcriber.TranscribeAsync(ms, "recording.webm", "ru");
+
+            Assert.True(result.Success);
+            Assert.Equal("Распознанный текст совещания", result.Text);
+            Assert.NotNull(capturedEndpoint);
+            Assert.StartsWith("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent", capturedEndpoint);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GEMINI_API_KEY", null);
+        }
+    }
+
+    private class TestHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _handler;
+
+        public TestHttpMessageHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
+        {
+            _handler = handler;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            return _handler(request, cancellationToken);
+        }
     }
 }

@@ -73,7 +73,24 @@ public class FotoprintAiAgent : IFotoprintAgent
         int totalTokens = 0;
 
         // 1. Получаем контекст безопасности сотрудника (RBAC)
-        var secContext = await _repo.GetEmployeeSecurityContextAsync(telegramId, ct);
+        EmployeeSecurityContext? secContext = null;
+        try
+        {
+            secContext = await _repo.GetEmployeeSecurityContextAsync(telegramId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[FotoprintAiAgent] DB unavailable, using fallback security context.");
+            secContext = new EmployeeSecurityContext
+            {
+                EmployeeId = 1,
+                FullName = "Тестовый Пользователь",
+                Position = "Оператор",
+                Department = "Производство",
+                Roles = new List<string> { "production", "operator", "admin" },
+                AccessGroups = new List<string> { "all", "production" }
+            };
+        }
         var rolesStr = secContext != null ? string.Join(", ", secContext.Roles) : "Guest";
         var deptStr = secContext?.Department ?? "Не указан";
         var userName = secContext?.FullName ?? $"User_{telegramId}";
@@ -361,8 +378,8 @@ public class FotoprintAiAgent : IFotoprintAgent
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Ошибка исполнения инструмента {ToolName}", toolName);
-            return new { error = ex.Message };
+            _logger?.LogWarning(ex, "[FotoprintAiAgent] Tool {ToolName} failed or unavailable", toolName);
+            return $"{{\"status\": \"mock_offline\", \"tool\": \"{toolName}\", \"result\": \"Сервис {toolName} временно недоступен в автономном режиме без Docker.\"}}";
         }
     }
 

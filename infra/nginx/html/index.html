@@ -793,7 +793,10 @@
 
         let options = {};
         if (typeof MediaRecorder.isTypeSupported === 'function') {
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          const isApple = /Macintosh|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+          if (isApple && MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+          } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
             options = { mimeType: 'audio/webm;codecs=opus' };
           } else if (MediaRecorder.isTypeSupported('audio/webm')) {
             options = { mimeType: 'audio/webm' };
@@ -837,15 +840,29 @@
               body: formData
             });
 
-            const data = await res.json();
-            if (data.success && data.text) {
+            const rawText = await res.text();
+            let data = null;
+            try {
+              data = JSON.parse(rawText);
+            } catch (jsonErr) {
+              // Not JSON (e.g. gateway error HTML or plain text)
+            }
+
+            if (!res.ok) {
+              const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
+              showSttBadge(`⚠️ Ошибка (${res.status}): ${errMsg}`, true);
+              return;
+            }
+
+            if (data && data.success && data.text) {
               const currentVal = input.value.trim();
               input.value = currentVal ? `${currentVal} ${data.text.trim()}` : data.text.trim();
               input.focus();
-              const sec = (data.duration_ms / 1000).toFixed(1);
+              const sec = data.duration_ms ? (data.duration_ms / 1000).toFixed(1) : '0.0';
               showSttBadge(`🎙️ Распознано: ${data.provider || 'local-metal'}, ${sec}s`);
             } else {
-              showSttBadge(`⚠️ Ошибка: ${data.error || 'Речь не распознана'}`, true);
+              const errMsg = (data && (data.error || data.message)) || 'Речь не распознана';
+              showSttBadge(`⚠️ Ошибка: ${errMsg}`, true);
             }
           } catch (err) {
             showSttBadge(`⚠️ Ошибка сети: ${err.message}`, true);
@@ -893,13 +910,21 @@
           body: formData
         });
 
-        const data = await res.json();
+        const rawText = await res.text();
+        let data = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch (jsonErr) {
+          // Non-JSON response
+        }
+
         removeLoading(loadingId);
 
-        if (res.ok && data.success) {
+        if (res.ok && data && data.success) {
           renderMeetingProtocolCard(data);
         } else {
-          appendMessage('⚠️ Ошибка обработки аудиозаписи совещания: ' + (data.error || res.statusText || 'Неизвестная ошибка'), 'bot');
+          const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
+          appendMessage('⚠️ Ошибка обработки аудиозаписи совещания: ' + errMsg, 'bot');
         }
       } catch (err) {
         removeLoading(loadingId);

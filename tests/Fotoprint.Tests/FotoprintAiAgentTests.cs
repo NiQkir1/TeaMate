@@ -84,8 +84,20 @@ public class FotoprintAiAgentTests
 
     private class FakeFotoprintRepository : IFotoprintRepository
     {
+        private readonly bool _throwOnSecurityContext;
+
+        public FakeFotoprintRepository(bool throwOnSecurityContext = false)
+        {
+            _throwOnSecurityContext = throwOnSecurityContext;
+        }
+
         public Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default)
         {
+            if (_throwOnSecurityContext)
+            {
+                throw new InvalidOperationException("PostgreSQL connection refused: localhost:5432");
+            }
+
             return Task.FromResult<EmployeeSecurityContext?>(new EmployeeSecurityContext
             {
                 EmployeeId = 1,
@@ -152,16 +164,35 @@ public class FotoprintAiAgentTests
 
     private class FakeHttpClientFactory : IHttpClientFactory
     {
+        private readonly bool _simulateNetworkError;
+
+        public FakeHttpClientFactory(bool simulateNetworkError = false)
+        {
+            _simulateNetworkError = simulateNetworkError;
+        }
+
         public HttpClient CreateClient(string name)
         {
-            var handler = new FakeHttpHandler();
+            var handler = new FakeHttpHandler(_simulateNetworkError);
             return new HttpClient(handler);
         }
 
         private class FakeHttpHandler : HttpMessageHandler
         {
+            private readonly bool _simulateNetworkError;
+
+            public FakeHttpHandler(bool simulateNetworkError = false)
+            {
+                _simulateNetworkError = simulateNetworkError;
+            }
+
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
+                if (_simulateNetworkError)
+                {
+                    throw new HttpRequestException("Connection refused to MCP service");
+                }
+
                 var kpiData = new
                 {
                     department = "Офсетный цех",
@@ -220,6 +251,44 @@ public class FotoprintAiAgentTests
         Assert.Contains("Сводный отчет по производству", res.AnswerText);
         Assert.Contains("485 000 оттисков", res.AnswerText);
         Assert.True(res.IsSuccess);
+    }
+
+    [Fact]
+    public async Task Agent_Gracefully_Falls_Back_When_Database_Is_Offline()
+    {
+        var gemini = new FakeGeminiClient(triggerTool: false);
+        var repo = new FakeFotoprintRepository(throwOnSecurityContext: true);
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(
+            telegramId: 99999,
+            chatId: 88888,
+            messageText: "Привет!");
+
+        Assert.True(res.IsSuccess);
+        Assert.NotNull(res.AnswerText);
+    }
+
+    [Fact]
+    public async Task Agent_Gracefully_Handles_Offline_MCP_Service()
+    {
+        var gemini = new FakeGeminiClient(triggerTool: true);
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory(simulateNetworkError: true);
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(
+            telegramId: 100001,
+            chatId: 55555,
+            messageText: "Покажи выработку цехов");
+
+        Assert.True(res.IsSuccess);
+        Assert.Contains("get_production_kpis", res.ToolsInvoked);
     }
 }
 

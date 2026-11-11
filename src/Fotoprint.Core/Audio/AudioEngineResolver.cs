@@ -106,28 +106,46 @@ public class AudioEngineResolver : IAudioEngineResolver
         var isMac = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
         var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
-        if (isMac)
-        {
-            const string afconvert = "/usr/bin/afconvert";
-            if (File.Exists(afconvert))
-            {
-                return afconvert;
-            }
-        }
-
+        var relMacFfmpeg = Path.Combine("tools", "engine", "macos", "ffmpeg");
         var relWinFfmpeg = Path.Combine("tools", "engine", "win", "ffmpeg.exe");
 
+        // 1. Explicit customSearchRoot (scoped search, e.g. for isolated unit tests)
         if (!string.IsNullOrWhiteSpace(customSearchRoot))
         {
-            var combined = Path.Combine(customSearchRoot, relWinFfmpeg);
-            if (File.Exists(combined)) return Path.GetFullPath(combined);
+            var candidates = isWindows
+                ? new[] { Path.Combine(customSearchRoot, relWinFfmpeg), Path.Combine(customSearchRoot, "ffmpeg.exe"), Path.Combine(customSearchRoot, relMacFfmpeg), Path.Combine(customSearchRoot, "ffmpeg") }
+                : new[] { Path.Combine(customSearchRoot, relMacFfmpeg), Path.Combine(customSearchRoot, "ffmpeg"), Path.Combine(customSearchRoot, relWinFfmpeg), Path.Combine(customSearchRoot, "ffmpeg.exe") };
+
+            foreach (var candidate in candidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    return Path.GetFullPath(candidate);
+                }
+            }
+
+            if (isMac)
+            {
+                var customAfconvert = Path.Combine(customSearchRoot, "usr", "bin", "afconvert");
+                if (File.Exists(customAfconvert))
+                {
+                    return Path.GetFullPath(customAfconvert);
+                }
+            }
+
+            return null;
         }
 
+        // 2. Repo roots relative traversal for tools/engine/macos/ffmpeg and tools/engine/win/ffmpeg.exe
         var roots = new List<string>
         {
             Directory.GetCurrentDirectory(),
             AppContext.BaseDirectory
         };
+
+        var targetRelatives = isWindows
+            ? new[] { relWinFfmpeg, relMacFfmpeg }
+            : new[] { relMacFfmpeg, relWinFfmpeg };
 
         foreach (var root in roots)
         {
@@ -136,10 +154,13 @@ public class AudioEngineResolver : IAudioEngineResolver
             var current = root;
             for (int i = 0; i <= 6; i++)
             {
-                var combined = Path.Combine(current, relWinFfmpeg);
-                if (File.Exists(combined))
+                foreach (var rel in targetRelatives)
                 {
-                    return Path.GetFullPath(combined);
+                    var combined = Path.Combine(current, rel);
+                    if (File.Exists(combined))
+                    {
+                        return Path.GetFullPath(combined);
+                    }
                 }
 
                 var parent = Directory.GetParent(current);
@@ -148,9 +169,54 @@ public class AudioEngineResolver : IAudioEngineResolver
             }
         }
 
-        if (isMac && File.Exists("/usr/bin/afconvert"))
+        // 3. Well-known locations for ffmpeg (especially macOS Homebrew / Linux)
+        var wellKnownFfmpeg = new[]
         {
-            return "/usr/bin/afconvert";
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg"
+        };
+
+        foreach (var path in wellKnownFfmpeg)
+        {
+            if (File.Exists(path))
+            {
+                return Path.GetFullPath(path);
+            }
+        }
+
+        // 4. Environment PATH lookup for ffmpeg
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(pathEnv))
+        {
+            var separator = isWindows ? ';' : ':';
+            var exeName = isWindows ? "ffmpeg.exe" : "ffmpeg";
+            var dirs = pathEnv.Split(separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var dir in dirs)
+            {
+                try
+                {
+                    var candidate = Path.Combine(dir, exeName);
+                    if (File.Exists(candidate))
+                    {
+                        return Path.GetFullPath(candidate);
+                    }
+                }
+                catch
+                {
+                    // Ignore invalid path formats in PATH environment
+                }
+            }
+        }
+
+        // 5. Fallback to afconvert on macOS ONLY if ffmpeg was not found anywhere
+        if (isMac)
+        {
+            const string afconvert = "/usr/bin/afconvert";
+            if (File.Exists(afconvert))
+            {
+                return afconvert;
+            }
         }
 
         return null;

@@ -119,7 +119,9 @@ public class CloudGeminiAudioTranscriber : IAudioTranscriber
                 : "gemini-1.5-flash";
 
             var baseUrl = _config.Llm.Proxy.BaseUrl;
-            if (string.IsNullOrWhiteSpace(baseUrl) || baseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(baseUrl) ||
+                baseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase) ||
+                baseUrl.Contains("api.nvidia.com", StringComparison.OrdinalIgnoreCase))
             {
                 baseUrl = "https://generativelanguage.googleapis.com/v1beta";
             }
