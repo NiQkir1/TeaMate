@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fotoprint AI Copilot — NVIDIA Nemotron 3.5</title>
+  <title>Fotoprint AI Copilot — NVIDIA Nemotron 3.5 & Speech-to-Text</title>
   <style>
     :root {
       --bg-dark: #0f172a;
@@ -242,6 +242,38 @@
       border-color: #64748b;
     }
 
+    .recording-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      align-self: flex-start;
+      animation: pulse-red 1.5s infinite;
+    }
+
+    .stt-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      align-self: flex-start;
+      transition: opacity 0.3s;
+    }
+
     .input-bar {
       display: flex;
       gap: 10px;
@@ -249,9 +281,10 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 8px 12px;
+      align-items: center;
     }
 
-    .input-bar input {
+    .input-bar input[type="text"] {
       flex: 1;
       background: transparent;
       border: none;
@@ -260,7 +293,36 @@
       font-size: 15px;
     }
 
-    .input-bar button {
+    .btn-icon {
+      background: #334155;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-icon:hover {
+      background: #475569;
+    }
+
+    .btn-icon.recording {
+      background: #ef4444;
+      color: white;
+      animation: pulse-red 1s infinite;
+    }
+
+    @keyframes pulse-red {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(0.95); }
+    }
+
+    .input-bar button#send-btn {
       background: var(--msg-user);
       border: none;
       color: white;
@@ -271,11 +333,11 @@
       transition: background 0.2s;
     }
 
-    .input-bar button:hover:not(:disabled) {
+    .input-bar button#send-btn:hover:not(:disabled) {
       background: #1d4ed8;
     }
 
-    .input-bar button:disabled {
+    .input-bar button#send-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
@@ -301,6 +363,200 @@
       0%, 80%, 100% { transform: scale(0); }
       40% { transform: scale(1); }
     }
+
+    /* MoM Card Styles */
+    .mom-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin: 4px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .mom-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+
+    .mom-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mom-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #38bdf8;
+      margin: 0;
+    }
+
+    .mom-badges {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .engine-badge {
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      border: 1px solid #10b981;
+    }
+
+    .engine-badge.gemini {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border-color: #3b82f6;
+    }
+
+    .duration-badge {
+      font-size: 11.5px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+
+    .mom-section {
+      font-size: 13.5px;
+      line-height: 1.55;
+    }
+
+    .mom-section h4 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .mom-summary {
+      color: #f1f5f9;
+      background: rgba(15, 23, 42, 0.5);
+      border-left: 3px solid #38bdf8;
+      padding: 8px 12px;
+      border-radius: 0 6px 6px 0;
+    }
+
+    .mom-section ul {
+      margin-left: 20px;
+      color: #e2e8f0;
+    }
+
+    .mom-section li {
+      margin-bottom: 4px;
+    }
+
+    .action-items-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .action-item-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .action-item-info {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .action-item-title {
+      font-weight: 600;
+      color: #f8fafc;
+      font-size: 13.5px;
+    }
+
+    .action-item-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .btn-bitrix {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      border: none;
+      color: white;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .btn-bitrix:hover:not(:disabled) {
+      background: linear-gradient(135deg, #0369a1, #075985);
+      transform: translateY(-1px);
+    }
+
+    .btn-bitrix:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    .btn-bitrix-success {
+      background: #059669 !important;
+      color: white !important;
+      cursor: default !important;
+      transform: none !important;
+    }
+
+    .mom-footer {
+      display: flex;
+      justify-content: flex-end;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .btn-docx-download {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid #475569;
+      color: #f8fafc;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-docx-download:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: #94a3b8;
+      transform: translateY(-1px);
+    }
   </style>
 </head>
 <body>
@@ -312,7 +568,7 @@
         <h1>Fotoprint AI Copilot</h1>
         <div class="model-badge">
           <div class="pulse"></div>
-          NVIDIA Nemotron-3.5 120B
+          NVIDIA Nemotron-3.5 120B & Whisper STT
         </div>
       </div>
     </div>
@@ -334,8 +590,8 @@
       <div class="msg-row bot">
         <div class="avatar">🤖</div>
         <div class="msg-content">
-          Здравствуйте! Я — корпоративный ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
-          Я могу проверить статус тиража в 1С, рассчитать выработку машин Heidelberg, проверить ближайшие планерки в календаре или подсказать технологический регламент.
+          Здравствуйте! Я — корпоративный ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong> и локальном движке распознавания речи <strong>Whisper (Metal/Vulkan GPU)</strong>.<br><br>
+          Вы можете задавать вопросы по производству, нажать <strong>🎙️</strong> для голосового ввода или прикрепить аудиозапись совещания (<strong>📎</strong>) для автоматического составления протокола встречи (MoM) и постановки задач в Битрикс24.
         </div>
       </div>
     </div>
@@ -345,10 +601,27 @@
       <div class="pill" onclick="sendPrompt('Покажи выработку и KPI офсетного цеха')">📈 KPI цеха</div>
       <div class="pill" onclick="sendPrompt('Какие планерки запланированы на ближайший час?')">📅 Планерки</div>
       <div class="pill" onclick="sendPrompt('Какая норма брака для печатной машины Heidelberg?')">📖 Нормы брака</div>
+      <div class="pill" onclick="document.getElementById('audio-file-input').click()">📎 Загрузить аудио встречи (MoM)</div>
     </div>
 
+    <div id="recording-banner" class="recording-banner" style="display: none;">
+      🔴 Запись: <span id="record-timer">00:00</span>
+      <span style="font-size: 11px; opacity: 0.8; margin-left: 8px;">(нажмите 🎙️ для завершения и распознавания)</span>
+    </div>
+
+    <div id="stt-status-badge" class="stt-badge" style="display: none;"></div>
+
     <div class="input-bar">
-      <input type="text" id="user-input" placeholder="Введите ваш вопрос по производству, заказам или регламентам..." autofocus>
+      <!-- Hidden file input for meeting audio -->
+      <input type="file" id="audio-file-input" accept="audio/*,.m4a,.wav,.mp3,.ogg,.oga" style="display: none;" onchange="handleAudioUpload(this)">
+      
+      <!-- Attachment button for meeting recording -->
+      <button type="button" class="btn-icon" id="attach-btn" title="Загрузить аудиозапись встречи (.m4a, .wav, .mp3, .ogg)" onclick="document.getElementById('audio-file-input').click()">📎</button>
+
+      <!-- Microphone button for voice input -->
+      <button type="button" class="btn-icon" id="mic-btn" title="Голосовой ввод (Микрофон)" onclick="toggleRecording()">🎙️</button>
+
+      <input type="text" id="user-input" placeholder="Введите ваш вопрос или используйте голосовой ввод..." autofocus>
       <button id="send-btn" onclick="handleSend()">Отправить</button>
     </div>
   </main>
@@ -361,6 +634,16 @@
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') handleSend();
     });
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
 
     function sendPrompt(text) {
       input.value = text;
@@ -402,6 +685,46 @@
       chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
+    function showLoading(text = '') {
+      const id = 'loading-' + Date.now();
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+      row.id = id;
+      row.innerHTML = `
+        <div class="avatar">🤖</div>
+        <div class="msg-content">
+          ${text ? `<div style="font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">${escapeHtml(text)}</div>` : ''}
+          <div class="typing"><span></span><span></span><span></span></div>
+        </div>
+      `;
+      chatWindow.appendChild(row);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+      return id;
+    }
+
+    function removeLoading(id) {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+
+    let sttBadgeTimeout = null;
+    function showSttBadge(text, isError = false) {
+      const badge = document.getElementById('stt-status-badge');
+      if (!badge) return;
+      badge.textContent = text;
+      badge.style.display = 'inline-flex';
+      badge.style.borderColor = isError ? '#ef4444' : 'var(--accent)';
+      badge.style.color = isError ? '#fca5a5' : 'var(--accent)';
+      badge.style.background = isError ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+
+      if (sttBadgeTimeout) clearTimeout(sttBadgeTimeout);
+      if (!text.startsWith('⏳')) {
+        sttBadgeTimeout = setTimeout(() => {
+          badge.style.display = 'none';
+        }, 6000);
+      }
+    }
+
     async function handleSend() {
       const text = input.value.trim();
       if (!text) return;
@@ -410,18 +733,7 @@
       input.value = '';
       sendBtn.disabled = true;
 
-      // Индикатор загрузки
-      const typingRow = document.createElement('div');
-      typingRow.className = 'msg-row bot';
-      typingRow.id = 'typing-indicator';
-      typingRow.innerHTML = `
-        <div class="avatar">🤖</div>
-        <div class="msg-content">
-          <div class="typing"><span></span><span></span><span></span></div>
-        </div>
-      `;
-      chatWindow.appendChild(typingRow);
-      chatWindow.scrollTop = chatWindow.scrollHeight;
+      const loadingId = showLoading();
 
       try {
         const res = await fetch('/api/agent/chat', {
@@ -435,8 +747,7 @@
         });
 
         const data = await res.json();
-        const indicator = document.getElementById('typing-indicator');
-        if (indicator) indicator.remove();
+        removeLoading(loadingId);
 
         if (data.answer) {
           appendMessage(data.answer, 'bot', data.tools_invoked);
@@ -446,15 +757,358 @@
           appendMessage('Не удалось получить ответ от ассистента.', 'bot');
         }
       } catch (err) {
-        const indicator = document.getElementById('typing-indicator');
-        if (indicator) indicator.remove();
+        removeLoading(loadingId);
         appendMessage('Ошибка соединения со шлюзом: ' + err.message, 'bot');
       } finally {
         sendBtn.disabled = false;
         input.focus();
       }
     }
+
+    // ========================================================================
+    // ГОЛОСОВОЙ ВВОД (МИКРОФОН + MediaRecorder + /api/audio/transcribe)
+    // ========================================================================
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let recordingInterval = null;
+    let recordingSeconds = 0;
+
+    async function toggleRecording() {
+      const micBtn = document.getElementById('mic-btn');
+      const banner = document.getElementById('recording-banner');
+      const timerSpan = document.getElementById('record-timer');
+
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Ваш браузер не поддерживает запись аудио через getUserMedia.');
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        let options = {};
+        if (typeof MediaRecorder.isTypeSupported === 'function') {
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { mimeType: 'audio/webm;codecs=opus' };
+          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            options = { mimeType: 'audio/webm' };
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+          }
+        }
+
+        mediaRecorder = new MediaRecorder(stream, options);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunks.push(e.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(track => track.stop());
+
+          clearInterval(recordingInterval);
+          recordingSeconds = 0;
+          micBtn.classList.remove('recording');
+          banner.style.display = 'none';
+
+          if (audioChunks.length === 0) return;
+
+          const mime = mediaRecorder.mimeType || 'audio/webm';
+          const audioBlob = new Blob(audioChunks, { type: mime });
+          const extension = mime.includes('mp4') ? 'm4a' : 'webm';
+          const audioFile = new File([audioBlob], `mic_recording.${extension}`, { type: mime });
+
+          showSttBadge('⏳ Распознавание речи...');
+
+          try {
+            const formData = new FormData();
+            formData.append('file', audioFile);
+
+            const res = await fetch('/api/audio/transcribe?language=ru', {
+              method: 'POST',
+              body: formData
+            });
+
+            const data = await res.json();
+            if (data.success && data.text) {
+              const currentVal = input.value.trim();
+              input.value = currentVal ? `${currentVal} ${data.text.trim()}` : data.text.trim();
+              input.focus();
+              const sec = (data.duration_ms / 1000).toFixed(1);
+              showSttBadge(`🎙️ Распознано: ${data.provider || 'local-metal'}, ${sec}s`);
+            } else {
+              showSttBadge(`⚠️ Ошибка: ${data.error || 'Речь не распознана'}`, true);
+            }
+          } catch (err) {
+            showSttBadge(`⚠️ Ошибка сети: ${err.message}`, true);
+          }
+        };
+
+        mediaRecorder.start();
+
+        micBtn.classList.add('recording');
+        banner.style.display = 'inline-flex';
+        recordingSeconds = 0;
+        timerSpan.textContent = '00:00';
+
+        recordingInterval = setInterval(() => {
+          recordingSeconds++;
+          const mins = String(Math.floor(recordingSeconds / 60)).padStart(2, '0');
+          const secs = String(recordingSeconds % 60).padStart(2, '0');
+          timerSpan.textContent = `${mins}:${secs}`;
+        }, 1000);
+
+      } catch (err) {
+        alert('Не удалось получить доступ к микрофону: ' + err.message);
+      }
+    }
+
+    // ========================================================================
+    // ОБРАБОТКА АУДИОЗАПИСИ ВСТРЕЧИ (/api/meetings/process-audio -> MoM Card)
+    // ========================================================================
+    async function handleAudioUpload(inputEl) {
+      if (!inputEl.files || !inputEl.files[0]) return;
+      const file = inputEl.files[0];
+      inputEl.value = '';
+
+      appendMessage(`📎 Загружена аудиозапись встречи: **${file.name}** (${(file.size / (1024 * 1024)).toFixed(1)} МБ). Запущен полный цикл расшифровки и составления протокола (MoM)...`, 'user');
+
+      const loadingId = showLoading('Идет транскрибация C++ Metal/Vulkan движком и интеллектуальный анализ протокола встречи...');
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('title', file.name.replace(/\.[^/.]+$/, ''));
+
+        const res = await fetch('/api/meetings/process-audio?language=ru', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+        removeLoading(loadingId);
+
+        if (res.ok && data.success) {
+          renderMeetingProtocolCard(data);
+        } else {
+          appendMessage('⚠️ Ошибка обработки аудиозаписи совещания: ' + (data.error || res.statusText || 'Неизвестная ошибка'), 'bot');
+        }
+      } catch (err) {
+        removeLoading(loadingId);
+        appendMessage('⚠️ Ошибка соединения со шлюзом при загрузке аудиозаписи: ' + err.message, 'bot');
+      }
+    }
+
+    function renderMeetingProtocolCard(data) {
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.textContent = '📋';
+
+      const content = document.createElement('div');
+      content.className = 'msg-content';
+      content.style.maxWidth = '100%';
+
+      const proto = data.protocol || {};
+      const trans = data.transcription || {};
+      const meetingId = data.meeting_id || '';
+      const provider = trans.provider || 'local-metal';
+      const durationSec = trans.duration_ms ? (trans.duration_ms / 1000).toFixed(1) : '—';
+      const providerClass = provider.includes('gemini') ? 'gemini' : 'local';
+      const providerLabel = provider.includes('gemini') ? 'Gemini 1.5 Flash' : `Whisper (${provider})`;
+
+      let decisionsHtml = '';
+      if (proto.decisions && proto.decisions.length > 0) {
+        decisionsHtml = `
+          <div class="mom-section">
+            <h4>✅ Принятые решения:</h4>
+            <ul>
+              ${proto.decisions.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let discussedHtml = '';
+      if (proto.discussed && proto.discussed.length > 0) {
+        discussedHtml = `
+          <div class="mom-section">
+            <h4>💬 Обсуждали:</h4>
+            <ul>
+              ${proto.discussed.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let risksHtml = '';
+      if (proto.risks && proto.risks.length > 0) {
+        risksHtml = `
+          <div class="mom-section">
+            <h4>⚠️ Риски и блокеры:</h4>
+            <ul>
+              ${proto.risks.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let clarificationsHtml = '';
+      if (proto.requires_clarification && proto.requires_clarification.length > 0) {
+        clarificationsHtml = `
+          <div class="mom-section">
+            <h4>❓ Требует уточнения:</h4>
+            <ul>
+              ${proto.requires_clarification.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }
+
+      let actionItemsHtml = '';
+      const items = data.action_items || [];
+      if (items.length > 0) {
+        actionItemsHtml = `
+          <div class="mom-section">
+            <h4>📌 Поручения (Задачи):</h4>
+            <div class="action-items-list">
+              ${items.map(item => `
+                <div class="action-item-card">
+                  <div class="action-item-info">
+                    <div class="action-item-title">${escapeHtml(item.title)}</div>
+                    <div class="action-item-meta">
+                      👤 Отв.: <strong>${escapeHtml(item.responsible || 'требует уточнения')}</strong> |
+                      📅 Срок: <strong>${escapeHtml(item.deadline || item.deadline_text || 'требует уточнения')}</strong>
+                    </div>
+                  </div>
+                  <button type="button" class="btn-bitrix" onclick="createBitrixTask('${item.id}', '${escapeHtml(item.title).replace(/'/g, "\\'")}', this)">
+                    ✅ В Битрикс24
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      const cardHtml = `
+        <div class="mom-card">
+          <div class="mom-header">
+            <div class="mom-title-row">
+              <span class="mom-icon" style="font-size: 20px;">📋</span>
+              <h3 class="mom-title">${escapeHtml(proto.title || 'Протокол совещания')}</h3>
+            </div>
+            <div class="mom-badges">
+              <span class="engine-badge ${providerClass}">⚡ ${providerLabel}</span>
+              <span class="duration-badge">⏱️ ${durationSec}s</span>
+            </div>
+          </div>
+
+          <div class="mom-section">
+            <h4>📝 Резюме встречи:</h4>
+            <p class="mom-summary">${escapeHtml(proto.summary || 'Сводка отсутствует.')}</p>
+          </div>
+
+          ${decisionsHtml}
+          ${discussedHtml}
+          ${risksHtml}
+          ${clarificationsHtml}
+          ${actionItemsHtml}
+
+          <div class="mom-footer">
+            <button type="button" class="btn-docx-download" onclick="downloadDocx('${meetingId}', '${proto.docx_base64 || ''}', '${escapeHtml(proto.title || 'Protocol').replace(/'/g, "\\'")}')">
+              📥 Скачать протокол .DOCX
+            </button>
+          </div>
+        </div>
+      `;
+
+      content.innerHTML = cardHtml;
+      row.appendChild(avatar);
+      row.appendChild(content);
+      chatWindow.appendChild(row);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    // ========================================================================
+    // СОЗДАНИЕ ЗАДАЧИ В БИТРИКС24 (/api/telegram/webhook с callback_query)
+    // ========================================================================
+    async function createBitrixTask(actionItemId, title, buttonEl) {
+      if (!buttonEl) return;
+      const originalText = buttonEl.textContent;
+      buttonEl.disabled = true;
+      buttonEl.textContent = '⏳ Создание...';
+
+      try {
+        const res = await fetch('/api/telegram/webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            callback_query: {
+              id: 'web_cb_' + Date.now(),
+              from: { id: 100001, first_name: 'WebUser' },
+              message: { chat: { id: 100001 } },
+              data: `create_bitrix_task:${actionItemId}`
+            }
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.show_alert && (data.text.includes('успешно') || data.text.includes('✅'))) {
+          buttonEl.textContent = '✅ Задача создана в Битрикс24';
+          buttonEl.classList.add('btn-bitrix-success');
+          buttonEl.disabled = true;
+        } else {
+          alert(data.text || 'Не удалось создать задачу в Битрикс24.');
+          buttonEl.textContent = originalText;
+          buttonEl.disabled = false;
+        }
+      } catch (err) {
+        alert('Ошибка сети при создании задачи: ' + err.message);
+        buttonEl.textContent = originalText;
+        buttonEl.disabled = false;
+      }
+    }
+
+    // ========================================================================
+    // СКАЧИВАНИЕ ПРОТОКОЛА .DOCX
+    // ========================================================================
+    function downloadDocx(meetingId, base64Data, title) {
+      const fileName = (title || 'Protocol') + '.docx';
+      if (base64Data && base64Data.length > 50) {
+        try {
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          return;
+        } catch (e) {
+          console.warn('Base64 docx download error, falling back to endpoint', e);
+        }
+      }
+      window.open(`/api/meetings/${meetingId}/export-docx`, '_blank');
+    }
   </script>
 </body>
 </html>
-
