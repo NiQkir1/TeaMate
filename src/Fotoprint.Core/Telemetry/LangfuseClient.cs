@@ -17,6 +17,8 @@ public interface ILangfuseClient
         string? sessionId = null,
         object? metadata = null,
         string[]? tags = null,
+        object? input = null,
+        object? output = null,
         CancellationToken ct = default);
 
     Task CreateSpanAsync(
@@ -126,9 +128,24 @@ public class LangfuseClient : ILangfuseClient
         string? sessionId = null,
         object? metadata = null,
         string[]? tags = null,
+        object? input = null,
+        object? output = null,
         CancellationToken ct = default)
     {
         if (!_options.Enabled) return;
+
+        var bodyDict = new Dictionary<string, object?>
+        {
+            ["id"] = traceId,
+            ["name"] = name,
+            ["userId"] = userId,
+            ["sessionId"] = sessionId,
+            ["metadata"] = metadata,
+            ["tags"] = tags ?? Array.Empty<string>()
+        };
+
+        if (input != null) bodyDict["input"] = input;
+        if (output != null) bodyDict["output"] = output;
 
         var payload = new
         {
@@ -139,15 +156,7 @@ public class LangfuseClient : ILangfuseClient
                     id = Guid.NewGuid().ToString("N"),
                     type = "trace-create",
                     timestamp = DateTime.UtcNow.ToString("O"),
-                    body = new
-                    {
-                        id = traceId,
-                        name = name,
-                        userId = userId,
-                        sessionId = sessionId,
-                        metadata = metadata,
-                        tags = tags ?? Array.Empty<string>()
-                    }
+                    body = bodyDict
                 }
             }
         };
@@ -240,13 +249,16 @@ public class LangfuseClient : ILangfuseClient
         if (!_options.Enabled) return;
 
         var id = generationId ?? GenerateObservationId();
+        var promptCost = Math.Round((promptTokens / 1000.0) * _options.PromptTokenCostPer1k, 6);
+        var completionCost = Math.Round((completionTokens / 1000.0) * _options.CompletionTokenCostPer1k, 6);
         var cost = calculatedCost ?? CalculateCost(promptTokens, completionTokens, cachedTokens);
         var latencyMs = Math.Max(1, (endTime - startTime).TotalMilliseconds);
 
         var enrichedMeta = new Dictionary<string, object>
         {
             ["latency_ms"] = Math.Round(latencyMs, 2),
-            ["cached_tokens"] = cachedTokens
+            ["cached_tokens"] = cachedTokens,
+            ["calculated_cost_usd"] = cost
         };
 
         if (metadata != null)
@@ -285,11 +297,26 @@ public class LangfuseClient : ILangfuseClient
                         parentObservationId = parentObservationId,
                         usage = new
                         {
-                            promptTokens = promptTokens,
-                            completionTokens = completionTokens,
-                            totalTokens = totalTokens
+                            input = promptTokens,
+                            output = completionTokens,
+                            total = totalTokens,
+                            unit = "TOKENS",
+                            inputCost = promptCost,
+                            outputCost = completionCost,
+                            totalCost = cost
                         },
-                        calculatedTotalCost = cost,
+                        usageDetails = new
+                        {
+                            input = promptTokens,
+                            output = completionTokens,
+                            total = totalTokens
+                        },
+                        costDetails = new
+                        {
+                            input = promptCost,
+                            output = completionCost,
+                            total = cost
+                        },
                         metadata = enrichedMeta
                     }
                 }

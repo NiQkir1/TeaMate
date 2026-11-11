@@ -43,11 +43,26 @@ var lbOptions = new LoadBalancerOptions
 builder.Services.AddSingleton<ILlmLoadBalancer>(_ => new LlmLoadBalancer(lbOptions));
 builder.Services.AddSingleton<IRollbackManager, RollbackManager>();
 
-// NVIDIA NIM LLM Client с контролем нагрузки, повторами и трейсингом
-builder.Services.AddHttpClient<ILlmClient, NvidiaClient>();
-builder.Services.AddHttpClient<INvidiaClient, NvidiaClient>();
-builder.Services.AddHttpClient<IGeminiClient, NvidiaClient>();
-builder.Services.AddHttpClient<NvidiaClient>();
+// NVIDIA NIM LLM Client с контролем нагрузки, повторами, защитой от обрывов пула сокетов и трейсингом
+var llmTimeout = TimeSpan.FromSeconds(Math.Max(90, appConfig.Llm.Parameters.TimeoutSeconds));
+static SocketsHttpHandler CreateLlmSocketsHandler() => new()
+{
+    PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+    PooledConnectionIdleTimeout = TimeSpan.FromSeconds(25),
+    KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
+    KeepAlivePingDelay = TimeSpan.FromSeconds(15),
+    KeepAlivePingTimeout = TimeSpan.FromSeconds(10),
+    ConnectTimeout = TimeSpan.FromSeconds(15)
+};
+
+builder.Services.AddHttpClient<ILlmClient, NvidiaClient>(c => c.Timeout = llmTimeout)
+    .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
+builder.Services.AddHttpClient<INvidiaClient, NvidiaClient>(c => c.Timeout = llmTimeout)
+    .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
+builder.Services.AddHttpClient<IGeminiClient, NvidiaClient>(c => c.Timeout = llmTimeout)
+    .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
+builder.Services.AddHttpClient<NvidiaClient>(c => c.Timeout = llmTimeout)
+    .ConfigurePrimaryHttpMessageHandler(CreateLlmSocketsHandler);
 
 // 2-й этап: Детекция смены контекста через LLM перед передачей в n8n
 builder.Services.AddSingleton<IContextSwitchDetector, ContextSwitchDetector>();
@@ -286,6 +301,7 @@ app.MapPost("/api/agent/chat", async (
             ct: ct);
     }
 
+    var requestStartTime = DateTime.UtcNow;
     await langfuse.CreateTraceAsync(
         traceId: traceId,
         name: "web-agent-chat",
@@ -293,6 +309,7 @@ app.MapPost("/api/agent/chat", async (
         sessionId: effectiveSessionId,
         metadata: new { telegram_id = req.TelegramId, chat_id = req.ChatId, branch, is_context_switched = isContextSwitched, message = req.Message },
         tags: new[] { "channel:web-chat", "orchestrator:n8n", $"branch:{branch}", $"provider:{config.Llm.Provider}" },
+        input: req.Message,
         ct: ct);
 
     var n8nPayload = new
@@ -309,6 +326,7 @@ app.MapPost("/api/agent/chat", async (
         text = req.Message
     };
 
+    var n8nStart = DateTime.UtcNow;
     var n8nCallResult = await loadBalancer.ScheduleAsync(
         taskName: "WebChatToN8n",
         work: async lbToken =>
@@ -346,12 +364,27 @@ app.MapPost("/api/agent/chat", async (
         },
         traceId: traceId,
         ct: ct);
+    var n8nEnd = DateTime.UtcNow;
 
     if (!n8nCallResult.IsSuccess)
     {
+        var errAnswer = $"⚠️ Ошибка оркестратора n8n: {n8nCallResult.ErrorMessage}";
+        await langfuse.CreateSpanAsync(traceId, "Span:N8n_Orchestrator", n8nStart, n8nEnd, input: n8nPayload, output: new { error = n8nCallResult.ErrorMessage }, ct: ct);
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "web-agent-chat",
+            userId: req.TelegramId.ToString(),
+            sessionId: effectiveSessionId,
+            metadata: new { telegram_id = req.TelegramId, chat_id = req.ChatId, branch, is_context_switched = isContextSwitched, is_success = false },
+            tags: new[] { "channel:web-chat", "orchestrator:n8n", $"branch:{branch}", "status:error" },
+            input: req.Message,
+            output: errAnswer,
+            ct: ct);
+        await langfuse.LogScoreAsync(traceId, "agent_success", 0.0, n8nCallResult.ErrorMessage, ct: ct);
+
         return Results.Ok(new
         {
-            answer = $"⚠️ Ошибка оркестратора n8n: {n8nCallResult.ErrorMessage}",
+            answer = errAnswer,
             tools_invoked = Array.Empty<string>(),
             total_llm_calls = 0,
             total_tokens = 0,
@@ -363,11 +396,26 @@ app.MapPost("/api/agent/chat", async (
     }
 
     var (forbidden, body) = n8nCallResult.Value;
+    await langfuse.CreateSpanAsync(traceId, "Span:N8n_Orchestrator", n8nStart, n8nEnd, input: n8nPayload, output: body, metadata: new { forbidden, branch }, ct: ct);
+
     if (forbidden)
     {
         var denyMsg = body.TryGetProperty("message", out var msgProp)
             ? msgProp.GetString()
             : "🚫 Доступ запрещен оркестратором n8n.";
+
+        await langfuse.CreateTraceAsync(
+            traceId: traceId,
+            name: "web-agent-chat",
+            userId: req.TelegramId.ToString(),
+            sessionId: effectiveSessionId,
+            metadata: new { telegram_id = req.TelegramId, chat_id = req.ChatId, branch = "auth_rejected", is_success = false },
+            tags: new[] { "channel:web-chat", "orchestrator:n8n", "branch:auth_rejected", "status:forbidden" },
+            input: req.Message,
+            output: denyMsg,
+            ct: ct);
+        await langfuse.LogScoreAsync(traceId, "agent_success", 0.0, "RBAC 403 Forbidden", ct: ct);
+
         return Results.Ok(new
         {
             answer = denyMsg,
@@ -381,17 +429,59 @@ app.MapPost("/api/agent/chat", async (
         });
     }
 
-    if (masterId.HasValue && Guid.TryParse(effectiveSessionId, out var sid) && body.TryGetProperty("answer", out var ansProp))
+    var answerText = body.TryGetProperty("answer", out var ansProp) ? (ansProp.GetString() ?? "") : "";
+    var isAgentSuccess = !body.TryGetProperty("is_success", out var succProp) || succProp.ValueKind != JsonValueKind.False;
+    var toolsCount = body.TryGetProperty("tools_invoked", out var toolsProp) && toolsProp.ValueKind == JsonValueKind.Array
+        ? toolsProp.GetArrayLength()
+        : 0;
+    var totalTokensUsed = body.TryGetProperty("total_tokens", out var tokProp) && tokProp.TryGetInt32(out var tv) ? tv : 0;
+    var totalLatencySec = Math.Round((DateTime.UtcNow - requestStartTime).TotalSeconds, 2);
+
+    if (masterId.HasValue && Guid.TryParse(effectiveSessionId, out var sid) && !string.IsNullOrEmpty(answerText))
     {
         await repo.SaveMessageToSessionAsync(
             sessionId: sid,
             masterId: masterId.Value,
             role: "assistant",
-            content: ansProp.GetString() ?? "",
+            content: answerText,
             isFrozen: false,
             metadata: new { trace_id = traceId, orchestrator = "n8n", branch },
             ct: ct);
     }
+
+    // Обновляем корневой Trace (Input/Output + итоговые метрики) и записываем операционные Scores для дашборда Langfuse
+    await langfuse.CreateTraceAsync(
+        traceId: traceId,
+        name: "web-agent-chat",
+        userId: req.TelegramId.ToString(),
+        sessionId: effectiveSessionId,
+        metadata: new
+        {
+            telegram_id = req.TelegramId,
+            chat_id = req.ChatId,
+            branch,
+            is_context_switched = isContextSwitched,
+            tools_invoked_count = toolsCount,
+            total_tokens = totalTokensUsed,
+            latency_sec = totalLatencySec,
+            is_success = isAgentSuccess
+        },
+        tags: new[] { "channel:web-chat", "orchestrator:n8n", $"branch:{branch}", $"provider:{config.Llm.Provider}", isAgentSuccess ? "status:ok" : "status:error" },
+        input: req.Message,
+        output: answerText,
+        ct: ct);
+
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await langfuse.LogScoreAsync(traceId, "agent_success", isAgentSuccess ? 1.0 : 0.0, $"Branch: {branch}");
+            await langfuse.LogScoreAsync(traceId, "tools_invoked_count", toolsCount, $"MCP tools used: {toolsCount}");
+            await langfuse.LogScoreAsync(traceId, "context_switched", isContextSwitched ? 1.0 : 0.0, switchReason);
+            await langfuse.LogScoreAsync(traceId, "response_latency_sec", totalLatencySec, $"End-to-end latency: {totalLatencySec}s");
+        }
+        catch { }
+    });
 
     return Results.Ok(body);
 });

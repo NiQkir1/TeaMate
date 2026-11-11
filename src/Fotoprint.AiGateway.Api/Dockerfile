@@ -7,7 +7,7 @@ RUN --mount=type=cache,id=fotoprint-nuget,target=/root/.nuget/packages dotnet re
 
 COPY src/Fotoprint.Core/ src/Fotoprint.Core/
 COPY src/Fotoprint.AiGateway.Api/ src/Fotoprint.AiGateway.Api/
-RUN --mount=type=cache,id=fotoprint-nuget,target=/root/.nuget/packages dotnet publish src/Fotoprint.AiGateway.Api/Fotoprint.AiGateway.Api.csproj -c Release --no-restore -o /out
+RUN --mount=type=cache,id=fotoprint-nuget,target=/root/.nuget/packages dotnet publish src/Fotoprint.AiGateway.Api/Fotoprint.AiGateway.Api.csproj -c Release -o /out
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app

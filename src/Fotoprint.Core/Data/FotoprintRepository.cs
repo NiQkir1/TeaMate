@@ -531,16 +531,59 @@ public class FotoprintRepository : IFotoprintRepository
     public async Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        var groupsJson = JsonSerializer.Serialize(userAccessGroups);
+        var effectiveGroups = (userAccessGroups != null && userAccessGroups.Count > 0)
+            ? userAccessGroups.Union(new[] { "all" }, StringComparer.OrdinalIgnoreCase).ToList()
+            : new List<string> { "all" };
+        var groupsJson = JsonSerializer.Serialize(effectiveGroups);
+
+        // Если запрос пустой или общий («что лежит в раг», «все документы», «база знаний») — возвращаем все доступные пользователю регламенты
+        var normalizedQuery = (queryText ?? "").Trim().ToLowerInvariant();
+        bool isGeneralCatalogQuery = string.IsNullOrWhiteSpace(normalizedQuery)
+            || normalizedQuery is "*" or "all" or "все" or "раг" or "rag"
+            || normalizedQuery.Contains("что лежит")
+            || normalizedQuery.Contains("что есть")
+            || normalizedQuery.Contains("какие документ")
+            || normalizedQuery.Contains("какие регламент")
+            || normalizedQuery.Contains("список документ")
+            || normalizedQuery.Contains("база знаний")
+            || normalizedQuery.Contains(" в раг")
+            || normalizedQuery.Contains(" в rag");
+
+        const string allAccessibleSql = """
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   c.metadata::text AS MetadataJson
+            FROM corporate_document_chunks c
+            JOIN corporate_documents d ON d.id = c.document_id
+            WHERE (
+                c.allowed_access_groups ? 'all'
+                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+            )
+            ORDER BY d.created_at ASC, c.chunk_index ASC
+            LIMIT @TopK;
+        """;
+
+        if (isGeneralCatalogQuery)
+        {
+            var allChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(allAccessibleSql, new
+            {
+                Groups = groupsJson,
+                TopK = Math.Max(topK, 10)
+            }, cancellationToken: ct));
+            return allChunks.ToList();
+        }
 
         const string sql = """
-            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex, c.chunk_text AS ChunkText, c.metadata::text AS MetadataJson
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
+            JOIN corporate_documents d ON d.id = c.document_id
             WHERE (
                 c.allowed_access_groups ? 'all' 
                 OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
             )
-            AND c.chunk_text ILIKE '%' || @QueryText || '%'
+            AND (c.chunk_text ILIKE '%' || @QueryText || '%' OR d.title ILIKE '%' || @QueryText || '%')
             LIMIT @TopK;
         """;
 
@@ -551,38 +594,54 @@ public class FotoprintRepository : IFotoprintRepository
             TopK = topK
         }, cancellationToken: ct))).ToList();
 
-        if (chunks.Count > 0 || string.IsNullOrWhiteSpace(queryText))
+        if (chunks.Count > 0)
         {
             return chunks;
         }
 
-        // Фолбэк по отдельным ключевым словам (>= 3 символов), если точная фраза не совпала целиком
-        var patterns = queryText
-            .Split(new[] { ' ', ',', '.', ';', '?', '!' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        // Фолбэк по отдельным ключевым словам (>= 3 символов), включая корни слов (первые 4-5 букв для русской морфологии)
+        var rawWords = (queryText ?? "")
+            .Split(new[] { ' ', ',', '.', ';', '?', '!', '-', '"', '\'', '«', '»' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(t => t.Length >= 3)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(t => $"%{t}%")
-            .ToArray();
+            .ToList();
 
-        if (patterns.Length == 0)
+        var patternSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var word in rawWords)
+        {
+            patternSet.Add($"%{word}%");
+            if (word.Length >= 5)
+            {
+                patternSet.Add($"%{word[..^1]}%");
+            }
+            if (word.Length >= 6)
+            {
+                patternSet.Add($"%{word[..^2]}%");
+            }
+        }
+
+        if (patternSet.Count == 0)
         {
             return chunks;
         }
 
         const string kwSql = """
-            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex, c.chunk_text AS ChunkText, c.metadata::text AS MetadataJson
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
+            JOIN corporate_documents d ON d.id = c.document_id
             WHERE (
                 c.allowed_access_groups ? 'all'
                 OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
             )
-            AND c.chunk_text ILIKE ANY(@Patterns)
+            AND (c.chunk_text ILIKE ANY(@Patterns) OR d.title ILIKE ANY(@Patterns))
             LIMIT @TopK;
         """;
 
         var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
         {
-            Patterns = patterns,
+            Patterns = patternSet.ToArray(),
             Groups = groupsJson,
             TopK = topK
         }, cancellationToken: ct));

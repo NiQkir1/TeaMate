@@ -119,6 +119,8 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
 
     private readonly string _apiKey;
     private readonly string _model;
+    private readonly string _fastModel;
+    private readonly string _fallbackModel;
     private readonly string _baseUrl;
     private readonly int _rpmLimit;
 
@@ -158,6 +160,17 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             _model = "nvidia/nemotron-3.5-super-vl-120b-a12b";
         }
 
+        _fastModel = !string.IsNullOrWhiteSpace(_config.Llm.Models.FastModel) &&
+                     !_config.Llm.Models.FastModel.StartsWith("gemini")
+            ? _config.Llm.Models.FastModel
+            : "nvidia/nemotron-3.5-lightning-30b-a3b";
+
+        _fallbackModel = !string.IsNullOrWhiteSpace(_config.Llm.Models.FallbackModel) &&
+                         !_config.Llm.Models.FallbackModel.StartsWith("gemini") &&
+                         !string.Equals(_config.Llm.Models.FallbackModel, _model, StringComparison.OrdinalIgnoreCase)
+            ? _config.Llm.Models.FallbackModel
+            : "nvidia/nemotron-3.5-lightning-30b-a3b";
+
         var configBaseUrl = Environment.GetEnvironmentVariable("LLM_BASE_URL")
             ?? _config.Llm.Proxy.BaseUrl;
 
@@ -175,7 +188,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
-        => GenerateContentCoreAsync(prompt, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, ct);
+        => GenerateContentCoreAsync(prompt, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: _model, ct: ct);
 
     public Task<GeminiGenerateResponse> GenerateJsonNoThinkingAsync(
         string prompt,
@@ -184,7 +197,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
-        => GenerateContentCoreAsync(prompt, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, ct);
+        => GenerateContentCoreAsync(prompt, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, preferredModel: _fastModel, ct: ct);
 
     private async Task<GeminiGenerateResponse> GenerateContentCoreAsync(
         string prompt,
@@ -193,6 +206,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens,
         string? traceId,
         bool enableThinking,
+        string preferredModel,
         CancellationToken ct)
     {
         var contents = new List<object>
@@ -208,6 +222,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             maxOutputTokens: maxOutputTokens,
             traceId: traceId,
             enableThinking: enableThinking,
+            preferredModel: preferredModel,
             ct: ct);
 
         return new GeminiGenerateResponse(
@@ -229,7 +244,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
-        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, ct);
+        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: _model, ct: ct);
 
     public Task<GeminiTurnResponse> ChatTurnNoThinkingAsync(
         List<object> contents,
@@ -239,7 +254,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
-        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, ct);
+        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, preferredModel: _model, ct: ct);
 
     private async Task<GeminiTurnResponse> ChatTurnCoreAsync(
         List<object> contents,
@@ -249,23 +264,32 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens,
         string? traceId,
         bool enableThinking,
+        string preferredModel,
         CancellationToken ct)
     {
         var temp = temperature ?? _config.Llm.Parameters.Temperature;
         var maxTokens = maxOutputTokens ?? _config.Llm.Parameters.MaxTokens;
 
         return await _loadBalancer.ScheduleAsync(
-            taskName: $"Nvidia:{_model}:ChatTurn",
+            taskName: $"Nvidia:{preferredModel}:ChatTurn",
             work: async token =>
             {
                 var rollbackResult = await _rollbackManager.ExecuteWithRollbackAsync(
-                    nodeName: $"Nvidia:{_model}:Turn",
+                    nodeName: $"Nvidia:{preferredModel}:Turn",
                     action: async (attempt, retryToken) =>
                     {
                         RecordCall();
 
+                        // На 1-й попытке используем целевую модель, а при сбое (например 503 content safety screening) автоматически переключаемся на резервную модель семейства Nemotron 3.5
+                        var activeModel = attempt == 1 ? preferredModel : _fallbackModel;
+                        if (attempt > 1 && !string.Equals(activeModel, preferredModel, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger?.LogInformation("🔀 [NVIDIA Fallback] Попытка {Attempt}: переключение с '{Primary}' на резервную модель '{Fallback}'",
+                                attempt, preferredModel, activeModel);
+                        }
+
                         var endpointUrl = $"{_baseUrl}/chat/completions";
-                        var requestBody = BuildNvidiaRequestBody(contents, tools, systemInstruction, temp, maxTokens, _model, enableThinking);
+                        var requestBody = BuildNvidiaRequestBody(contents, tools, systemInstruction, temp, maxTokens, activeModel, enableThinking);
 
                         using var request = new HttpRequestMessage(HttpMethod.Post, endpointUrl);
                         request.Content = JsonContent.Create(requestBody);

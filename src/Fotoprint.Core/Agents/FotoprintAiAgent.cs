@@ -87,7 +87,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             2. Производственные метрики, выработка, процент брака, загрузка машин (1С) -> вызови 'get_production_kpis'
             3. Задачи, поручения и CRM-сделки сотрудника (Битрикс24) -> вызови 'get_user_tasks', 'get_crm_deal_info' или создай задачу через 'create_task'
             4. Расписание и история планерок/совещаний (Календарь) -> вызови 'get_upcoming_meetings' или 'get_meeting_history'
-            5. Технологические карты, нормы отходов, регламенты оборудования (База знаний) -> вызови 'search_typography_regulations'
+            5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, правила внутреннего трудового распорядка, а также любые вопросы о том, какие документы/данные лежат в RAG (базе знаний) -> вызови 'search_typography_regulations'
 
             Если запрос требует данных из нескольких систем (например, заказ в 1С, задачи в Битрикс24 и встречи в календаре), вызывай все нужные инструменты сразу за один шаг.
             Если запрос не требует инструментов (приветствие, уточнение), сразу дай вежливый и профессиональный ответ.
@@ -97,14 +97,59 @@ public class FotoprintAiAgent : IFotoprintAgent
         // 2. Формируем список Function Tools для LLM (OpenAI / NVIDIA формат)
         var toolDeclarations = GetAvailableTools();
 
-        var contents = new List<object>
+        var contents = new List<object>();
+        const int maxHistoryMessagesInContext = 10;
+        int loadedHistoryCount = 0;
+
+        // Подгружаем историю текущей активной сессии (до 10 последних незамороженных сообщений: если 9 — берем 9, если 11+ — берем 10 последних)
+        if (secContext != null && secContext.MasterId > 0)
         {
-            new
+            try
             {
-                role = "user",
-                content = messageText
+                var activeSession = await _repo.GetOrCreateActiveSessionByMasterIdAsync(secContext.MasterId, chatId, "web", ct);
+                var sessionMessages = await _repo.GetMessagesBySessionIdAsync(activeSession.Id, limit: maxHistoryMessagesInContext + 5, ct: ct);
+
+                var validHistory = sessionMessages
+                    .Where(m => !m.IsFrozen && !string.IsNullOrWhiteSpace(m.Content))
+                    .ToList();
+
+                // Если последнее сообщение в БД — это уже текущее сообщение пользователя (сохраненное на входе в шлюз), исключаем его из истории
+                if (validHistory.Count > 0 &&
+                    string.Equals(validHistory[^1].Role, "user", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(validHistory[^1].Content.Trim(), messageText.Trim(), StringComparison.Ordinal))
+                {
+                    validHistory.RemoveAt(validHistory.Count - 1);
+                }
+
+                // Берем строго не более 10 последних сообщений сессии (если <= 10 — все, если > 10 — последние 10)
+                if (validHistory.Count > maxHistoryMessagesInContext)
+                {
+                    validHistory = validHistory.TakeLast(maxHistoryMessagesInContext).ToList();
+                }
+
+                loadedHistoryCount = validHistory.Count;
+
+                foreach (var histMsg in validHistory)
+                {
+                    var role = string.Equals(histMsg.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
+                    contents.Add(new
+                    {
+                        role,
+                        content = histMsg.Content
+                    });
+                }
             }
-        };
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Не удалось загрузить историю сессии для MasterId={MasterId}", secContext.MasterId);
+            }
+        }
+
+        contents.Add(new
+        {
+            role = "user",
+            content = messageText
+        });
 
         // 3. ReAct-цикл агента (до 4 вызовов MCP-инструментов + финальный синтез ответа)
         const int maxLlmTurns = 5;
@@ -152,7 +197,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                     totalTokens: turn.TotalTokens,
                     input: turnIdx == 1 ? (object)messageText : lastToolResult,
                     output: calls.Count > 0 ? $"FunctionCalls: {string.Join(", ", calls.Select(c => c.Name))}" : turn.Text,
-                    metadata: new { turn = turnIdx, department = deptStr, role = rolesStr, tool_calls_count = calls.Count },
+                    metadata: new { turn = turnIdx, department = deptStr, role = rolesStr, tool_calls_count = calls.Count, history_messages_count = loadedHistoryCount },
                     ct: ct);
             }
 
@@ -198,13 +243,16 @@ public class FotoprintAiAgent : IFotoprintAgent
 
             // Параллельно выполняем все выбранные MCP-инструменты этого шага
             var empId = secContext?.EmployeeId ?? 1;
+            var userAccessGroups = (secContext?.AccessGroups is { Count: > 0 } ag)
+                ? ag.Union(new[] { "all" }, StringComparer.OrdinalIgnoreCase).ToList()
+                : new List<string> { "all" };
             var execTasks = calls.Select(async fnCall =>
             {
                 var callId = !string.IsNullOrWhiteSpace(fnCall.CallId)
                     ? fnCall.CallId!
                     : $"call_{fnCall.Name}_{Guid.NewGuid():N}";
                 var startSpan = DateTime.UtcNow;
-                var result = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, empId, traceId, ct);
+                var result = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, empId, userAccessGroups, traceId, ct);
                 var endSpan = DateTime.UtcNow;
                 return (Call: fnCall, CallId: callId, Result: result, Start: startSpan, End: endSpan);
             });
@@ -352,6 +400,7 @@ public class FotoprintAiAgent : IFotoprintAgent
         JsonElement arguments,
         long telegramId,
         int defaultEmployeeId,
+        List<string> userAccessGroups,
         string traceId,
         CancellationToken ct)
     {
@@ -437,16 +486,19 @@ public class FotoprintAiAgent : IFotoprintAgent
                 case "search_typography_regulations":
                 {
                     var query = TryGetStringArg(arguments, "query") ?? "";
-                    var chunks = await _repo.SearchTextChunksAsync(query, new List<string> { "all" }, 4, ct);
+                    var topK = _config.Rag.TopK > 0 ? _config.Rag.TopK : 5;
+                    var chunks = await _repo.SearchTextChunksAsync(query, userAccessGroups, topK, ct);
                     if (chunks.Count > 0)
                     {
-                        return chunks.Select(c => new { chunk_id = c.Id, text = c.ChunkText }).ToList();
+                        return chunks.Select(c => new { chunk_id = c.Id, document_id = c.DocumentId, text = c.ChunkText }).ToList();
                     }
 
-                    return new[]
+                    return new
                     {
-                        new { chunk_id = Guid.Empty, text = "Регламент офсетной печати (Heidelberg Speedmaster XL 75): допустимый технологический брак (приладка + тиражный брак) не должен превышать 2,5 % от тиража; превышение 3,0 % требует остановки и юстировки красочных валов." },
-                        new { chunk_id = Guid.Empty, text = "Стандарт приемки макетов «Фотопринт»: цветовая модель CMYK (профиль ISO Coated v2), разрешение растровых элементов от 300 dpi, вылеты под обрез 3 мм с каждой стороны." }
+                        status = "no_matches_or_restricted",
+                        query,
+                        user_access_groups = userAccessGroups,
+                        message = "В корпоративной базе знаний (RAG) не найдено фрагментов по данному запросу для ваших групп доступа."
                     };
                 }
 
@@ -600,13 +652,13 @@ public class FotoprintAiAgent : IFotoprintAgent
                 function = new
                 {
                     name = "search_typography_regulations",
-                    description = "Ищет в базе знаний технологические регламенты типографии, нормы брака оборудования Heidelberg, правила приемки макетов и техкарты.",
+                    description = "Ищет в корпоративной базе знаний (RAG) регламенты типографии, нормы брака оборудования Heidelberg, коммерческую политику и скидки, положение об оплате сверхурочных, правила внутреннего трудового распорядка и список доступных документов (передай query='*' или 'все' для просмотра всех документов в RAG).",
                     parameters = new
                     {
                         type = "object",
                         properties = new
                         {
-                            query = new { type = "string", description = "Поисковый запрос по регламентам" }
+                            query = new { type = "string", description = "Поисковый запрос по базе знаний / регламентам (или '*' для обзора всех документов в RAG)" }
                         },
                         required = new[] { "query" }
                     }
