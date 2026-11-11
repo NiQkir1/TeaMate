@@ -442,7 +442,8 @@ public class ContextSwitchDetector : IContextSwitchDetector
                t.Contains("по нему") ||
                t.Contains("по этому") ||
                t.Contains("на этой встрече") ||
-               t.Contains("там будет");
+               t.Contains("там будет") ||
+               IsActionPlanConfirmationOrAdjustment(t);
     }
 
     private static bool HasStrongAnaphora(string text)
@@ -460,7 +461,25 @@ public class ContextSwitchDetector : IContextSwitchDetector
                t.Contains("кто ещё там") ||
                t.StartsWith("подробнее") ||
                t.StartsWith("уточни") ||
-               t.StartsWith("расскажи подробнее");
+               t.StartsWith("расскажи подробнее") ||
+               IsActionPlanConfirmationOrAdjustment(t);
+    }
+
+    public static bool IsActionPlanConfirmationOrAdjustment(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var t = text.Trim().ToLowerInvariant();
+
+        return t == "да" || t == "ок" || t == "окей" || t == "ok" || t == "давай" || t == "выполняй" || t == "создавай" || t == "делай" ||
+               t.StartsWith("да,") || t.StartsWith("да.") || t.StartsWith("да!") || t.StartsWith("да ") ||
+               t.StartsWith("ок,") || t.StartsWith("ок ") || t.StartsWith("окей,") || t.StartsWith("окей ") ||
+               t.Contains("подтвержда") ||
+               t.StartsWith("выполняй") || t.StartsWith("выполни") ||
+               t.StartsWith("создавай") || t.StartsWith("заводи") ||
+               t.StartsWith("согласен") || t.StartsWith("согласна") ||
+               t.StartsWith("все верно") || t.StartsWith("всё верно") || t.StartsWith("верно,") ||
+               t.StartsWith("нет, отмен") || t.StartsWith("отмен") || t.StartsWith("не надо") || t.StartsWith("не создавай") ||
+               t.StartsWith("измени ") || t.StartsWith("поменяй ");
     }
 
     private static string? ClassifyDomainBranch(string? text) => ClassifyTopicAndBranch(text).Branch;

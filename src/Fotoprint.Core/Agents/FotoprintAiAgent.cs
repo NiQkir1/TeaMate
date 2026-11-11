@@ -177,9 +177,11 @@ public class FotoprintAiAgent : IFotoprintAgent
         }
 
         bool isConfirmedByUser = IsMutatingActionConfirmed(validHistory, messageText);
+        var nowMsk = DateTime.UtcNow.AddHours(3).ToString("yyyy-MM-dd HH:mm (dddd)", new System.Globalization.CultureInfo("ru-RU"));
 
         var systemInstruction = $"""
             Ты — корпоративный AI-ассистент типографии «Фотопринт» (Fotoprint Copilot).
+            Текущая дата и время (МСК): {nowMsk}. При расчете сроков, дедлайнов и дат встреч («завтра», «до пятницы», «на следующей неделе») опирайся СТРОГО на эту текущую дату!
             Ты общаешься с сотрудником: {userName} (ID сотрудника: {secContext?.EmployeeId ?? 0}, Отдел: {deptStr}, Должность: {secContext?.Position ?? "Сотрудник"}, Роли: [{rolesStr}]).
 
             Твоя цель: понимать любые свободные запросы пользователя и самостоятельно выбирать подходящие MCP-инструменты:
