@@ -6,21 +6,27 @@ using Microsoft.Extensions.Logging;
 
 namespace Fotoprint.Core.Audio;
 
-public class GeminiAudioTranscriber : IAudioTranscriber
+public class CloudGeminiAudioTranscriber : IAudioTranscriber
 {
     public const string ProviderName = "gemini";
 
     private readonly HttpClient _httpClient;
     private readonly FotoprintConfig _config;
-    private readonly ILogger<GeminiAudioTranscriber>? _logger;
+    private readonly IVocabularyProvider? _vocabularyProvider;
+    private readonly IVocabularyPostProcessor? _postProcessor;
+    private readonly ILogger<CloudGeminiAudioTranscriber>? _logger;
 
-    public GeminiAudioTranscriber(
+    public CloudGeminiAudioTranscriber(
         HttpClient httpClient,
         FotoprintConfig config,
-        ILogger<GeminiAudioTranscriber>? logger = null)
+        IVocabularyProvider? vocabularyProvider = null,
+        IVocabularyPostProcessor? postProcessor = null,
+        ILogger<CloudGeminiAudioTranscriber>? logger = null)
     {
         _httpClient = httpClient ?? new HttpClient();
         _config = config ?? new FotoprintConfig();
+        _vocabularyProvider = vocabularyProvider;
+        _postProcessor = postProcessor;
         _logger = logger;
     }
 
@@ -82,7 +88,7 @@ public class GeminiAudioTranscriber : IAudioTranscriber
                 Segments: new List<AudioSegment>(),
                 Provider: ProviderName,
                 DurationMs: sw.ElapsedMilliseconds,
-                ErrorMessage: "GEMINI_API_KEY is not configured for GeminiAudioTranscriber.");
+                ErrorMessage: "GEMINI_API_KEY is not configured for CloudGeminiAudioTranscriber.");
         }
 
         try
@@ -123,36 +129,90 @@ public class GeminiAudioTranscriber : IAudioTranscriber
                 ? "Транскрибируй это аудио дословно на русском языке с сохранением таймкодов в формате [00:00:00.000 --> 00:00:05.000] Текст. Не добавляй комментарии от себя, выведи только распознанную речь."
                 : $"Transcribe this audio verbatim in '{language}' with timestamps in format [00:00:00.000 --> 00:00:05.000] Text.";
 
-            var requestBody = new
+            var vocabularyPrompt = _vocabularyProvider?.GetPromptString();
+            object? systemInstruction = null;
+            if (!string.IsNullOrWhiteSpace(vocabularyPrompt))
             {
-                contents = new object[]
+                systemInstruction = new
                 {
-                    new
+                    parts = new object[]
                     {
-                        role = "user",
-                        parts = new object[]
+                        new
                         {
-                            new
-                            {
-                                inline_data = new
-                                {
-                                    mime_type = mimeType,
-                                    data = Convert.ToBase64String(audioBytes)
-                                }
-                            },
-                            new
-                            {
-                                text = prompt
-                            }
+                            text = $"Ты — профессиональный транскрибатор речи типографии. При расшифровке обязательно учитывай специализированный словарь терминов и названий:\n{vocabularyPrompt}"
                         }
                     }
-                },
-                generationConfig = new
+                };
+            }
+
+            object requestBody;
+            if (systemInstruction != null)
+            {
+                requestBody = new
                 {
-                    temperature = 0.1,
-                    maxOutputTokens = 4096
-                }
-            };
+                    system_instruction = systemInstruction,
+                    contents = new object[]
+                    {
+                        new
+                        {
+                            role = "user",
+                            parts = new object[]
+                            {
+                                new
+                                {
+                                    inline_data = new
+                                    {
+                                        mime_type = mimeType,
+                                        data = Convert.ToBase64String(audioBytes)
+                                    }
+                                },
+                                new
+                                {
+                                    text = prompt
+                                }
+                            }
+                        }
+                    },
+                    generationConfig = new
+                    {
+                        temperature = 0.1,
+                        maxOutputTokens = 4096
+                    }
+                };
+            }
+            else
+            {
+                requestBody = new
+                {
+                    contents = new object[]
+                    {
+                        new
+                        {
+                            role = "user",
+                            parts = new object[]
+                            {
+                                new
+                                {
+                                    inline_data = new
+                                    {
+                                        mime_type = mimeType,
+                                        data = Convert.ToBase64String(audioBytes)
+                                    }
+                                },
+                                new
+                                {
+                                    text = prompt
+                                }
+                            }
+                        }
+                    },
+                    generationConfig = new
+                    {
+                        temperature = 0.1,
+                        maxOutputTokens = 4096
+                    }
+                };
+            }
 
             using var request = new HttpRequestMessage(HttpMethod.Post, endpointUrl);
             request.Headers.Add("x-goog-api-key", apiKey);
@@ -164,7 +224,7 @@ public class GeminiAudioTranscriber : IAudioTranscriber
             if (!response.IsSuccessStatusCode)
             {
                 _logger?.LogWarning(
-                    "[GeminiAudioTranscriber] Gemini API returned {StatusCode}: {Body}",
+                    "[CloudGeminiAudioTranscriber] Gemini API returned {StatusCode}: {Body}",
                     (int)response.StatusCode,
                     rawBody);
 
@@ -189,11 +249,17 @@ public class GeminiAudioTranscriber : IAudioTranscriber
                     ErrorMessage: "Gemini returned an empty transcription response.");
             }
 
-            return TsukikoTranscriber.ParseCliOutput(extractedText, sw.ElapsedMilliseconds, ProviderName);
+            var parsedResult = LocalEngineAudioTranscriber.ParseEngineOutput(extractedText, sw.ElapsedMilliseconds, ProviderName);
+            if (_postProcessor != null)
+            {
+                parsedResult = _postProcessor.ProcessResult(parsedResult);
+            }
+
+            return parsedResult;
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "[GeminiAudioTranscriber] Error transcribing {FileName}", fileName);
+            _logger?.LogError(ex, "[CloudGeminiAudioTranscriber] Error transcribing {FileName}", fileName);
             return new TranscriptionResult(
                 Success: false,
                 Text: string.Empty,

@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -9,65 +9,48 @@ using Microsoft.Extensions.Logging;
 
 namespace Fotoprint.Core.Audio;
 
-public class TsukikoTranscriber : IAudioTranscriber
+public class LocalEngineAudioTranscriber : IAudioTranscriber
 {
-    public const string ProviderName = "tsukiko-metal";
-
     private static readonly Regex TimestampLineRegex = new(
         @"^\s*\[(?<start>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{1,3})\s*-->\s*(?<end>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{1,3})\]\s*(?<text>.*)$",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
+    private readonly IAudioEngineResolver _engineResolver;
+    private readonly IVocabularyProvider _vocabularyProvider;
+    private readonly IVocabularyPostProcessor _postProcessor;
     private readonly FotoprintConfig _config;
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<TsukikoTranscriber>? _logger;
+    private readonly ILogger<LocalEngineAudioTranscriber>? _logger;
 
-    public TsukikoTranscriber(
+    public LocalEngineAudioTranscriber(
+        IAudioEngineResolver engineResolver,
+        IVocabularyProvider vocabularyProvider,
+        IVocabularyPostProcessor postProcessor,
         FotoprintConfig config,
-        HttpClient? httpClient = null,
-        ILogger<TsukikoTranscriber>? logger = null)
+        ILogger<LocalEngineAudioTranscriber>? logger = null)
     {
+        _engineResolver = engineResolver ?? throw new ArgumentNullException(nameof(engineResolver));
+        _vocabularyProvider = vocabularyProvider ?? throw new ArgumentNullException(nameof(vocabularyProvider));
+        _postProcessor = postProcessor ?? throw new ArgumentNullException(nameof(postProcessor));
         _config = config ?? new FotoprintConfig();
-        _httpClient = httpClient ?? new HttpClient();
         _logger = logger;
     }
 
-    public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
+    public Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
-        try
+        if (!_config.Audio.Enabled)
         {
-            if (!_config.Audio.Enabled)
-            {
-                return false;
-            }
-
-            var cliPath = TsukikoPathResolver.ResolveCliPath(_config.Audio.Tsukiko.CliPath);
-            if (!string.IsNullOrWhiteSpace(cliPath) && File.Exists(cliPath))
-            {
-                return true;
-            }
-
-            var envUrl = Environment.GetEnvironmentVariable("TRANSCRIBER_URL");
-            var httpUrl = !string.IsNullOrWhiteSpace(envUrl)
-                ? envUrl
-                : _config.Audio.Tsukiko.HttpUrl;
-
-            if (!string.IsNullOrWhiteSpace(httpUrl))
-            {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(TimeSpan.FromSeconds(2));
-
-                var healthEndpoint = $"{httpUrl.TrimEnd('/')}/health";
-                using var response = await _httpClient.GetAsync(healthEndpoint, cts.Token);
-                return response.IsSuccessStatusCode;
-            }
-
-            return false;
+            return Task.FromResult(false);
         }
-        catch (Exception ex)
-        {
-            _logger?.LogDebug(ex, "[TsukikoTranscriber] Availability check returned false.");
-            return false;
-        }
+
+        var enginePath = _engineResolver.ResolveEnginePath();
+        var modelPath = _engineResolver.ResolveModelPath();
+
+        var available = !string.IsNullOrWhiteSpace(enginePath) &&
+                        File.Exists(enginePath) &&
+                        !string.IsNullOrWhiteSpace(modelPath) &&
+                        File.Exists(modelPath);
+
+        return Task.FromResult(available);
     }
 
     public async Task<TranscriptionResult> TranscribeAsync(
@@ -82,7 +65,7 @@ public class TsukikoTranscriber : IAudioTranscriber
                 Success: false,
                 Text: string.Empty,
                 Segments: new List<AudioSegment>(),
-                Provider: ProviderName,
+                Provider: _engineResolver.GetProviderName(),
                 DurationMs: 0,
                 ErrorMessage: "Audio stream is null.");
         }
@@ -93,7 +76,7 @@ public class TsukikoTranscriber : IAudioTranscriber
             ext = ".wav";
         }
 
-        var tempFilePath = Path.Combine(Path.GetTempPath(), $"fotoprint_audio_{Guid.NewGuid():N}{ext}");
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"fotoprint_input_{Guid.NewGuid():N}{ext}");
         try
         {
             if (audioStream.CanSeek && audioStream.Position > 0)
@@ -110,14 +93,14 @@ public class TsukikoTranscriber : IAudioTranscriber
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "[TsukikoTranscriber] Failed to process stream for {FileName}", fileName);
+            _logger?.LogError(ex, "[LocalEngineAudioTranscriber] Failed to process stream for {FileName}", fileName);
             return new TranscriptionResult(
                 Success: false,
                 Text: string.Empty,
                 Segments: new List<AudioSegment>(),
-                Provider: ProviderName,
+                Provider: _engineResolver.GetProviderName(),
                 DurationMs: 0,
-                ErrorMessage: $"Tsukiko stream processing error: {ex.Message}");
+                ErrorMessage: $"Audio stream processing error: {ex.Message}");
         }
         finally
         {
@@ -131,189 +114,57 @@ public class TsukikoTranscriber : IAudioTranscriber
         CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
+        var provider = _engineResolver.GetProviderName();
+
+        if (!_config.Audio.Enabled)
+        {
+            return new TranscriptionResult(
+                Success: false,
+                Text: string.Empty,
+                Segments: new List<AudioSegment>(),
+                Provider: "disabled",
+                DurationMs: 0,
+                ErrorMessage: "Audio transcription is disabled in configuration.");
+        }
+
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
         {
             return new TranscriptionResult(
                 Success: false,
                 Text: string.Empty,
                 Segments: new List<AudioSegment>(),
-                Provider: ProviderName,
+                Provider: provider,
                 DurationMs: sw.ElapsedMilliseconds,
                 ErrorMessage: $"Audio file not found: {filePath}");
         }
 
-        var lang = string.IsNullOrWhiteSpace(language) ? "ru" : language.Trim();
-        var cliPath = TsukikoPathResolver.ResolveCliPath(_config.Audio.Tsukiko.CliPath);
-        var envTranscriberUrl = Environment.GetEnvironmentVariable("TRANSCRIBER_URL");
-
-        // 1. If TRANSCRIBER_URL is explicitly configured, try HTTP first
-        if (!string.IsNullOrWhiteSpace(envTranscriberUrl))
+        var enginePath = _engineResolver.ResolveEnginePath();
+        if (string.IsNullOrWhiteSpace(enginePath) || !File.Exists(enginePath))
         {
-            var httpResult = await TryTranscribeViaHttpAsync(envTranscriberUrl, filePath, lang, sw, ct);
-            if (httpResult.Success || string.IsNullOrWhiteSpace(cliPath) || !File.Exists(cliPath))
-            {
-                return httpResult;
-            }
-        }
-
-        // 2. Local CLI execution (Tsukiko Metal / Vulkan GPU)
-        if (!string.IsNullOrWhiteSpace(cliPath) && File.Exists(cliPath))
-        {
-            try
-            {
-                var isTsukikoBinary = Path.GetFileNameWithoutExtension(cliPath)
-                    .Equals("tsukiko-transcribe", StringComparison.OrdinalIgnoreCase);
-
-                if (isTsukikoBinary)
-                {
-                    var statusInfo = await ProbeTsukikoStatusAsync(cliPath, ct);
-                    var resolvedModel = statusInfo?.ModelPath;
-                    if (string.IsNullOrWhiteSpace(resolvedModel) || !File.Exists(resolvedModel))
-                    {
-                        resolvedModel = TsukikoPathResolver.ResolveModelPath();
-                    }
-
-                    if (statusInfo is { IsBusyWithoutAppApi: true, EnginePath: not null } &&
-                        File.Exists(statusInfo.EnginePath) &&
-                        !string.IsNullOrWhiteSpace(resolvedModel) &&
-                        File.Exists(resolvedModel))
-                    {
-                        _logger?.LogInformation(
-                            "[TsukikoTranscriber] tsukiko-transcribe reported busy=true, appApi=false. Using direct GPU engine {Engine}",
-                            statusInfo.EnginePath);
-
-                        return await RunDirectRecognizerAsync(
-                            statusInfo.EnginePath,
-                            resolvedModel,
-                            filePath,
-                            lang,
-                            sw,
-                            ct);
-                    }
-                }
-
-                var cliResult = await RunStandardCliAsync(cliPath, filePath, lang, sw, ct);
-                if (!cliResult.Success && isTsukikoBinary)
-                {
-                    var fallbackStatus = await ProbeTsukikoStatusAsync(cliPath, ct);
-                    var resolvedModel = fallbackStatus?.ModelPath;
-                    if (string.IsNullOrWhiteSpace(resolvedModel) || !File.Exists(resolvedModel))
-                    {
-                        resolvedModel = TsukikoPathResolver.ResolveModelPath();
-                    }
-
-                    if (fallbackStatus is { EnginePath: not null } &&
-                        File.Exists(fallbackStatus.EnginePath) &&
-                        !string.IsNullOrWhiteSpace(resolvedModel) &&
-                        File.Exists(resolvedModel))
-                    {
-                        _logger?.LogInformation(
-                            "[TsukikoTranscriber] Standard CLI failed ({Error}); retrying via direct GPU recognizer.",
-                            cliResult.ErrorMessage);
-                        return await RunDirectRecognizerAsync(
-                            fallbackStatus.EnginePath,
-                            resolvedModel,
-                            filePath,
-                            lang,
-                            sw,
-                            ct);
-                    }
-                }
-
-                return cliResult;
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "[TsukikoTranscriber] CLI execution error on {FilePath}", filePath);
-                return new TranscriptionResult(
-                    Success: false,
-                    Text: string.Empty,
-                    Segments: new List<AudioSegment>(),
-                    Provider: ProviderName,
-                    DurationMs: sw.ElapsedMilliseconds,
-                    ErrorMessage: $"Tsukiko CLI exception: {ex.Message}");
-            }
-        }
-
-        // 3. Fallback to configured HttpUrl if CLI does not exist on host
-        if (!string.IsNullOrWhiteSpace(_config.Audio.Tsukiko.HttpUrl))
-        {
-            return await TryTranscribeViaHttpAsync(_config.Audio.Tsukiko.HttpUrl, filePath, lang, sw, ct);
-        }
-
-        return new TranscriptionResult(
-            Success: false,
-            Text: string.Empty,
-            Segments: new List<AudioSegment>(),
-            Provider: ProviderName,
-            DurationMs: sw.ElapsedMilliseconds,
-            ErrorMessage: $"Tsukiko CLI not found at '{cliPath}' and no HTTP URL is reachable.");
-    }
-
-    private async Task<TranscriptionResult> RunStandardCliAsync(
-        string cliPath,
-        string filePath,
-        string language,
-        Stopwatch sw,
-        CancellationToken ct)
-    {
-        var timeoutSeconds = _config.Audio.Tsukiko.TimeoutSeconds > 0
-            ? _config.Audio.Tsukiko.TimeoutSeconds
-            : 300;
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = cliPath,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8
-        };
-
-        psi.ArgumentList.Add("--format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--lang");
-        psi.ArgumentList.Add(language);
-        psi.ArgumentList.Add("--quiet");
-        psi.ArgumentList.Add(filePath);
-
-        var (exitCode, stdout, stderr) = await ExecuteProcessAsync(psi, TimeSpan.FromSeconds(timeoutSeconds), ct);
-        if (exitCode != 0 && string.IsNullOrWhiteSpace(stdout))
-        {
-            var errMsg = !string.IsNullOrWhiteSpace(stderr)
-                ? stderr.Trim()
-                : $"Tsukiko CLI exited with code {exitCode}.";
-            _logger?.LogWarning("[TsukikoTranscriber] CLI exited with code {ExitCode}: {Error}", exitCode, errMsg);
             return new TranscriptionResult(
                 Success: false,
                 Text: string.Empty,
                 Segments: new List<AudioSegment>(),
-                Provider: ProviderName,
+                Provider: provider,
                 DurationMs: sw.ElapsedMilliseconds,
-                ErrorMessage: errMsg);
+                ErrorMessage: $"C++ transcription engine binary not found. Expected under tools/engine/.");
         }
 
-        var parsed = ParseCliOutput(stdout, sw.ElapsedMilliseconds, ProviderName);
-        if (!parsed.Success && !string.IsNullOrWhiteSpace(stderr))
+        var modelPath = _engineResolver.ResolveModelPath();
+        if (string.IsNullOrWhiteSpace(modelPath) || !File.Exists(modelPath))
         {
-            return parsed with { ErrorMessage = stderr.Trim() };
+            return new TranscriptionResult(
+                Success: false,
+                Text: string.Empty,
+                Segments: new List<AudioSegment>(),
+                Provider: provider,
+                DurationMs: sw.ElapsedMilliseconds,
+                ErrorMessage: $"Whisper model file (.bin) not found. Run ./scripts/download-model.sh.");
         }
 
-        return parsed;
-    }
-
-    private async Task<TranscriptionResult> RunDirectRecognizerAsync(
-        string enginePath,
-        string modelPath,
-        string filePath,
-        string language,
-        Stopwatch sw,
-        CancellationToken ct)
-    {
-        var timeoutSeconds = _config.Audio.Tsukiko.TimeoutSeconds > 0
-            ? _config.Audio.Tsukiko.TimeoutSeconds
+        var lang = string.IsNullOrWhiteSpace(language) ? "ru" : language.Trim();
+        var timeoutSeconds = _config.Audio.Engine.TimeoutSeconds > 0
+            ? _config.Audio.Engine.TimeoutSeconds
             : 300;
 
         var tempWavPath = Path.Combine(Path.GetTempPath(), $"fotoprint_pcm_{Guid.NewGuid():N}.wav");
@@ -322,42 +173,13 @@ public class TsukikoTranscriber : IAudioTranscriber
 
         try
         {
-            var wavInputPath = filePath;
-            const string afconvertPath = "/usr/bin/afconvert";
-            if (File.Exists(afconvertPath))
-            {
-                var afPsi = new ProcessStartInfo
-                {
-                    FileName = afconvertPath,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-                afPsi.ArgumentList.Add("-f");
-                afPsi.ArgumentList.Add("WAVE");
-                afPsi.ArgumentList.Add("-d");
-                afPsi.ArgumentList.Add("LEI16@16000");
-                afPsi.ArgumentList.Add("-c");
-                afPsi.ArgumentList.Add("1");
-                afPsi.ArgumentList.Add(filePath);
-                afPsi.ArgumentList.Add(tempWavPath);
+            // Convert to 16kHz mono PCM WAV if converter is available
+            var wavInputPath = await ConvertTo16kMonoWavAsync(filePath, tempWavPath, ct);
 
-                var (afExit, _, afErr) = await ExecuteProcessAsync(afPsi, TimeSpan.FromSeconds(30), ct);
-                if (afExit == 0 && File.Exists(tempWavPath))
-                {
-                    wavInputPath = tempWavPath;
-                }
-                else
-                {
-                    _logger?.LogWarning(
-                        "[TsukikoTranscriber] afconvert exited with {ExitCode} ({Error}); passing original file to recognizer.",
-                        afExit,
-                        afErr.Trim());
-                }
-            }
+            // Vocabulary prompt from IVocabularyProvider
+            var vocabularyPrompt = _vocabularyProvider.GetPromptString();
 
-            var recPsi = new ProcessStartInfo
+            var psi = new ProcessStartInfo
             {
                 FileName = enginePath,
                 UseShellExecute = false,
@@ -367,154 +189,154 @@ public class TsukikoTranscriber : IAudioTranscriber
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
-            recPsi.ArgumentList.Add("-m");
-            recPsi.ArgumentList.Add(modelPath);
-            recPsi.ArgumentList.Add("-l");
-            recPsi.ArgumentList.Add(language);
-            recPsi.ArgumentList.Add("-np");
-            recPsi.ArgumentList.Add("-oj");
-            recPsi.ArgumentList.Add("-of");
-            recPsi.ArgumentList.Add(tempOutPrefix);
-            recPsi.ArgumentList.Add("-f");
-            recPsi.ArgumentList.Add(wavInputPath);
 
-            var (recExit, recStdout, recStderr) = await ExecuteProcessAsync(recPsi, TimeSpan.FromSeconds(timeoutSeconds), ct);
+            psi.ArgumentList.Add("-m");
+            psi.ArgumentList.Add(modelPath);
+            psi.ArgumentList.Add("-l");
+            psi.ArgumentList.Add(lang);
+            psi.ArgumentList.Add("-np");
 
+            if (!string.IsNullOrWhiteSpace(vocabularyPrompt))
+            {
+                psi.ArgumentList.Add("--prompt");
+                psi.ArgumentList.Add(vocabularyPrompt);
+            }
+
+            psi.ArgumentList.Add("-oj");
+            psi.ArgumentList.Add("-of");
+            psi.ArgumentList.Add(tempOutPrefix);
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add(wavInputPath);
+
+            var (exitCode, stdout, stderr) = await ExecuteProcessAsync(psi, TimeSpan.FromSeconds(timeoutSeconds), ct);
+
+            TranscriptionResult rawResult;
             if (File.Exists(tempOutJsonPath))
             {
                 var jsonText = await File.ReadAllTextAsync(tempOutJsonPath, ct);
-                return ParseCliOutput(jsonText, sw.ElapsedMilliseconds, ProviderName);
+                rawResult = ParseEngineOutput(jsonText, sw.ElapsedMilliseconds, provider);
             }
-
-            if (!string.IsNullOrWhiteSpace(recStdout))
+            else if (!string.IsNullOrWhiteSpace(stdout))
             {
-                return ParseCliOutput(recStdout, sw.ElapsedMilliseconds, ProviderName);
+                rawResult = ParseEngineOutput(stdout, sw.ElapsedMilliseconds, provider);
+            }
+            else
+            {
+                var errMsg = !string.IsNullOrWhiteSpace(stderr)
+                    ? stderr.Trim()
+                    : $"Engine exited with code {exitCode} and produced no output.";
+                _logger?.LogWarning("[LocalEngineAudioTranscriber] Engine failed: {Error}", errMsg);
+                return new TranscriptionResult(
+                    Success: false,
+                    Text: string.Empty,
+                    Segments: new List<AudioSegment>(),
+                    Provider: provider,
+                    DurationMs: sw.ElapsedMilliseconds,
+                    ErrorMessage: errMsg);
             }
 
-            var errorText = !string.IsNullOrWhiteSpace(recStderr)
-                ? recStderr.Trim()
-                : $"tsukiko-recognizer exited with code {recExit} and produced no output.";
+            if (!rawResult.Success && !string.IsNullOrWhiteSpace(stderr) && string.IsNullOrWhiteSpace(rawResult.ErrorMessage))
+            {
+                rawResult = rawResult with { ErrorMessage = stderr.Trim() };
+            }
 
+            // Apply IVocabularyPostProcessor for homophone correction
+            var finalResult = _postProcessor.ProcessResult(rawResult);
+            return finalResult;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "[LocalEngineAudioTranscriber] Execution error for {FilePath}", filePath);
             return new TranscriptionResult(
                 Success: false,
                 Text: string.Empty,
                 Segments: new List<AudioSegment>(),
-                Provider: ProviderName,
+                Provider: provider,
                 DurationMs: sw.ElapsedMilliseconds,
-                ErrorMessage: errorText);
+                ErrorMessage: $"Local engine exception: {ex.Message}");
         }
         finally
         {
             TryDeleteFile(tempWavPath);
             TryDeleteFile(tempOutJsonPath);
+            TryDeleteFile(tempOutPrefix + ".txt");
         }
     }
 
-    private sealed record TsukikoStatusInfo(
-        bool IsBusyWithoutAppApi,
-        string? EnginePath,
-        string? ModelPath);
-
-    private async Task<TsukikoStatusInfo?> ProbeTsukikoStatusAsync(string cliPath, CancellationToken ct)
+    private async Task<string> ConvertTo16kMonoWavAsync(string inputPath, string targetWavPath, CancellationToken ct)
     {
         try
         {
-            var psi = new ProcessStartInfo
+            var converterPath = _engineResolver.ResolveAudioConverterPath();
+            if (string.IsNullOrWhiteSpace(converterPath) || !File.Exists(converterPath))
             {
-                FileName = cliPath,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8
-            };
-            psi.ArgumentList.Add("--status");
-
-            var (_, stdout, _) = await ExecuteProcessAsync(psi, TimeSpan.FromSeconds(5), ct);
-            if (string.IsNullOrWhiteSpace(stdout))
-            {
-                return null;
+                return inputPath;
             }
 
-            using var doc = JsonDocument.Parse(stdout.Trim());
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
+            ProcessStartInfo psi;
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
+                converterPath.EndsWith("afconvert", StringComparison.OrdinalIgnoreCase))
             {
-                return null;
+                psi = new ProcessStartInfo
+                {
+                    FileName = converterPath,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                psi.ArgumentList.Add("-f");
+                psi.ArgumentList.Add("WAVE");
+                psi.ArgumentList.Add("-d");
+                psi.ArgumentList.Add("LEI16@16000");
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add("1");
+                psi.ArgumentList.Add(inputPath);
+                psi.ArgumentList.Add(targetWavPath);
+            }
+            else
+            {
+                // ffmpeg
+                psi = new ProcessStartInfo
+                {
+                    FileName = converterPath,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                psi.ArgumentList.Add("-y");
+                psi.ArgumentList.Add("-i");
+                psi.ArgumentList.Add(inputPath);
+                psi.ArgumentList.Add("-ar");
+                psi.ArgumentList.Add("16000");
+                psi.ArgumentList.Add("-ac");
+                psi.ArgumentList.Add("1");
+                psi.ArgumentList.Add("-c:a");
+                psi.ArgumentList.Add("pcm_s16le");
+                psi.ArgumentList.Add(targetWavPath);
             }
 
-            var busy = root.TryGetProperty("busy", out var busyProp) && busyProp.ValueKind == JsonValueKind.True;
-            var appApi = root.TryGetProperty("appApi", out var appApiProp) && appApiProp.ValueKind == JsonValueKind.True;
-            var engine = root.TryGetProperty("engine", out var engProp) ? engProp.GetString() : null;
-            var model = root.TryGetProperty("model", out var modProp) ? modProp.GetString() : null;
+            var (exitCode, _, stderr) = await ExecuteProcessAsync(psi, TimeSpan.FromSeconds(60), ct);
+            if (exitCode == 0 && File.Exists(targetWavPath))
+            {
+                return targetWavPath;
+            }
 
-            return new TsukikoStatusInfo(
-                IsBusyWithoutAppApi: busy && !appApi,
-                EnginePath: engine,
-                ModelPath: model);
+            _logger?.LogDebug("[LocalEngineAudioTranscriber] Audio converter exited with {ExitCode}: {Error}. Using original file.", exitCode, stderr.Trim());
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "[TsukikoTranscriber] Status probe failed.");
-            return null;
+            _logger?.LogDebug(ex, "[LocalEngineAudioTranscriber] Audio conversion failed. Using original file.");
         }
+
+        return inputPath;
     }
 
-    private async Task<TranscriptionResult> TryTranscribeViaHttpAsync(
-        string baseUrl,
-        string filePath,
-        string language,
-        Stopwatch sw,
-        CancellationToken ct)
-    {
-        try
-        {
-            var endpoint = baseUrl.TrimEnd('/');
-            if (!endpoint.EndsWith("/transcribe", StringComparison.OrdinalIgnoreCase))
-            {
-                endpoint += "/transcribe";
-            }
-
-            using var form = new MultipartFormDataContent();
-            var fileBytes = await File.ReadAllBytesAsync(filePath, ct);
-            var fileContent = new ByteArrayContent(fileBytes);
-            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            form.Add(fileContent, "file", Path.GetFileName(filePath));
-            form.Add(new StringContent(language), "language");
-
-            using var response = await _httpClient.PostAsync(endpoint, form, ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return new TranscriptionResult(
-                    Success: false,
-                    Text: string.Empty,
-                    Segments: new List<AudioSegment>(),
-                    Provider: ProviderName,
-                    DurationMs: sw.ElapsedMilliseconds,
-                    ErrorMessage: $"Tsukiko HTTP endpoint returned {(int)response.StatusCode}: {body}");
-            }
-
-            return ParseCliOutput(body, sw.ElapsedMilliseconds, ProviderName);
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogWarning(ex, "[TsukikoTranscriber] HTTP transcription failed against {BaseUrl}", baseUrl);
-            return new TranscriptionResult(
-                Success: false,
-                Text: string.Empty,
-                Segments: new List<AudioSegment>(),
-                Provider: ProviderName,
-                DurationMs: sw.ElapsedMilliseconds,
-                ErrorMessage: $"Tsukiko HTTP request failed: {ex.Message}");
-        }
-    }
-
-    public static TranscriptionResult ParseCliOutput(
+    public static TranscriptionResult ParseEngineOutput(
         string rawOutput,
         long durationMs,
-        string provider = ProviderName)
+        string provider = "local-metal")
     {
         if (string.IsNullOrWhiteSpace(rawOutput))
         {
@@ -529,7 +351,7 @@ public class TsukikoTranscriber : IAudioTranscriber
 
         var trimmed = rawOutput.Trim();
 
-        // 1. Try JSON parsing (either direct JSON or embedded JSON object)
+        // 1. Try JSON parsing
         var jsonCandidate = ExtractJsonObject(trimmed);
         if (!string.IsNullOrWhiteSpace(jsonCandidate))
         {
@@ -622,7 +444,7 @@ public class TsukikoTranscriber : IAudioTranscriber
                             ErrorMessage: string.IsNullOrWhiteSpace(combinedWhisperText) ? "No speech detected in audio." : null);
                     }
 
-                    // Format B: Standard Tsukiko CLI JSON with "text" and optional "segments"
+                    // Format B: Standard JSON with "text" and optional "segments"
                     var hasTextProp = TryGetPropertyCaseInsensitive(root, "text", out var rootTextProp);
                     var hasSegmentsProp = TryGetPropertyCaseInsensitive(root, "segments", out var rootSegmentsProp);
 
@@ -680,7 +502,7 @@ public class TsukikoTranscriber : IAudioTranscriber
             }
             catch (JsonException)
             {
-                // Fall through to timestamped text / plain text parsing
+                // Fall through to timestamped / plain text
             }
         }
 
@@ -798,21 +620,35 @@ public class TsukikoTranscriber : IAudioTranscriber
 
         var normalized = rawTimestamp.Trim().Replace(',', '.');
         var parts = normalized.Split(':');
-        if (parts.Length == 3 &&
-            double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var hours) &&
-            double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var minutes) &&
-            double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var secs))
-        {
-            seconds = Math.Round(hours * 3600 + minutes * 60 + secs, 3);
-            return true;
-        }
 
-        if (parts.Length == 2 &&
-            double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var mins2) &&
-            double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var secs2))
+        try
         {
-            seconds = Math.Round(mins2 * 60 + secs2, 3);
-            return true;
+            if (parts.Length == 3)
+            {
+                var h = double.Parse(parts[0], CultureInfo.InvariantCulture);
+                var m = double.Parse(parts[1], CultureInfo.InvariantCulture);
+                var s = double.Parse(parts[2], CultureInfo.InvariantCulture);
+                seconds = Math.Round(h * 3600 + m * 60 + s, 3);
+                return true;
+            }
+
+            if (parts.Length == 2)
+            {
+                var m = double.Parse(parts[0], CultureInfo.InvariantCulture);
+                var s = double.Parse(parts[1], CultureInfo.InvariantCulture);
+                seconds = Math.Round(m * 60 + s, 3);
+                return true;
+            }
+
+            if (parts.Length == 1 && double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var sOnly))
+            {
+                seconds = Math.Round(sOnly, 3);
+                return true;
+            }
+        }
+        catch
+        {
+            // Ignore format errors
         }
 
         return false;
@@ -824,17 +660,33 @@ public class TsukikoTranscriber : IAudioTranscriber
         CancellationToken ct)
     {
         using var process = new Process { StartInfo = psi };
-        process.Start();
+        var stdoutBuilder = new StringBuilder();
+        var stderrBuilder = new StringBuilder();
+
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data != null) stdoutBuilder.AppendLine(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data != null) stderrBuilder.AppendLine(e.Data);
+        };
+
+        if (!process.Start())
+        {
+            throw new InvalidOperationException($"Failed to start process: {psi.FileName}");
+        }
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cts.Token);
-        var stderrTask = process.StandardError.ReadToEndAsync(cts.Token);
-
         try
         {
             await process.WaitForExitAsync(cts.Token);
+            return (process.ExitCode, stdoutBuilder.ToString(), stderrBuilder.ToString());
         }
         catch (OperationCanceledException)
         {
@@ -845,17 +697,10 @@ public class TsukikoTranscriber : IAudioTranscriber
                     process.Kill(entireProcessTree: true);
                 }
             }
-            catch
-            {
-                // Ignore kill errors
-            }
+            catch { }
 
-            throw;
+            throw new TimeoutException($"Process '{psi.FileName}' timed out after {timeout.TotalSeconds}s.");
         }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        return (process.ExitCode, stdout, stderr);
     }
 
     private static void TryDeleteFile(string? path)
@@ -863,14 +708,8 @@ public class TsukikoTranscriber : IAudioTranscriber
         if (string.IsNullOrWhiteSpace(path)) return;
         try
         {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
+            if (File.Exists(path)) File.Delete(path);
         }
-        catch
-        {
-            // Ignore cleanup errors
-        }
+        catch { }
     }
 }

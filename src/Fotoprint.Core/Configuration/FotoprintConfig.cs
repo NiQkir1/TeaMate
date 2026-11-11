@@ -36,15 +36,14 @@ public class AudioConfig
 {
     public bool Enabled { get; set; } = true;
     public string Provider { get; set; } = "auto";
-    public TsukikoAudioConfig Tsukiko { get; set; } = new();
+    public string VocabularyPath { get; set; } = "config/vocabulary.yaml";
+    public LocalEngineAudioConfig Engine { get; set; } = new();
     public GeminiAudioConfig Gemini { get; set; } = new();
     public int MaxFileSizeMb { get; set; } = 100;
 }
 
-public class TsukikoAudioConfig
+public class LocalEngineAudioConfig
 {
-    public string CliPath { get; set; } = "/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe";
-    public string HttpUrl { get; set; } = "http://127.0.0.1:8756";
     public int TimeoutSeconds { get; set; } = 300;
 }
 

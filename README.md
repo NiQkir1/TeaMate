@@ -388,38 +388,95 @@ dotnet test --logger "console;verbosity=detailed"
 
 ---
 
-## 🎙️ Модуль локальной транскрибации речи (Tsukiko Metal GPU + Gemini Fallback) и автопротоколирования (MoM)
+## 🎙️ Модуль локальной транскрибации речи (SOLID Audio Architecture v2.0) и автопротоколирования (MoM)
 
-Для распознавания голосовых сообщений сотрудников и аудиозаписей планерок реализован гибридный отказоустойчивый модуль `Fotoprint.Core.Audio`, объединяющий локальное ускорение на Apple Silicon Metal GPU / Windows GPU и облачный мультимодальный резерв.
+Для распознавания голосовых сообщений сотрудников и аудиозаписей планерок реализован гибридный отказоустойчивый модуль `Fotoprint.Core.Audio` по принципам **SOLID**, объединяющий встроенные в репозиторий C++ бинарники инференса (Apple Silicon Metal GPU / Windows Vulkan GPU / CPU), внешнюю базу предметного словаря и облачный мультимодальный резерв.
 
-### 🎙️ Настройка модуля распознавания речи (2 варианта)
+### 🎙️ Настройка модуля распознавания речи
 
-**Вариант 1 (Быстрый старт без установки, Zero-Install)**:
-Просто задайте `GEMINI_API_KEY` в файле `.env`. Больше ничего устанавливать не нужно — звук расшифровывается в облаке.
+1. **Бинарники движка (встроены в репозиторий)**:
+   - В папке `tools/engine/` уже находятся скомпилированные C++ ядра распознавания (`tsukiko-recognizer` для macOS Metal GPU, `tsukiko-recognizer-vulkan.exe` и `tsukiko-recognizer-cpu.exe` для Windows, а также конвертер `ffmpeg.exe`).
+   - Установка сторонних GUI-приложений или Flutter-оболочек **НЕ ТРЕБУЕТСЯ**.
 
-**Вариант 2 (Локально на GPU в 1 клик, 100% оффлайн)**:
-- На Windows: запустите `powershell -File scripts/setup-tsukiko-win.ps1`
-- На macOS: запустите `bash scripts/setup-tsukiko-mac.sh`
+2. **Загрузка весов модели нейросети (только .bin веса Whisper)**:
+   - macOS / Linux: `./scripts/download-model.sh` (проверяет наличие `models/ggml-large-v3-turbo.bin` локально и в системном кэше; если модель уже есть — моментально завершается без скачивания).
+   - Windows: `powershell -File scripts/download-model.ps1`
+   - Для скачивания облегченной модели используйте флаг `--light` / `-LightModel` (`ggml-base.bin` ~142 МБ).
 
-### 1. Гибридная архитектура (`CompositeAudioTranscriber`)
-Оркестратор `CompositeAudioTranscriber` реализует паттерн **Chain of Responsibility / Fallback**:
-1. **Primary (On-Premise Metal GPU) — `TsukikoTranscriber` (`provider: "tsukiko-metal"`)**:
-   - Использует локальный движок `tsukiko` (`whisper.cpp` с моделью `ggml-large-v3-turbo.bin` на Apple Silicon Metal GPU) через CLI (`/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe` / `tsukiko-recognizer`) или локальный HTTP-бридж (`TRANSCRIBER_URL`).
-   - Обеспечивает 100% приватность аудиозаписей планерок внутри контура предприятия, нулевую стоимость токенов за STT и возврат посегментных таймкодов (`AudioSegment`).
-2. **Fallback (Cloud Multimodal) — `GeminiAudioTranscriber` (`provider: "gemini"`)**:
-   - Автоматически включается, если система запущена внутри изолированного Linux-контейнера без проброса GPU или если локальный движок недоступен.
-   - Передает аудиопоток (`inline_data` base64) напрямую в `gemini-1.5-flash` через REST API Google AI Studio.
-3. **Телеметрия Langfuse**:
-   - Каждая операция транскрибации логируется спаном `Span:Audio_Transcription` с фиксацией выбранного провайдера (`tsukiko-metal` или `gemini`), длительности (`duration_ms`) и размера файла.
+3. **Облачный резерв Zero-Install (Gemini Cloud Audio API)**:
+   - Если модель или локальный бинарник отсутствуют, система прозрачно переключается на облачный `gemini-1.5-flash` с передачей того же специализированного словаря. Достаточно указать `GEMINI_API_KEY` в файле `.env`.
 
-### 2. Конфигурация в `config.yaml`
+### 1. Архитектура компонентов (SOLID v2.0)
+```
+                           [ Входящее аудио ]
+                                   │
+                                   ▼
+                       [ CompositeAudioTranscriber ]
+                                   │
+                    ┌──────────────┴──────────────┐
+                    ▼ (Приоритет: Офлайн)          ▼ (Резерв: Облако)
+       [ LocalEngineAudioTranscriber ]     [ CloudGeminiAudioTranscriber ]
+                    │                                     │
+                    ▼                                     ▼
+        [ IAudioEngineResolver ]              [ IVocabularyProvider ]
+        (Metal на Mac / Vulkan на Win)        (Читает словарь из config/vocabulary.yaml)
+                    │                                     │
+                    └──────────────┬──────────────────────┘
+                                   │
+                                   ▼
+                       [ IVocabularyPostProcessor ]
+                       (Автозамена омофонов по правилам из конфига)
+                                   │
+                                   ▼
+                            [ Чистый текст ]
+```
+
+- **`IVocabularyProvider` (`YamlVocabularyProvider`)**: Читает термины предметной области и правила автозамены омофонов из `config/vocabulary.yaml`. Позволяет адаптировать систему под любое другое предприятие (банк, клинику, завод) без правки исходного кода C#.
+- **`IVocabularyPostProcessor` (`VocabularyPostProcessor`)**: Автоматически исправляет искаженные нейросетью отраслевые термины («один с» $\rightarrow$ «1С», «бетрикс» $\rightarrow$ «Битрикс24», «гейдельберг» $\rightarrow$ «Heidelberg»).
+- **`IAudioEngineResolver` (`AudioEngineResolver`)**: Автоматически определяет операционную систему, находит подходящий C++ бинарник (`local-metal` / `local-vulkan` / `local-cpu`), аудиоконвертер (`afconvert` / `ffmpeg.exe`) и путь к модели.
+- **`LocalEngineAudioTranscriber`**: Выполняет локальный инференс через прямой запуск C++ бинарника с передачей глоссария в аргументе `--prompt`, конвертацией в 16 кГц PCM WAV и возвратом посегментных таймкодов.
+- **`CloudGeminiAudioTranscriber`**: Мультимодальный резервный транскрибатор на базе Gemini 1.5 Flash с передачей глоссария в `system_instruction`.
+- **`CompositeAudioTranscriber`**: Фасад с автопереключением (Primary Local Engine $\rightarrow$ Fallback Cloud Gemini).
+
+### 2. Внешний файл словаря (`config/vocabulary.yaml`)
+```yaml
+version: "1.0"
+domain: "typography_fotoprint"
+
+prompt_terms:
+  - "Фотопринт"
+  - "Битрикс24"
+  - "1С:Управление нашей типографией"
+  - "1С"
+  - "Heidelberg Speedmaster XL 75"
+  - "Heidelberg"
+  - "приладка"
+  - "выработка"
+  - "флексомашина"
+  - "разнотон"
+  - "постпресс"
+  - "лакирование"
+  - "мелованная бумага"
+
+replacements:
+  "один эс": "1С"
+  "один с": "1С"
+  "битрикс 24": "Битрикс24"
+  "бетрикс": "Битрикс24"
+  "фитрикс": "Битрикс24"
+  "китрекс": "Битрикс24"
+  "гейдельберг": "Heidelberg"
+  "хайдельберг": "Heidelberg"
+  "фото принт": "Фотопринт"
+```
+
+### 3. Конфигурация в `config.yaml`
 ```yaml
 audio:
   enabled: true
-  provider: "auto" # "auto" | "tsukiko" | "gemini"
-  tsukiko:
-    cli_path: "/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe"
-    http_url: "http://127.0.0.1:8756"
+  provider: "auto" # "auto" | "local" | "gemini"
+  vocabulary_path: "config/vocabulary.yaml"
+  engine:
     timeout_seconds: 300
   gemini:
     model: "gemini-1.5-flash"
@@ -457,7 +514,7 @@ curl -X POST "http://localhost:8080/api/audio/transcribe?language=ru" \
     }
   ],
   "duration_ms": 840,
-  "provider": "tsukiko-metal",
+  "provider": "local-metal",
   "error": null
 }
 ```

@@ -218,10 +218,9 @@ context_switch:
 # -----------------------------------------------------------------------------
 audio:
   enabled: true
-  provider: "auto" # "auto" | "tsukiko" | "gemini"
-  tsukiko:
-    cli_path: "/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe"
-    http_url: "http://127.0.0.1:8756"
+  provider: "auto"
+  vocabulary_path: "config/vocabulary.yaml"
+  engine:
     timeout_seconds: 300
   gemini:
     model: "gemini-1.5-flash"

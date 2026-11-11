@@ -101,15 +101,19 @@ builder.Services.AddSingleton<ILlmJudgeService, LlmJudgeService>();
 // Автономный AI-агент с Tool Calling (автоматический выбор нужного MCP)
 builder.Services.AddSingleton<IFotoprintAgent, FotoprintAiAgent>();
 
-// Аудиотранскрибация (Tsukiko Metal GPU + Gemini Fallback) и MoM-анализатор протоколов совещаний
-builder.Services.AddHttpClient<TsukikoTranscriber>();
-builder.Services.AddHttpClient<GeminiAudioTranscriber>();
-builder.Services.AddSingleton<IAudioTranscriber>(sp => new CompositeAudioTranscriber(
-    sp.GetRequiredService<TsukikoTranscriber>(),
-    sp.GetRequiredService<GeminiAudioTranscriber>(),
-    sp.GetRequiredService<FotoprintConfig>(),
-    sp.GetService<ILangfuseClient>(),
-    sp.GetService<ILogger<CompositeAudioTranscriber>>()));
+// Аудиотранскрибация (C++ Metal/Vulkan GPU + Gemini Fallback) и MoM-анализатор протоколов совещаний
+builder.Services.AddSingleton<IVocabularyProvider, YamlVocabularyProvider>();
+builder.Services.AddSingleton<IVocabularyPostProcessor, VocabularyPostProcessor>();
+builder.Services.AddSingleton<IAudioEngineResolver, AudioEngineResolver>();
+builder.Services.AddSingleton<LocalEngineAudioTranscriber>();
+builder.Services.AddHttpClient<CloudGeminiAudioTranscriber>();
+builder.Services.AddSingleton<IAudioTranscriber>(sp =>
+    new CompositeAudioTranscriber(
+        sp.GetRequiredService<LocalEngineAudioTranscriber>(),
+        sp.GetRequiredService<CloudGeminiAudioTranscriber>(),
+        sp.GetRequiredService<FotoprintConfig>(),
+        sp.GetService<ILangfuseClient>(),
+        sp.GetRequiredService<ILogger<CompositeAudioTranscriber>>()));
 builder.Services.AddSingleton<IMeetingTranscriptAnalyzer, MeetingTranscriptAnalyzer>();
 
 builder.Services.AddHttpClient("N8nClient", client =>

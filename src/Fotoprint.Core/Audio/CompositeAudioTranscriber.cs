@@ -8,7 +8,7 @@ namespace Fotoprint.Core.Audio;
 public class CompositeAudioTranscriber : IAudioTranscriber
 {
     public const string ZeroInstallLogMessage =
-        "ℹ️ Локальный Tsukiko не обнаружен. Автоматически активирован режим Zero-Install (Gemini / Groq Audio API). Установка локальных компонентов не требуется.";
+        "ℹ️ Локальный C++ движок распознавания не обнаружен. Автоматически активирован режим Zero-Install (Gemini Cloud Audio API). Установка локальных компонентов не требуется.";
 
     private readonly IAudioTranscriber _primaryTranscriber;
     private readonly IAudioTranscriber _fallbackTranscriber;
@@ -18,14 +18,14 @@ public class CompositeAudioTranscriber : IAudioTranscriber
 
     [ActivatorUtilitiesConstructor]
     public CompositeAudioTranscriber(
-        TsukikoTranscriber tsukikoTranscriber,
-        GeminiAudioTranscriber geminiTranscriber,
+        LocalEngineAudioTranscriber localTranscriber,
+        CloudGeminiAudioTranscriber cloudTranscriber,
         FotoprintConfig config,
         ILangfuseClient? langfuse = null,
         ILogger<CompositeAudioTranscriber>? logger = null)
         : this(
-            (IAudioTranscriber)tsukikoTranscriber,
-            (IAudioTranscriber)geminiTranscriber,
+            (IAudioTranscriber)localTranscriber,
+            (IAudioTranscriber)cloudTranscriber,
             config,
             langfuse,
             logger)
@@ -56,7 +56,7 @@ public class CompositeAudioTranscriber : IAudioTranscriber
         var mode = GetProviderMode();
         return mode switch
         {
-            "tsukiko" => await _primaryTranscriber.IsAvailableAsync(ct),
+            "local" or "tsukiko" => await _primaryTranscriber.IsAvailableAsync(ct),
             "gemini" => await _fallbackTranscriber.IsAvailableAsync(ct),
             _ => await _primaryTranscriber.IsAvailableAsync(ct) || await _fallbackTranscriber.IsAvailableAsync(ct)
         };
@@ -112,14 +112,14 @@ public class CompositeAudioTranscriber : IAudioTranscriber
                 ResetStreamIfPossible(workingStream);
                 result = await _fallbackTranscriber.TranscribeAsync(workingStream, fileName, language, ct);
             }
-            else if (mode == "tsukiko")
+            else if (mode == "local" || mode == "tsukiko")
             {
                 ResetStreamIfPossible(workingStream);
                 result = await _primaryTranscriber.TranscribeAsync(workingStream, fileName, language, ct);
             }
             else
             {
-                // "auto" mode: Primary (Tsukiko Metal) -> Fallback (Gemini Cloud)
+                // "auto" mode: Primary (Local Engine) -> Fallback (Gemini Cloud)
                 TranscriptionResult? primaryResult = null;
                 var isPrimaryAvailable = await _primaryTranscriber.IsAvailableAsync(ct);
 
@@ -195,7 +195,7 @@ public class CompositeAudioTranscriber : IAudioTranscriber
         {
             result = await _fallbackTranscriber.TranscribeFileAsync(filePath, language, ct);
         }
-        else if (mode == "tsukiko")
+        else if (mode == "local" || mode == "tsukiko")
         {
             result = await _primaryTranscriber.TranscribeFileAsync(filePath, language, ct);
         }

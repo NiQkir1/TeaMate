@@ -52,9 +52,8 @@ public class FotoprintConfigTests
         Assert.NotNull(config.Audio);
         Assert.True(config.Audio.Enabled);
         Assert.Equal("auto", config.Audio.Provider);
-        Assert.Equal("/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe", config.Audio.Tsukiko.CliPath);
-        Assert.Equal("http://127.0.0.1:8756", config.Audio.Tsukiko.HttpUrl);
-        Assert.Equal(300, config.Audio.Tsukiko.TimeoutSeconds);
+        Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
+        Assert.Equal(300, config.Audio.Engine.TimeoutSeconds);
         Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
     }
@@ -75,7 +74,8 @@ public class FotoprintConfigTests
         Assert.Equal("autonomous_tool_calling", config.Agent.Mode);
         Assert.True(config.Audio.Enabled);
         Assert.Equal("auto", config.Audio.Provider);
-        Assert.Equal("/Applications/tsukiko.app/Contents/Helpers/tsukiko-transcribe", config.Audio.Tsukiko.CliPath);
+        Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
+        Assert.Equal(300, config.Audio.Engine.TimeoutSeconds);
         Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
     }

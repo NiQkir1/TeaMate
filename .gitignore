@@ -45,3 +45,7 @@ tools/tsukiko/
 *.zip
 .memory_bank/
 
+# Whisper models
+models/*.bin
+
+
