@@ -20,6 +20,7 @@ TestResults/
 *.pfx
 *.key
 *.pem
+.agents/
 
 # Docker / local volumes / caches
 pgdata/
@@ -38,3 +39,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Локальные портативные бинарники Tsukiko и архивы
+tools/tsukiko/
+*.zip
+.memory_bank/
+
