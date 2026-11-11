@@ -226,5 +226,26 @@ audio:
     model: "gemini-1.5-flash"
   max_file_size_mb: 100
 
+# -----------------------------------------------------------------------------
+# 12. MCP-СЕРВИСЫ И МИКРОСЕРВИСНЫЕ URL (MCP URLS)
+# -----------------------------------------------------------------------------
+mcp_urls:
+  employee_reader: "http://mcp-employee-reader:8081"
+  one_c: "http://mcp-1c:8082"
+  bitrix24: "http://mcp-bitrix24:8083"
+  calendar: "http://mcp-calendar:8084"
+
+# -----------------------------------------------------------------------------
+# 13. ИНТЕГРАЦИЯ КАЛЕНДАРЯ (CALENDAR CONFIG)
+# -----------------------------------------------------------------------------
+calendar:
+  enabled: true
+  service_url: "http://mcp-calendar:8084"
+  timezone: "Europe/Moscow"
+  working_hours_start: "09:00"
+  working_hours_end: "18:00"
+  default_buffer_minutes: 10
+  default_slot_duration_minutes: 30
+
 
 

@@ -59,6 +59,7 @@ var langfusePubKey = builder.Configuration["Langfuse:PublicKey"] ?? "pk-lf-fotop
 var langfuseSecKey = builder.Configuration["Langfuse:SecretKey"] ?? "sk-lf-fotoprint-local";
 var bitrixMcpUrl = builder.Configuration["McpUrls:Bitrix24"] ?? "http://localhost:8083";
 var employeeReaderUrl = builder.Configuration["McpUrls:EmployeeReader"] ?? "http://localhost:8081";
+var calendarMcpUrl = builder.Configuration["McpUrls:Calendar"] ?? appConfig.McpUrls.Calendar ?? "http://localhost:8084";
 
 // Core Services
 builder.Services.AddSingleton<IFotoprintRepository>(_ => new FotoprintRepository(connectionString));
@@ -152,6 +153,12 @@ builder.Services.AddHttpClient("EmployeeReaderClient", client =>
     client.DefaultRequestHeaders.Add("X-Internal-Service-Key", appConfig.Security.InternalServiceSecretKey);
 });
 
+builder.Services.AddHttpClient("CalendarMcpClient", client =>
+{
+    client.BaseAddress = new Uri(calendarMcpUrl.TrimEnd('/') + "/");
+    client.DefaultRequestHeaders.Add("X-Internal-Service-Key", appConfig.Security.InternalServiceSecretKey);
+});
+
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
@@ -216,7 +223,7 @@ app.MapPost("/api/llm/generate", async (
         tags: new[] { "channel:api", $"provider:{config.Llm.Provider}" });
 
     var response = await llm.GenerateContentAsync(
-        prompt: req.Prompt,
+        prompt: req.Prompt ?? string.Empty,
         systemInstruction: req.SystemInstruction,
         temperature: req.Temperature,
         maxOutputTokens: req.MaxOutputTokens,
@@ -245,7 +252,7 @@ app.MapPost("/api/gemini/generate", async (
         tags: new[] { "channel:api", $"provider:{config.Llm.Provider}" });
 
     var response = await gemini.GenerateContentAsync(
-        prompt: req.Prompt,
+        prompt: req.Prompt ?? string.Empty,
         systemInstruction: req.SystemInstruction,
         temperature: req.Temperature,
         maxOutputTokens: req.MaxOutputTokens,
@@ -301,6 +308,8 @@ app.MapPost("/api/agent/execute", async (
     return Results.Ok(new
     {
         answer = response.AnswerText,
+        reply = response.AnswerText,
+        action_card = response.ActionCard,
         tools_invoked = response.ToolsInvoked,
         total_llm_calls = response.TotalLlmCalls,
         total_tokens = response.TotalTokensUsed,
@@ -1015,6 +1024,78 @@ app.MapGet("/api/meetings/{id:guid}/export-docx", async (
 
     var bytes = generator.GenerateDocx(exportData);
     return Results.File(bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"Protocol_{id}.docx");
+});
+
+// ============================================================================
+// КОРПОРАТИВНЫЙ КАЛЕНДАРЬ (CALENDAR INTEGRATION & PROXY TO MCP-CALENDAR:8084)
+// ============================================================================
+
+// 1. Сетка событий календаря (поддержка scope=my и scope=all с RBAC)
+app.MapGet("/api/calendar/events", async (
+    HttpContext httpContext,
+    IHttpClientFactory httpFactory,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    var client = httpFactory.CreateClient("CalendarMcpClient");
+    var queryString = httpContext.Request.QueryString.Value ?? "";
+    var targetUrl = $"tools/get_calendar_events{queryString}";
+
+    var req = new HttpRequestMessage(HttpMethod.Get, targetUrl);
+    if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
+        req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
+    if (httpContext.Request.Headers.TryGetValue("X-Trace-Id", out var trId))
+        req.Headers.TryAddWithoutValidation("X-Trace-Id", trId.ToString());
+
+    var resp = await client.SendAsync(req, ct);
+    var content = await resp.Content.ReadAsStringAsync(ct);
+    return Results.Content(content, "application/json", statusCode: (int)resp.StatusCode);
+});
+
+// 2. Подтверждение и создание встречи (Stateless Human-in-the-Loop Commit)
+app.MapPost("/api/calendar/confirm", async (
+    HttpContext httpContext,
+    IHttpClientFactory httpFactory,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    var client = httpFactory.CreateClient("CalendarMcpClient");
+    var req = new HttpRequestMessage(HttpMethod.Post, "tools/create_meeting");
+    if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
+        req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
+    if (httpContext.Request.Headers.TryGetValue("X-Trace-Id", out var trId))
+        req.Headers.TryAddWithoutValidation("X-Trace-Id", trId.ToString());
+
+    using var stream = new StreamReader(httpContext.Request.Body);
+    var body = await stream.ReadToEndAsync(ct);
+    req.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+
+    var resp = await client.SendAsync(req, ct);
+    var content = await resp.Content.ReadAsStringAsync(ct);
+    return Results.Content(content, "application/json", statusCode: (int)resp.StatusCode);
+});
+
+// 3. Подбор свободных слотов
+app.MapPost("/api/calendar/slots", async (
+    HttpContext httpContext,
+    IHttpClientFactory httpFactory,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    var client = httpFactory.CreateClient("CalendarMcpClient");
+    var req = new HttpRequestMessage(HttpMethod.Post, "tools/find_free_slots");
+    if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
+        req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
+    if (httpContext.Request.Headers.TryGetValue("X-Trace-Id", out var trId))
+        req.Headers.TryAddWithoutValidation("X-Trace-Id", trId.ToString());
+
+    using var stream = new StreamReader(httpContext.Request.Body);
+    var body = await stream.ReadToEndAsync(ct);
+    req.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+
+    var resp = await client.SendAsync(req, ct);
+    var content = await resp.Content.ReadAsStringAsync(ct);
+    return Results.Content(content, "application/json", statusCode: (int)resp.StatusCode);
 });
 
 // Прямой вызов детектора смены контекста через LLM (2-й этап)

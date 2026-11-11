@@ -1,7 +1,9 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Fotoprint.Core.Configuration;
 using Fotoprint.Core.Data;
 using Fotoprint.Core.Mcp;
+using Fotoprint.Core.Models;
 using Fotoprint.Core.Security;
 using Fotoprint.Core.Telemetry;
 
@@ -77,6 +79,61 @@ var tools = new List<McpToolDefinition>
                 topic_keywords = new { type = "string", description = "Ключевые слова темы, например 'производство', 'каталоги', '44102'" }
             },
             required = new[] { "topic_keywords" }
+        }
+    },
+    new()
+    {
+        Name = "find_free_slots",
+        Description = "Ищет свободные временные слоты (окна) в календаре сотрудников типографии на указанную дату с учетом рабочего дня, буфера и отсечения прошедшего времени.",
+        InputSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                organizer_employee_id = new { type = "integer", description = "ID организатора" },
+                participant_employee_ids = new { type = "array", items = new { type = "integer" }, description = "ID участников" },
+                date = new { type = "string", description = "Дата в формате YYYY-MM-DD" },
+                duration_minutes = new { type = "integer", description = "Длительность встречи в минутах (по умолчанию 30)" },
+                working_start = new { type = "string", description = "Начало рабочего дня (09:00)" },
+                working_end = new { type = "string", description = "Конец рабочего дня (18:00)" },
+                buffer_minutes = new { type = "integer", description = "Буфер между встречами в минутах (10)" }
+            },
+            required = new[] { "date" }
+        }
+    },
+    new()
+    {
+        Name = "create_meeting",
+        Description = "Создает новую встречу со статусом 'scheduled' и эмулирует оповещения участников.",
+        InputSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                title = new { type = "string", description = "Тема встречи" },
+                description = new { type = "string", description = "Описание встречи" },
+                start_time = new { type = "string", description = "Время начала (ISO 8601)" },
+                end_time = new { type = "string", description = "Время окончания (ISO 8601)" },
+                organizer_id = new { type = "integer", description = "ID организатора" },
+                participant_ids = new { type = "array", items = new { type = "integer" }, description = "Список ID участников" }
+            },
+            required = new[] { "title", "start_time" }
+        }
+    },
+    new()
+    {
+        Name = "get_calendar_events",
+        Description = "Возвращает календарные события в заданном диапазоне дат (поддерживает scope=my и scope=all).",
+        InputSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                start_date = new { type = "string", description = "Дата начала диапазона" },
+                end_date = new { type = "string", description = "Дата окончания диапазона" },
+                employee_id = new { type = "integer", description = "Фильтр по ID сотрудника" },
+                scope = new { type = "string", description = "Область видимости: 'my' или 'all'" }
+            }
         }
     }
 };
@@ -190,6 +247,183 @@ app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meeti
     return Results.Ok(history);
 });
 
+// Tool 3: find_free_slots
+app.MapPost("/tools/find_free_slots", [RequirePermission("calendar:read_meetings")] async (FindFreeSlotsRequest req, IFotoprintRepository repo, CancellationToken ct) =>
+{
+    var mskZone = FotoprintRepository.GetMoscowTimeZone();
+    var nowMsk = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, mskZone);
+    var todayMsk = DateOnly.FromDateTime(nowMsk);
+
+    DateOnly targetDate;
+    if (!string.IsNullOrWhiteSpace(req.Date) && DateOnly.TryParse(req.Date, out var pd))
+    {
+        targetDate = pd;
+    }
+    else
+    {
+        targetDate = todayMsk;
+    }
+
+    var startWork = TimeOnly.TryParse(req.WorkingStart, out var ws) ? ws : new TimeOnly(9, 0);
+    var endWork = TimeOnly.TryParse(req.WorkingEnd, out var we) ? we : new TimeOnly(18, 0);
+    var duration = req.EffectiveDurationMinutes;
+    var buffer = req.BufferMinutes ?? 10;
+    var organizerId = req.EffectiveOrganizerId;
+    var participantIds = req.EffectiveParticipantIds;
+
+    var slots = await repo.FindFreeSlotsAsync(organizerId, participantIds, targetDate, duration, startWork, endWork, buffer, ct);
+
+    var isToday = targetDate == todayMsk;
+    var pastSlotsCutoff = nowMsk.ToString("HH:mm");
+
+    return Results.Ok(new
+    {
+        status = "success",
+        date = targetDate.ToString("yyyy-MM-dd"),
+        duration_minutes = duration,
+        available_slots = slots.Select(s => new
+        {
+            start_time = TimeZoneInfo.ConvertTimeFromUtc(s.StartTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
+            end_time = TimeZoneInfo.ConvertTimeFromUtc(s.EndTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
+            label = s.Label
+        }),
+        is_today = isToday,
+        past_slots_cutoff = pastSlotsCutoff,
+        has_free_slots = slots.Count > 0
+    });
+});
+
+// Tool 4: create_meeting
+app.MapPost("/tools/create_meeting", [RequirePermission("calendar:read_meetings")] async (CreateMeetingRequest req, IFotoprintRepository repo, CancellationToken ct) =>
+{
+    var mskZone = FotoprintRepository.GetMoscowTimeZone();
+    var startTimeUtc = req.EffectiveStartTime.Kind == DateTimeKind.Utc
+        ? req.EffectiveStartTime
+        : req.EffectiveStartTime.ToUniversalTime();
+
+    var endTimeUtc = req.EffectiveEndTime.HasValue
+        ? (req.EffectiveEndTime.Value.Kind == DateTimeKind.Utc ? req.EffectiveEndTime.Value : req.EffectiveEndTime.Value.ToUniversalTime())
+        : startTimeUtc.AddMinutes(30);
+
+    var organizerId = req.EffectiveOrganizerId ?? 1;
+    var participantIds = req.EffectiveParticipantIds;
+    var status = string.IsNullOrWhiteSpace(req.Status) ? "scheduled" : req.Status;
+
+    var metadata = new
+    {
+        notifications = new
+        {
+            status = "simulated",
+            channel = "Telegram & Bitrix24",
+            timestamp = DateTime.UtcNow.ToString("O"),
+            note = "⚠️ [Заглушка]: Оповещение участникам эмулировано для демонстрации трека хакатона"
+        }
+    };
+
+    var meetingId = await repo.CreateMeetingAsync(
+        title: string.IsNullOrWhiteSpace(req.Title) ? "Встреча" : req.Title,
+        description: req.Description,
+        startTime: startTimeUtc,
+        endTime: endTimeUtc,
+        status: status,
+        organizerId: organizerId,
+        participantIds: participantIds,
+        metadata: metadata,
+        ct: ct);
+
+    var allEmps = await repo.GetAllEmployeesAsync(ct);
+    var empDict = allEmps.ToDictionary(e => e.Id, e => e.FullName);
+
+    var organizerName = empDict.TryGetValue(organizerId, out var on) ? on : $"Сотрудник #{organizerId}";
+    var participantsList = participantIds.Select(pid => new
+    {
+        id = pid,
+        name = empDict.TryGetValue(pid, out var pn) ? pn : $"Сотрудник #{pid}"
+    }).ToList();
+
+    return Results.Ok(new
+    {
+        status = "success",
+        meeting_id = meetingId,
+        title = req.Title,
+        start_time = TimeZoneInfo.ConvertTimeFromUtc(startTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
+        end_time = TimeZoneInfo.ConvertTimeFromUtc(endTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
+        organizer = new { id = organizerId, name = organizerName },
+        participants = participantsList,
+        notification_dispatch = new
+        {
+            status = "simulated",
+            channels = new[] { "Telegram", "Bitrix24" },
+            recipient_ids = participantIds,
+            message = "⚠️ [Заглушка спринта]: Оповещение поставлено в очередь эмуляции Telegram/Bitrix24"
+        }
+    });
+});
+
+// Tool 5: get_calendar_events
+app.MapGet("/tools/get_calendar_events", [RequirePermission("calendar:read_meetings")] async (
+    DateTime? start_date,
+    DateTime? end_date,
+    int? employee_id,
+    string? scope,
+    HttpContext context,
+    IFotoprintRepository repo,
+    ISecurityValidator security) =>
+{
+    long callerTelegramId = 0;
+    if (context.Request.Headers.TryGetValue("X-Telegram-Id", out var h) && long.TryParse(h, out var hid))
+        callerTelegramId = hid;
+    else if (context.Request.Query.TryGetValue("telegram_id", out var q) && long.TryParse(q, out var qid))
+        callerTelegramId = qid;
+
+    EmployeeSecurityContext? caller = context.Items["SecurityContext"] as EmployeeSecurityContext;
+    if (caller == null && callerTelegramId != 0)
+    {
+        caller = await repo.GetEmployeeSecurityContextAsync(callerTelegramId);
+    }
+
+    var isDirectorOrAdmin = caller != null && (caller.Roles.Contains("Director") || caller.Roles.Contains("Admin"));
+
+    // Если запрошен режим "Вся компания", но пользователь не директор/админ
+    if (string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase) && !isDirectorOrAdmin)
+    {
+        return Results.Json(new
+        {
+            status = "forbidden",
+            message = "Просмотр расписания всей компании доступен только руководству (роль Director)"
+        }, statusCode: 403);
+    }
+
+    int? filterEmployeeId = string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase)
+        ? null
+        : (employee_id ?? (caller?.EmployeeId > 0 ? caller.EmployeeId : (int?)null));
+
+    var fromUtc = start_date ?? DateTime.UtcNow.Date;
+    var toUtc = end_date ?? fromUtc.AddDays(30);
+
+    var events = await repo.GetMeetingsForRangeAsync(fromUtc, toUtc, filterEmployeeId, context.RequestAborted);
+    var mskZone = FotoprintRepository.GetMoscowTimeZone();
+
+    var formattedEvents = events.Select(m => new
+    {
+        meeting_id = m.Id,
+        title = m.Title,
+        description = m.Description,
+        start_time = TimeZoneInfo.ConvertTimeFromUtc(m.StartTime, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
+        end_time = m.EndTime.HasValue ? TimeZoneInfo.ConvertTimeFromUtc(m.EndTime.Value, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz") : null,
+        status = m.Status,
+        organizer_id = m.OrganizerId,
+        participant_ids = m.ParticipantIds
+    }).ToList();
+
+    return Results.Ok(new
+    {
+        status = "success",
+        scope = scope ?? "my",
+        events = formattedEvents
+    });
+});
+
 // MCP tools call router
 app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepository repo, ISecurityValidator validator, ILangfuseClient langfuse, HttpContext ctx) =>
 {
@@ -247,6 +481,47 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
         });
     }
 
+    if (toolName == "find_free_slots")
+    {
+        var args = request.Params?.Arguments;
+        var dateStr = args?.GetValueOrDefault("date")?.ToString();
+        var duration = args != null && args.TryGetValue("duration_minutes", out var dObj) && int.TryParse(dObj?.ToString(), out var dv) ? dv : 30;
+        var orgId = args != null && args.TryGetValue("organizer_employee_id", out var oObj) && int.TryParse(oObj?.ToString(), out var ov) ? ov : 1;
+        var pIds = new List<int>();
+        if (args != null && args.TryGetValue("participant_employee_ids", out var pObj))
+        {
+            if (pObj is JsonElement pJe && pJe.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var el in pJe.EnumerateArray())
+                    if (el.TryGetInt32(out var idVal)) pIds.Add(idVal);
+            }
+        }
+
+        var mskZone = FotoprintRepository.GetMoscowTimeZone();
+        var nowMsk = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, mskZone);
+        var targetDate = !string.IsNullOrWhiteSpace(dateStr) && DateOnly.TryParse(dateStr, out var pd) ? pd : DateOnly.FromDateTime(nowMsk);
+
+        var slots = await repo.FindFreeSlotsAsync(orgId, pIds, targetDate, duration, ct: ctx.RequestAborted);
+        return Results.Ok(new McpJsonRpcResponse
+        {
+            Id = request.Id,
+            Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
+            {
+                status = "success",
+                date = targetDate.ToString("yyyy-MM-dd"),
+                duration_minutes = duration,
+                available_slots = slots.Select(s => new
+                {
+                    start_time = TimeZoneInfo.ConvertTimeFromUtc(s.StartTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
+                    end_time = TimeZoneInfo.ConvertTimeFromUtc(s.EndTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
+                    label = s.Label
+                }),
+                is_today = targetDate == DateOnly.FromDateTime(nowMsk),
+                has_free_slots = slots.Count > 0
+            }))
+        });
+    }
+
     return Results.BadRequest(new McpJsonRpcResponse
     {
         Id = request.Id,
@@ -255,3 +530,87 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
 });
 
 app.Run();
+
+public class FindFreeSlotsRequest
+{
+    [JsonPropertyName("organizer_employee_id")]
+    public int? OrganizerEmployeeId { get; set; }
+
+    [JsonPropertyName("organizer_id")]
+    public int? OrganizerId { get; set; }
+
+    [JsonPropertyName("organizerId")]
+    public int? OrganizerIdCamel { get; set; }
+
+    [JsonPropertyName("participant_employee_ids")]
+    public List<int>? ParticipantEmployeeIds { get; set; }
+
+    [JsonPropertyName("participant_ids")]
+    public List<int>? ParticipantIds { get; set; }
+
+    [JsonPropertyName("participantIds")]
+    public List<int>? ParticipantIdsCamel { get; set; }
+
+    [JsonPropertyName("date")]
+    public string? Date { get; set; }
+
+    [JsonPropertyName("duration_minutes")]
+    public int? DurationMinutes { get; set; }
+
+    [JsonPropertyName("durationMinutes")]
+    public int? DurationMinutesCamel { get; set; }
+
+    [JsonPropertyName("working_start")]
+    public string? WorkingStart { get; set; }
+
+    [JsonPropertyName("working_end")]
+    public string? WorkingEnd { get; set; }
+
+    [JsonPropertyName("buffer_minutes")]
+    public int? BufferMinutes { get; set; }
+
+    public int EffectiveOrganizerId => OrganizerEmployeeId ?? OrganizerId ?? OrganizerIdCamel ?? 1;
+    public List<int> EffectiveParticipantIds => ParticipantEmployeeIds ?? ParticipantIds ?? ParticipantIdsCamel ?? new List<int>();
+    public int EffectiveDurationMinutes => DurationMinutes ?? DurationMinutesCamel ?? 30;
+}
+
+public class CreateMeetingRequest
+{
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    [JsonPropertyName("start_time")]
+    public DateTime? StartTime { get; set; }
+
+    [JsonPropertyName("startTime")]
+    public DateTime? StartTimeCamel { get; set; }
+
+    [JsonPropertyName("end_time")]
+    public DateTime? EndTime { get; set; }
+
+    [JsonPropertyName("endTime")]
+    public DateTime? EndTimeCamel { get; set; }
+
+    [JsonPropertyName("organizer_id")]
+    public int? OrganizerId { get; set; }
+
+    [JsonPropertyName("organizerId")]
+    public int? OrganizerIdCamel { get; set; }
+
+    [JsonPropertyName("participant_ids")]
+    public List<int>? ParticipantIds { get; set; }
+
+    [JsonPropertyName("participantIds")]
+    public List<int>? ParticipantIdsCamel { get; set; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "scheduled";
+
+    public DateTime EffectiveStartTime => StartTime ?? StartTimeCamel ?? DateTime.UtcNow;
+    public DateTime? EffectiveEndTime => EndTime ?? EndTimeCamel;
+    public int? EffectiveOrganizerId => OrganizerId ?? OrganizerIdCamel;
+    public List<int> EffectiveParticipantIds => ParticipantIds ?? ParticipantIdsCamel ?? new List<int>();
+}

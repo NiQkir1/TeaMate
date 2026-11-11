@@ -359,7 +359,8 @@ services:
       Langfuse__BaseUrl: http://langfuse-web:3000
       Langfuse__PublicKey: ${LANGFUSE_PUBLIC_KEY:-pk-lf-fotoprint-local}
       Langfuse__SecretKey: ${LANGFUSE_SECRET_KEY:-sk-lf-fotoprint-local}
-    # Порты MCP закрыты от внешних сканеров, доступны только внутри fotoprint-net
+    ports:
+      - "127.0.0.1:8084:8084"
     networks:
       - fotoprint-net
 

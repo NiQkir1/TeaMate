@@ -30,6 +30,27 @@ public class FotoprintConfig
     public AgentConfig Agent { get; set; } = new();
     public ContextSwitchConfig ContextSwitch { get; set; } = new();
     public AudioConfig Audio { get; set; } = new();
+    public McpUrlsConfig McpUrls { get; set; } = new();
+    public CalendarConfig Calendar { get; set; } = new();
+}
+
+public class McpUrlsConfig
+{
+    public string? EmployeeReader { get; set; } = "http://localhost:8081";
+    public string? OneC { get; set; } = "http://localhost:8082";
+    public string? Bitrix24 { get; set; } = "http://localhost:8083";
+    public string? Calendar { get; set; } = "http://localhost:8084";
+}
+
+public class CalendarConfig
+{
+    public bool Enabled { get; set; } = true;
+    public string ServiceUrl { get; set; } = "http://localhost:8084";
+    public string Timezone { get; set; } = "Europe/Moscow";
+    public string WorkingHoursStart { get; set; } = "09:00";
+    public string WorkingHoursEnd { get; set; } = "18:00";
+    public int DefaultBufferMinutes { get; set; } = 10;
+    public int DefaultSlotDurationMinutes { get; set; } = 30;
 }
 
 public class AudioConfig

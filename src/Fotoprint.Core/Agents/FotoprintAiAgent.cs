@@ -30,7 +30,8 @@ public record AgentResponse(
     List<string> ToolsInvoked,
     int TotalLlmCalls,
     int TotalTokensUsed,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    object? ActionCard = null);
 
 public class FotoprintAiAgent : IFotoprintAgent
 {
@@ -71,6 +72,7 @@ public class FotoprintAiAgent : IFotoprintAgent
         var toolsInvoked = new List<string>();
         int llmCallsCount = 0;
         int totalTokens = 0;
+        object? capturedActionCard = null;
 
         // 1. Получаем контекст безопасности сотрудника (RBAC)
         // Fail-closed: при недоступности БД сотрудник остаётся в роли Guest (EmployeeId = 0), без повышенных привилегий.
@@ -95,7 +97,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             1. Заказы и тиражи (1С) -> вызови 'get_order_status'
             2. Производственные метрики, выработка, процент брака, загрузка машин (1С) -> вызови 'get_production_kpis'
             3. Задачи, поручения и CRM-сделки сотрудника (Битрикс24) -> вызови 'get_user_tasks', 'get_crm_deal_info' или создай задачу через 'create_task'
-            4. Расписание и история планерок/совещаний (Календарь) -> вызови 'get_upcoming_meetings' или 'get_meeting_history'
+            4. Расписание, подбор окон и история планерок/совещаний (Календарь) -> вызови 'find_free_slots' для подбора времени встречи, 'get_upcoming_meetings' или 'get_meeting_history'
             5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, правила внутреннего трудового распорядка, а также любые вопросы о том, какие документы/данные лежат в RAG (базе знаний) -> вызови 'search_typography_regulations'
 
             Если запрос требует данных из нескольких систем (например, заказ в 1С, задачи в Битрикс24 и встречи в календаре), вызывай все нужные инструменты сразу за один шаг.
@@ -220,7 +222,8 @@ public class FotoprintAiAgent : IFotoprintAgent
                     ToolsInvoked: toolsInvoked,
                     TotalLlmCalls: llmCallsCount,
                     TotalTokensUsed: totalTokens,
-                    ErrorMessage: turn.ErrorMessage);
+                    ErrorMessage: turn.ErrorMessage,
+                    ActionCard: capturedActionCard);
             }
 
             // Если модель дала финальный текстовый ответ без вызова инструмента (или достигнут лимит шагов):
@@ -266,6 +269,14 @@ public class FotoprintAiAgent : IFotoprintAgent
                 return (Call: fnCall, CallId: callId, Result: result, Start: startSpan, End: endSpan);
             });
             var execResults = await Task.WhenAll(execTasks);
+
+            foreach (var r in execResults)
+            {
+                if (r.Call.Name == "find_free_slots" && r.Result != null)
+                {
+                    capturedActionCard = await BuildSlotSelectionActionCardAsync(r.Call.Arguments, r.Result, ct);
+                }
+            }
 
             lastToolResult = execResults.Length == 1
                 ? execResults[0].Result
@@ -327,7 +338,8 @@ public class FotoprintAiAgent : IFotoprintAgent
                 ToolsInvoked: toolsInvoked,
                 TotalLlmCalls: llmCallsCount,
                 TotalTokensUsed: totalTokens,
-                ErrorMessage: null);
+                ErrorMessage: null,
+                ActionCard: capturedActionCard);
         }
 
         var finalText = finalAnswer ?? (lastToolResult != null ? JsonSerializer.Serialize(lastToolResult) : "Запрос обработан.");
@@ -361,7 +373,8 @@ public class FotoprintAiAgent : IFotoprintAgent
             ToolsInvoked: toolsInvoked,
             TotalLlmCalls: llmCallsCount,
             TotalTokensUsed: totalTokens,
-            ErrorMessage: lastTurn?.ErrorMessage);
+            ErrorMessage: lastTurn?.ErrorMessage,
+            ActionCard: capturedActionCard);
     }
 
     private HttpClient CreateMcpClient(long telegramId, string traceId)
@@ -480,16 +493,70 @@ public class FotoprintAiAgent : IFotoprintAgent
 
                 case "get_upcoming_meetings":
                 {
+                    var calendarBaseUrl = (_config.McpUrls?.Calendar ?? "http://localhost:8084").TrimEnd('/');
                     var windowMinutes = TryGetIntArg(arguments, "time_window_minutes") ?? 60;
-                    var url = $"http://mcp-calendar:8084/tools/get_upcoming_meetings?time_window_minutes={windowMinutes}";
+                    var url = $"{calendarBaseUrl}/tools/get_upcoming_meetings?time_window_minutes={windowMinutes}";
                     return await GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
                 }
 
                 case "get_meeting_history":
                 {
+                    var calendarBaseUrl = (_config.McpUrls?.Calendar ?? "http://localhost:8084").TrimEnd('/');
                     var keywords = TryGetStringArg(arguments, "topic_keywords") ?? "";
-                    var url = "http://mcp-calendar:8084/tools/get_meeting_history?topic_keywords=" + Uri.EscapeDataString(keywords);
+                    var url = $"{calendarBaseUrl}/tools/get_meeting_history?topic_keywords=" + Uri.EscapeDataString(keywords);
                     return await GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
+                }
+
+                case "find_free_slots":
+                {
+                    var calendarBaseUrl = (_config.McpUrls?.Calendar ?? "http://localhost:8084").TrimEnd('/');
+                    var orgId = TryGetIntArg(arguments, "organizer_employee_id") ?? defaultEmployeeId;
+                    var participantIds = new List<int>();
+                    if (arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("participant_employee_ids", out var pProp))
+                    {
+                        if (pProp.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var el in pProp.EnumerateArray())
+                                if (el.TryGetInt32(out var pVal)) participantIds.Add(pVal);
+                        }
+                        else if (pProp.ValueKind == JsonValueKind.Number && pProp.TryGetInt32(out var sVal))
+                        {
+                            participantIds.Add(sVal);
+                        }
+                    }
+                    if (participantIds.Count == 0 && arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("participant_ids", out var pProp2))
+                    {
+                        if (pProp2.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var el in pProp2.EnumerateArray())
+                                if (el.TryGetInt32(out var pVal)) participantIds.Add(pVal);
+                        }
+                        else if (pProp2.ValueKind == JsonValueKind.Number && pProp2.TryGetInt32(out var sVal))
+                        {
+                            participantIds.Add(sVal);
+                        }
+                    }
+
+                    var dateStr = TryGetStringArg(arguments, "date") ?? DateTime.UtcNow.ToString("yyyy-MM-dd");
+                    var duration = TryGetIntArg(arguments, "duration_minutes") ?? 30;
+
+                    var client = CreateMcpClient(telegramId, traceId);
+                    var res = await client.PostAsJsonAsync($"{calendarBaseUrl}/tools/find_free_slots", new
+                    {
+                        organizer_employee_id = orgId,
+                        participant_employee_ids = participantIds,
+                        date = dateStr,
+                        duration_minutes = duration,
+                        working_start = _config.Calendar.WorkingHoursStart ?? "09:00",
+                        working_end = _config.Calendar.WorkingHoursEnd ?? "18:00",
+                        buffer_minutes = _config.Calendar.DefaultBufferMinutes
+                    }, ct);
+
+                    if (res.IsSuccessStatusCode)
+                    {
+                        return await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+                    }
+                    return new { status = "error", message = $"MCP-Calendar вернул код {res.StatusCode}" };
                 }
 
                 case "search_typography_regulations":
@@ -625,6 +692,27 @@ public class FotoprintAiAgent : IFotoprintAgent
                 type = "function",
                 function = new
                 {
+                    name = "find_free_slots",
+                    description = "Ищет свободные временные слоты (окна) в календаре сотрудников типографии на указанную дату с учетом рабочего дня (09:00–18:00 МСК), 10-минутного буфера и отсечения прошедшего времени.",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            organizer_employee_id = new { type = "integer", description = "ID сотрудника-организатора (по умолчанию текущий пользователь)" },
+                            participant_employee_ids = new { type = "array", items = new { type = "integer" }, description = "Список ID сотрудников-участников встречи" },
+                            date = new { type = "string", description = "Целевая дата в формате YYYY-MM-DD" },
+                            duration_minutes = new { type = "integer", description = "Длительность встречи в минутах (по умолчанию 30)" }
+                        },
+                        required = new[] { "date" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
                     name = "get_upcoming_meetings",
                     description = "Возвращает список предстоящих совещаний, планерок, тем и участников из корпоративного календаря.",
                     parameters = new
@@ -674,6 +762,147 @@ public class FotoprintAiAgent : IFotoprintAgent
                 }
             }
         };
+    }
+
+    public async Task<object?> BuildSlotSelectionActionCardAsync(JsonElement arguments, object toolResult, CancellationToken ct)
+    {
+        try
+        {
+            int targetEmployeeId = 0;
+            if (arguments.ValueKind == JsonValueKind.Object)
+            {
+                if (arguments.TryGetProperty("participant_employee_ids", out var pProp))
+                {
+                    if (pProp.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in pProp.EnumerateArray())
+                        {
+                            if (el.TryGetInt32(out var pId))
+                            {
+                                targetEmployeeId = pId;
+                                break;
+                            }
+                        }
+                    }
+                    else if (pProp.ValueKind == JsonValueKind.Number && pProp.TryGetInt32(out var pNum))
+                    {
+                        targetEmployeeId = pNum;
+                    }
+                }
+
+                if (targetEmployeeId == 0 && arguments.TryGetProperty("participant_ids", out var pProp2))
+                {
+                    if (pProp2.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in pProp2.EnumerateArray())
+                        {
+                            if (el.TryGetInt32(out var pId))
+                            {
+                                targetEmployeeId = pId;
+                                break;
+                            }
+                        }
+                    }
+                    else if (pProp2.ValueKind == JsonValueKind.Number && pProp2.TryGetInt32(out var pNum))
+                    {
+                        targetEmployeeId = pNum;
+                    }
+                }
+            }
+
+            string targetPerson = "Сотрудник";
+            if (targetEmployeeId > 0)
+            {
+                var emp = await _repo.GetEmployeeByIdAsync(targetEmployeeId, ct);
+                targetPerson = emp?.FullName ?? $"Сотрудник #{targetEmployeeId}";
+            }
+
+            string targetDateStr = TryGetStringArg(arguments, "date") ?? DateTime.UtcNow.ToString("yyyy-MM-dd");
+            int durationMinutes = TryGetIntArg(arguments, "duration_minutes") ?? 30;
+
+            var slotDtos = new List<object>();
+
+            JsonElement root;
+            if (toolResult is JsonElement je)
+            {
+                root = je;
+            }
+            else
+            {
+                var serialized = JsonSerializer.Serialize(toolResult);
+                root = JsonSerializer.Deserialize<JsonElement>(serialized);
+            }
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("date", out var dProp) && dProp.ValueKind == JsonValueKind.String)
+                {
+                    targetDateStr = dProp.GetString() ?? targetDateStr;
+                }
+                if (root.TryGetProperty("duration_minutes", out var durProp) && durProp.TryGetInt32(out var dVal))
+                {
+                    durationMinutes = dVal;
+                }
+
+                if (root.TryGetProperty("available_slots", out var slotsArr) && slotsArr.ValueKind == JsonValueKind.Array)
+                {
+                    int idx = 1;
+                    foreach (var s in slotsArr.EnumerateArray())
+                    {
+                        var startIso = s.TryGetProperty("start_time", out var st) ? (st.GetString() ?? "") : "";
+                        var endIso = s.TryGetProperty("end_time", out var et) ? (et.GetString() ?? "") : "";
+                        var label = s.TryGetProperty("label", out var lb) ? (lb.GetString() ?? "") : "";
+
+                        string startTimeFormatted = "";
+                        string endTimeFormatted = "";
+                        if (DateTimeOffset.TryParse(startIso, out var parsedStart))
+                            startTimeFormatted = parsedStart.ToString("HH:mm");
+                        if (DateTimeOffset.TryParse(endIso, out var parsedEnd))
+                            endTimeFormatted = parsedEnd.ToString("HH:mm");
+
+                        if (string.IsNullOrEmpty(startTimeFormatted) && label.Contains('-'))
+                        {
+                            var parts = label.Split('-');
+                            startTimeFormatted = parts[0].Trim();
+                            endTimeFormatted = parts[1].Trim();
+                        }
+
+                        slotDtos.Add(new
+                        {
+                            id = $"slot_{idx++}",
+                            start = startTimeFormatted,
+                            end = endTimeFormatted,
+                            iso_start = startIso,
+                            iso_end = endIso
+                        });
+                    }
+                }
+            }
+
+            var durationButtons = new object[]
+            {
+                new { label = "⏱ 15 мин", minutes = 15, is_default = durationMinutes == 15 },
+                new { label = "⏱ 30 мин", minutes = 30, is_default = durationMinutes == 30 },
+                new { label = "⏱ 45 мин", minutes = 45, is_default = durationMinutes == 45 },
+                new { label = "⏱ 1 час", minutes = 60, is_default = durationMinutes == 60 }
+            };
+
+            return new
+            {
+                type = "slot_selection",
+                target_person = targetPerson,
+                target_employee_id = targetEmployeeId,
+                duration_minutes = durationMinutes,
+                date = targetDateStr,
+                slots = slotDtos,
+                duration_buttons = durationButtons
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[FotoprintAiAgent] Не удалось детерминированно сконструировать ActionCard");
+            return null;
+        }
     }
 }
 

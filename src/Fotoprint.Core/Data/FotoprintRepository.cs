@@ -9,53 +9,6 @@ using Pgvector.Dapper;
 
 namespace Fotoprint.Core.Data;
 
-public interface IFotoprintRepository
-{
-    // Employee & RBAC
-    Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default);
-    Task<EmployeeSecurityContext?> GetEmployeeSecurityContextByMasterIdAsync(long masterId, CancellationToken ct = default);
-    Task<long?> ResolveMasterIdByMessengerAsync(string messengerType, string messengerUserId, CancellationToken ct = default);
-    Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default);
-    Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default);
-
-    // Chat Sessions & Messages (MasterId & UUID SessionId)
-    Task<ChatSession> GetOrCreateActiveSessionByMasterIdAsync(long masterId, long messengerChatId, string messengerType = "telegram", CancellationToken ct = default);
-    Task<ChatSession> SwitchToNewSessionAsync(Guid currentSessionId, long masterId, long messengerChatId, string? newBranch = null, string messengerType = "telegram", CancellationToken ct = default);
-    Task<List<ChatMessage>> GetMessagesBySessionIdAsync(Guid sessionId, int limit = 20, CancellationToken ct = default);
-    Task SaveMessageToSessionAsync(Guid sessionId, long masterId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default);
-    Task<ChatSession> GetOrCreateSessionAsync(long telegramChatId, long? telegramUserId = null, CancellationToken ct = default);
-    Task SaveMessageAsync(Guid sessionId, string contextId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default);
-    Task<List<ChatMessage>> GetRecentMessagesAsync(Guid sessionId, int limit = 20, CancellationToken ct = default);
-    Task FreezeContextAsync(Guid sessionId, string contextId, CancellationToken ct = default);
-
-    // Corporate Documents & Chunks (RAG)
-    Task<Guid> SaveDocumentAsync(string title, string sourceType, string? filePath, string? department, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default);
-    Task SaveDocumentChunksAsync(Guid documentId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, CancellationToken ct = default);
-    Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default);
-    Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default);
-
-    // Meetings, Notes, Protocols, Action Items
-    Task<Guid> CreateMeetingAsync(
-        string title,
-        string? description,
-        DateTime startTime,
-        DateTime? endTime = null,
-        string status = "completed",
-        int? organizerId = null,
-        List<int>? participantIds = null,
-        CancellationToken ct = default);
-    Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default);
-    Task<Meeting?> GetMeetingByIdAsync(Guid meetingId, CancellationToken ct = default);
-    Task<List<MeetingNote>> GetMeetingNotesAsync(Guid meetingId, CancellationToken ct = default);
-    Task SaveMeetingNoteAsync(Guid meetingId, int? authorId, string noteText, string category = "general", CancellationToken ct = default);
-    Task<Guid> SaveMeetingProtocolAsync(Guid meetingId, string title, string summary, List<string> decisions, string? rawTranscript = null, string? docxPath = null, string? pdfPath = null, CancellationToken ct = default);
-    Task<MeetingProtocol?> GetMeetingProtocolAsync(Guid meetingId, CancellationToken ct = default);
-    Task<Guid> CreateActionItemAsync(Guid meetingId, Guid? protocolId, string title, string? description, int? responsibleId, DateTime? deadline, CancellationToken ct = default);
-    Task<List<ActionItem>> GetActionItemsByMeetingAsync(Guid meetingId, CancellationToken ct = default);
-    Task<List<ActionItem>> GetActionItemsByResponsibleAsync(int employeeId, string? statusFilter = null, CancellationToken ct = default);
-    Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default);
-}
-
 public class FotoprintRepository : IFotoprintRepository
 {
     private readonly string _connectionString;
@@ -64,6 +17,42 @@ public class FotoprintRepository : IFotoprintRepository
     {
         DefaultTypeMap.MatchNamesWithUnderscores = true;
         SqlMapper.AddTypeHandler(new VectorTypeHandler());
+        SqlMapper.AddTypeHandler(new JsonListIntTypeHandler());
+        SqlMapper.AddTypeHandler(new JsonListStringTypeHandler());
+    }
+
+    private class JsonListIntTypeHandler : SqlMapper.TypeHandler<List<int>>
+    {
+        public override void SetValue(IDbDataParameter parameter, List<int>? value)
+        {
+            parameter.Value = value == null ? DBNull.Value : JsonSerializer.Serialize(value);
+        }
+
+        public override List<int> Parse(object value)
+        {
+            if (value == null || value is DBNull) return new List<int>();
+            var s = value.ToString();
+            if (string.IsNullOrWhiteSpace(s)) return new List<int>();
+            try { return JsonSerializer.Deserialize<List<int>>(s) ?? new List<int>(); }
+            catch { return new List<int>(); }
+        }
+    }
+
+    private class JsonListStringTypeHandler : SqlMapper.TypeHandler<List<string>>
+    {
+        public override void SetValue(IDbDataParameter parameter, List<string>? value)
+        {
+            parameter.Value = value == null ? DBNull.Value : JsonSerializer.Serialize(value);
+        }
+
+        public override List<string> Parse(object value)
+        {
+            if (value == null || value is DBNull) return new List<string>();
+            var s = value.ToString();
+            if (string.IsNullOrWhiteSpace(s)) return new List<string>();
+            try { return JsonSerializer.Deserialize<List<string>>(s) ?? new List<string>(); }
+            catch { return new List<string>(); }
+        }
     }
 
     public FotoprintRepository(string connectionString)
@@ -666,13 +655,15 @@ public class FotoprintRepository : IFotoprintRepository
         string status = "completed",
         int? organizerId = null,
         List<int>? participantIds = null,
+        object? metadata = null,
         CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
         var participantsJson = JsonSerializer.Serialize(participantIds ?? new List<int>());
+        var metadataJson = JsonSerializer.Serialize(metadata ?? new { });
         const string sql = """
-            INSERT INTO meetings (title, description, start_time, end_time, status, organizer_id, participant_ids)
-            VALUES (@Title, @Description, @StartTime, @EndTime, @Status, @OrganizerId, @Participants::jsonb)
+            INSERT INTO meetings (title, description, start_time, end_time, status, organizer_id, participant_ids, metadata)
+            VALUES (@Title, @Description, @StartTime, @EndTime, @Status, @OrganizerId, @Participants::jsonb, @Metadata::jsonb)
             RETURNING id;
         """;
         return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
@@ -683,8 +674,190 @@ public class FotoprintRepository : IFotoprintRepository
             EndTime = endTime,
             Status = status,
             OrganizerId = organizerId,
-            Participants = participantsJson
+            Participants = participantsJson,
+            Metadata = metadataJson
         }, cancellationToken: ct));
+    }
+
+    public static TimeZoneInfo GetMoscowTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("Europe/Moscow");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById("Russian Standard Time");
+            }
+            catch
+            {
+                return TimeZoneInfo.CreateCustomTimeZone("MSK", TimeSpan.FromHours(3), "Moscow Standard Time", "Moscow Standard Time");
+            }
+        }
+    }
+
+    public async Task<List<Meeting>> GetMeetingsForRangeAsync(
+        DateTime fromUtc,
+        DateTime toUtc,
+        int? employeeId = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var sql = """
+            SELECT * FROM meetings
+            WHERE status != 'cancelled'
+              AND start_time < @ToUtc
+              AND COALESCE(end_time, start_time + INTERVAL '30 minutes') > @FromUtc
+        """;
+
+        if (employeeId.HasValue)
+        {
+            sql += """
+              AND (
+                organizer_id = @EmployeeId
+                OR (participant_ids IS NOT NULL AND participant_ids @> @EmpJson::jsonb)
+              )
+            """;
+        }
+
+        sql += " ORDER BY start_time ASC;";
+
+        var meetings = await conn.QueryAsync<Meeting>(new CommandDefinition(sql, new
+        {
+            FromUtc = fromUtc,
+            ToUtc = toUtc,
+            EmployeeId = employeeId,
+            EmpJson = employeeId.HasValue ? $"[{employeeId.Value}]" : null
+        }, cancellationToken: ct));
+
+        return meetings.ToList();
+    }
+
+    public static List<TimeSlot> CalculateFreeSlots(
+        IEnumerable<Meeting> existingMeetings,
+        DateOnly targetDate,
+        int durationMinutes,
+        TimeOnly startWork,
+        TimeOnly endWork,
+        int bufferMinutes,
+        DateTime nowUtc)
+    {
+        if (durationMinutes <= 0) durationMinutes = 30;
+        if (bufferMinutes < 0) bufferMinutes = 10;
+
+        var mskZone = GetMoscowTimeZone();
+        var nowMsk = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, mskZone);
+        var todayMsk = DateOnly.FromDateTime(nowMsk);
+        var currentMskTime = TimeOnly.FromDateTime(nowMsk);
+
+        var effectiveStart = startWork;
+        if (targetDate < todayMsk)
+        {
+            return new List<TimeSlot>();
+        }
+
+        if (targetDate == todayMsk)
+        {
+            var earliestPossible = currentMskTime.AddMinutes(5);
+            if (earliestPossible > effectiveStart)
+            {
+                effectiveStart = earliestPossible;
+            }
+        }
+
+        if (effectiveStart >= endWork)
+        {
+            return new List<TimeSlot>();
+        }
+
+        var stepMinutes = Math.Min(30, durationMinutes);
+        var availableSlots = new List<TimeSlot>();
+
+        var roundedMinute = (effectiveStart.Minute / stepMinutes + (effectiveStart.Minute % stepMinutes == 0 ? 0 : 1)) * stepMinutes;
+        var cursor = new TimeOnly(effectiveStart.Hour, 0).AddMinutes(roundedMinute);
+        if (cursor < effectiveStart) cursor = cursor.AddMinutes(stepMinutes);
+        if (cursor < startWork) cursor = startWork;
+
+        var meetingsList = existingMeetings.ToList();
+
+        while (cursor >= startWork && cursor.AddMinutes(durationMinutes) <= endWork && cursor.AddMinutes(durationMinutes) > cursor)
+        {
+            var slotStartMsk = targetDate.ToDateTime(cursor);
+            var slotEndMsk = slotStartMsk.AddMinutes(durationMinutes);
+
+            var slotStartUtc = TimeZoneInfo.ConvertTimeToUtc(slotStartMsk, mskZone);
+            var slotEndUtc = TimeZoneInfo.ConvertTimeToUtc(slotEndMsk, mskZone);
+
+            var hasConflict = meetingsList.Any(m =>
+            {
+                var meetingStart = m.StartTime;
+                var meetingEnd = m.EndTime ?? m.StartTime.AddMinutes(30);
+                return slotStartUtc < meetingEnd.AddMinutes(bufferMinutes) &&
+                       slotEndUtc > meetingStart.AddMinutes(-bufferMinutes);
+            });
+
+            if (!hasConflict)
+            {
+                availableSlots.Add(new TimeSlot
+                {
+                    StartTimeUtc = slotStartUtc,
+                    EndTimeUtc = slotEndUtc,
+                    Label = $"{cursor:HH\\:mm} - {cursor.AddMinutes(durationMinutes):HH\\:mm}"
+                });
+            }
+
+            var nextCursor = cursor.AddMinutes(stepMinutes);
+            if (nextCursor <= cursor) break;
+            cursor = nextCursor;
+        }
+
+        return availableSlots;
+    }
+
+    public async Task<List<TimeSlot>> FindFreeSlotsAsync(
+        int organizerId,
+        List<int> participantIds,
+        DateOnly targetDate,
+        int durationMinutes,
+        TimeOnly? workingStart = null,
+        TimeOnly? workingEnd = null,
+        int bufferMinutes = 10,
+        CancellationToken ct = default)
+    {
+        var startWork = workingStart ?? new TimeOnly(9, 0);
+        var endWork = workingEnd ?? new TimeOnly(18, 0);
+
+        var mskZone = GetMoscowTimeZone();
+        var dayStartUtc = TimeZoneInfo.ConvertTimeToUtc(targetDate.ToDateTime(startWork), mskZone);
+        var dayEndUtc = TimeZoneInfo.ConvertTimeToUtc(targetDate.ToDateTime(endWork), mskZone);
+
+        var allEmployeeIds = participantIds.Concat(new[] { organizerId }).Distinct().ToArray();
+
+        await using var conn = await CreateConnectionAsync(ct);
+        const string querySql = """
+            SELECT * FROM meetings
+            WHERE status != 'cancelled'
+              AND start_time < @DayEndUtc
+              AND COALESCE(end_time, start_time + INTERVAL '30 minutes') > @DayStartUtc
+              AND (
+                organizer_id = ANY(@EmployeeIds)
+                OR EXISTS (
+                  SELECT 1 FROM jsonb_array_elements_text(COALESCE(participant_ids, '[]'::jsonb)) p
+                  WHERE p ~ '^[0-9]+$' AND p::int = ANY(@EmployeeIds)
+                )
+              );
+        """;
+
+        var existingMeetings = (await conn.QueryAsync<Meeting>(new CommandDefinition(querySql, new
+        {
+            DayStartUtc = dayStartUtc,
+            DayEndUtc = dayEndUtc,
+            EmployeeIds = allEmployeeIds
+        }, cancellationToken: ct))).ToList();
+
+        return CalculateFreeSlots(existingMeetings, targetDate, durationMinutes, startWork, endWork, bufferMinutes, DateTime.UtcNow);
     }
 
     public async Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default)

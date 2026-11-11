@@ -56,6 +56,18 @@ public class FotoprintConfigTests
         Assert.Equal(1800, config.Audio.Engine.TimeoutSeconds);
         Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
+
+        // 9. Проверка параметров MCP URLs и Календаря (Calendar & McpUrls)
+        Assert.NotNull(config.McpUrls);
+        Assert.Equal("http://mcp-calendar:8084", config.McpUrls.Calendar);
+        Assert.NotNull(config.Calendar);
+        Assert.True(config.Calendar.Enabled);
+        Assert.Equal("http://mcp-calendar:8084", config.Calendar.ServiceUrl);
+        Assert.Equal("Europe/Moscow", config.Calendar.Timezone);
+        Assert.Equal("09:00", config.Calendar.WorkingHoursStart);
+        Assert.Equal("18:00", config.Calendar.WorkingHoursEnd);
+        Assert.Equal(10, config.Calendar.DefaultBufferMinutes);
+        Assert.Equal(30, config.Calendar.DefaultSlotDurationMinutes);
     }
 
     [Fact]
@@ -78,5 +90,10 @@ public class FotoprintConfigTests
         Assert.Equal(1800, config.Audio.Engine.TimeoutSeconds);
         Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
+        Assert.NotNull(config.McpUrls);
+        Assert.Equal("http://localhost:8084", config.McpUrls.Calendar);
+        Assert.NotNull(config.Calendar);
+        Assert.True(config.Calendar.Enabled);
+        Assert.Equal("http://localhost:8084", config.Calendar.ServiceUrl);
     }
 }
