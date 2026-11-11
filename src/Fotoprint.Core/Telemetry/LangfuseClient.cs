@@ -19,6 +19,17 @@ public interface ILangfuseClient
         string[]? tags = null,
         CancellationToken ct = default);
 
+    Task CreateTraceAsync(
+        string traceId,
+        string name,
+        string? userId,
+        string? sessionId,
+        object? metadata,
+        string[]? tags,
+        object? input,
+        object? output = null,
+        CancellationToken ct = default) => CreateTraceAsync(traceId, name, userId, sessionId, metadata, tags, ct);
+
     Task CreateSpanAsync(
         string traceId,
         string name,
@@ -119,7 +130,7 @@ public class LangfuseClient : ILangfuseClient
         return Math.Round(promptCost + completionCost + cachedCost, 6);
     }
 
-    public async Task CreateTraceAsync(
+    public Task CreateTraceAsync(
         string traceId,
         string name,
         string? userId = null,
@@ -127,8 +138,33 @@ public class LangfuseClient : ILangfuseClient
         object? metadata = null,
         string[]? tags = null,
         CancellationToken ct = default)
+        => CreateTraceAsync(traceId, name, userId, sessionId, metadata, tags, input: null, output: null, ct: ct);
+
+    public async Task CreateTraceAsync(
+        string traceId,
+        string name,
+        string? userId,
+        string? sessionId,
+        object? metadata,
+        string[]? tags,
+        object? input,
+        object? output = null,
+        CancellationToken ct = default)
     {
         if (!_options.Enabled) return;
+
+        var bodyDict = new Dictionary<string, object?>
+        {
+            ["id"] = traceId,
+            ["name"] = name,
+            ["userId"] = userId,
+            ["sessionId"] = sessionId,
+            ["metadata"] = metadata,
+            ["tags"] = tags ?? Array.Empty<string>()
+        };
+
+        if (input != null) bodyDict["input"] = input;
+        if (output != null) bodyDict["output"] = output;
 
         var payload = new
         {
@@ -139,15 +175,7 @@ public class LangfuseClient : ILangfuseClient
                     id = Guid.NewGuid().ToString("N"),
                     type = "trace-create",
                     timestamp = DateTime.UtcNow.ToString("O"),
-                    body = new
-                    {
-                        id = traceId,
-                        name = name,
-                        userId = userId,
-                        sessionId = sessionId,
-                        metadata = metadata,
-                        tags = tags ?? Array.Empty<string>()
-                    }
+                    body = bodyDict
                 }
             }
         };
@@ -240,13 +268,16 @@ public class LangfuseClient : ILangfuseClient
         if (!_options.Enabled) return;
 
         var id = generationId ?? GenerateObservationId();
+        var promptCost = Math.Round((promptTokens / 1000.0) * _options.PromptTokenCostPer1k, 6);
+        var completionCost = Math.Round((completionTokens / 1000.0) * _options.CompletionTokenCostPer1k, 6);
         var cost = calculatedCost ?? CalculateCost(promptTokens, completionTokens, cachedTokens);
         var latencyMs = Math.Max(1, (endTime - startTime).TotalMilliseconds);
 
         var enrichedMeta = new Dictionary<string, object>
         {
             ["latency_ms"] = Math.Round(latencyMs, 2),
-            ["cached_tokens"] = cachedTokens
+            ["cached_tokens"] = cachedTokens,
+            ["calculated_cost_usd"] = cost
         };
 
         if (metadata != null)
@@ -285,11 +316,26 @@ public class LangfuseClient : ILangfuseClient
                         parentObservationId = parentObservationId,
                         usage = new
                         {
-                            promptTokens = promptTokens,
-                            completionTokens = completionTokens,
-                            totalTokens = totalTokens
+                            input = promptTokens,
+                            output = completionTokens,
+                            total = totalTokens,
+                            unit = "TOKENS",
+                            inputCost = promptCost,
+                            outputCost = completionCost,
+                            totalCost = cost
                         },
-                        calculatedTotalCost = cost,
+                        usageDetails = new
+                        {
+                            input = promptTokens,
+                            output = completionTokens,
+                            total = totalTokens
+                        },
+                        costDetails = new
+                        {
+                            input = promptCost,
+                            output = completionCost,
+                            total = cost
+                        },
                         metadata = enrichedMeta
                     }
                 }
@@ -309,6 +355,15 @@ public class LangfuseClient : ILangfuseClient
     {
         if (!_options.Enabled) return;
 
+        // Langfuse v3 ObservationLevel поддерживает только: DEBUG | DEFAULT | WARNING | ERROR
+        var normalizedLevel = level?.Trim().ToUpperInvariant() switch
+        {
+            "DEBUG" => "DEBUG",
+            "WARNING" or "WARN" => "WARNING",
+            "ERROR" or "CRITICAL" or "FATAL" => "ERROR",
+            _ => "DEFAULT"
+        };
+
         var payload = new
         {
             batch = new object[]
@@ -323,7 +378,7 @@ public class LangfuseClient : ILangfuseClient
                         id = Guid.NewGuid().ToString("N"),
                         traceId = traceId,
                         name = name,
-                        level = level,
+                        level = normalizedLevel,
                         statusMessage = message,
                         metadata = metadata
                     }

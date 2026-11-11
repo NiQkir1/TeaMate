@@ -55,9 +55,9 @@ public class GeminiAudioConfig
 public class ContextSwitchConfig
 {
     public bool Enabled { get; set; } = true;
-    public int MaxHistoryMessages { get; set; } = 5;
+    public int MaxHistoryMessages { get; set; } = 10;
     public double Temperature { get; set; } = 0.0;
-    public int MaxOutputTokens { get; set; } = 256;
+    public int MaxOutputTokens { get; set; } = 1024;
     public bool AutoFreezeOnSwitch { get; set; } = true;
 }
 

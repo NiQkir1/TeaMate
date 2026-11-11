@@ -139,11 +139,164 @@ public class GeminiClientTests
         Assert.Contains("nvidia/nemotron-3.5-super-vl-120b-a12b", openAiHandler.CapturedRequestBody);
     }
 
+    [Fact]
+    public async Task NvidiaClient_Serializes_Tool_Result_Objects_And_Arrays_Without_Crashing()
+    {
+        var openAiHandler = new FakeOpenAiMessageHandler();
+        var httpClient = new HttpClient(openAiHandler);
+
+        var config = new FotoprintConfig();
+        config.Llm.Provider = "nvidia";
+        config.Llm.Proxy.BaseUrl = "https://integrate.api.nvidia.com/v1";
+        config.Llm.Proxy.ApiKeyEnvVar = "NVIDIA_TEST_KEY";
+        Environment.SetEnvironmentVariable("NVIDIA_TEST_KEY", "nvapi-test-token-123");
+
+        var lb = new LlmLoadBalancer(new LoadBalancerOptions { MaxConcurrentRequests = 5, MaxRequestsPerMinute = 60, MinIntervalBetweenRequestsMs = 1 });
+        var rollback = new RollbackManager();
+        var client = new GeminiClient(httpClient, config, lb, rollback);
+
+        var objResult = JsonSerializer.SerializeToElement(new { order_id = "ЗК-44102", readiness_percent = 65 });
+        var arrResult = JsonSerializer.SerializeToElement(new[] { new { title = "Планерка" } });
+
+        var contents = new List<object>
+        {
+            new { role = "user", content = "Статус заказа и планерки?" },
+            new
+            {
+                role = "assistant",
+                content = "",
+                tool_calls = new object[]
+                {
+                    new { id = "call_1", type = "function", function = new { name = "get_order_status", arguments = "{\"order_id\":\"44102\"}" } }
+                }
+            },
+            new { role = "tool", tool_call_id = "call_1", name = "get_order_status", content = objResult },
+            new { role = "tool", tool_call_id = "call_2", name = "get_upcoming_meetings", content = arrResult }
+        };
+
+        var res = await client.ChatTurnAsync(contents);
+
+        Assert.True(res.IsSuccess);
+        Assert.NotNull(openAiHandler.CapturedRequestBody);
+        using var doc = JsonDocument.Parse(openAiHandler.CapturedRequestBody!);
+        var msgs = doc.RootElement.GetProperty("messages");
+        Assert.Equal(4, msgs.GetArrayLength());
+
+        var toolMsgObj = msgs[2];
+        Assert.Equal("tool", toolMsgObj.GetProperty("role").GetString());
+        Assert.Equal("call_1", toolMsgObj.GetProperty("tool_call_id").GetString());
+        Assert.Equal("get_order_status", toolMsgObj.GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.String, toolMsgObj.GetProperty("content").ValueKind);
+
+        var toolMsgArr = msgs[3];
+        Assert.Equal("tool", toolMsgArr.GetProperty("role").GetString());
+        Assert.Equal("call_2", toolMsgArr.GetProperty("tool_call_id").GetString());
+        Assert.Equal("get_upcoming_meetings", toolMsgArr.GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.String, toolMsgArr.GetProperty("content").ValueKind);
+    }
+
+    [Fact]
+    public async Task ChatTurnAsync_Parses_Multiple_ToolCalls_And_NoThinking_Sets_False()
+    {
+        var openAiHandler = new FakeOpenAiMessageHandler
+        {
+            CustomResponseJson = new
+            {
+                choices = new[]
+                {
+                    new
+                    {
+                        message = new
+                        {
+                            role = "assistant",
+                            content = "",
+                            tool_calls = new[]
+                            {
+                                new { id = "call_1", type = "function", function = new { name = "get_order_status", arguments = "{\"order_id\":\"44102\"}" } },
+                                new { id = "call_2", type = "function", function = new { name = "get_upcoming_meetings", arguments = "{}" } }
+                            }
+                        },
+                        finish_reason = "tool_calls"
+                    }
+                },
+                usage = new { prompt_tokens = 30, completion_tokens = 20, total_tokens = 50 }
+            }
+        };
+        var httpClient = new HttpClient(openAiHandler);
+        var config = new FotoprintConfig();
+        config.Llm.RateLimits.Rpm = 60;
+        config.LoadBalancer.MinIntervalBetweenRequestsMs = 0;
+
+        var lb = new LlmLoadBalancer(new LoadBalancerOptions { MaxRequestsPerMinute = 60, MinIntervalBetweenRequestsMs = 0 });
+        var rollback = new RollbackManager();
+        var client = new GeminiClient(httpClient, config, lb, rollback);
+
+        var res = await client.ChatTurnAsync(new List<object> { new { role = "user", content = "Заказ и встречи" } });
+        Assert.True(res.IsSuccess);
+        Assert.NotNull(res.FunctionCalls);
+        Assert.Equal(2, res.FunctionCalls!.Count);
+        Assert.Equal("call_1", res.FunctionCalls[0].CallId);
+        Assert.Equal("get_order_status", res.FunctionCalls[0].Name);
+        Assert.Equal("call_2", res.FunctionCalls[1].CallId);
+        Assert.Equal("get_upcoming_meetings", res.FunctionCalls[1].Name);
+
+        await client.GenerateJsonNoThinkingAsync("Classify");
+        using var reqDoc = JsonDocument.Parse(openAiHandler.CapturedRequestBody!);
+        Assert.False(reqDoc.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ChatTurnAsync_Parses_Sse_Stream_Content_And_ToolCalls()
+    {
+        var sseBody = """
+            data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Статус "},"finish_reason":null}]}
+
+            data: {"choices":[{"index":0,"delta":{"content":"готов."},"finish_reason":null}]}
+
+            data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"get_order","arguments":"{\"id\":"}}]},"finish_reason":null}]}
+
+            data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"_status","arguments":"\"44102\"}"}},{"index":1,"id":"c2","function":{"name":"get_user_tasks","arguments":"{}"}}]},"finish_reason":null}]}
+
+            data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+            data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":40,"total_tokens":140}}
+
+            data: [DONE]
+            """;
+
+        var openAiHandler = new FakeOpenAiMessageHandler { CustomSseBody = sseBody };
+        var httpClient = new HttpClient(openAiHandler);
+        var config = new FotoprintConfig();
+        config.LoadBalancer.MinIntervalBetweenRequestsMs = 0;
+
+        var client = new GeminiClient(
+            httpClient,
+            config,
+            new LlmLoadBalancer(new LoadBalancerOptions { MaxRequestsPerMinute = 60, MinIntervalBetweenRequestsMs = 0 }),
+            new RollbackManager());
+
+        var res = await client.ChatTurnAsync(new List<object> { new { role = "user", content = "test" } });
+
+        Assert.True(res.IsSuccess);
+        Assert.Equal("Статус готов.", res.Text);
+        Assert.Equal("tool_calls", res.FinishReason);
+        Assert.Equal(140, res.TotalTokens);
+        Assert.NotNull(res.FunctionCalls);
+        Assert.Equal(2, res.FunctionCalls!.Count);
+        Assert.Equal("c1", res.FunctionCalls[0].CallId);
+        Assert.Equal("get_order_status", res.FunctionCalls[0].Name);
+        Assert.Equal("44102", res.FunctionCalls[0].Arguments.GetProperty("id").GetString());
+        Assert.Equal("c2", res.FunctionCalls[1].CallId);
+        Assert.Equal("get_user_tasks", res.FunctionCalls[1].Name);
+    }
+
     private class FakeOpenAiMessageHandler : HttpMessageHandler
     {
         public string? CapturedAuthHeader { get; private set; }
         public string? CapturedRequestUri { get; private set; }
         public string? CapturedRequestBody { get; private set; }
+        public object? CustomResponseJson { get; set; }
+        public string? CustomSseBody { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -154,7 +307,15 @@ public class GeminiClientTests
                 CapturedRequestBody = await request.Content.ReadAsStringAsync(cancellationToken);
             }
 
-            var responseJson = new
+            if (CustomSseBody != null)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CustomSseBody, System.Text.Encoding.UTF8, "text/event-stream")
+                };
+            }
+
+            var responseJson = CustomResponseJson ?? new
             {
                 choices = new[]
                 {

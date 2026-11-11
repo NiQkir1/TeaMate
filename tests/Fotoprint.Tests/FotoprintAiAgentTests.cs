@@ -17,6 +17,8 @@ public class FotoprintAiAgentTests
     {
         private int _callStep = 0;
         private readonly bool _triggerTool;
+        public string? LastSystemInstruction { get; private set; }
+        public List<object>? LastContents { get; private set; }
 
         public FakeGeminiClient(bool triggerTool = true)
         {
@@ -31,6 +33,8 @@ public class FotoprintAiAgentTests
         public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
         {
             _callStep++;
+            LastSystemInstruction = systemInstruction;
+            LastContents = contents;
 
             if (!_triggerTool)
             {
@@ -90,7 +94,6 @@ public class FotoprintAiAgentTests
         {
             _throwOnSecurityContext = throwOnSecurityContext;
         }
-
         public Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default)
         {
             if (_throwOnSecurityContext)
@@ -150,8 +153,8 @@ public class FotoprintAiAgentTests
         public Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
         public Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
         public Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default) => Task.FromResult(new List<Meeting>());
-        public Task<Meeting?> GetMeetingByIdAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult<Meeting?>(null);
         public Task<Guid> CreateMeetingAsync(string title, string? description, DateTime startTime, DateTime? endTime = null, string status = "completed", int? organizerId = null, List<int>? participantIds = null, CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
+        public Task<Meeting?> GetMeetingByIdAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult<Meeting?>(null);
         public Task<List<MeetingNote>> GetMeetingNotesAsync(Guid meetingId, CancellationToken ct = default) => Task.FromResult(new List<MeetingNote>());
         public Task SaveMeetingNoteAsync(Guid meetingId, int? authorId, string noteText, string category = "general", CancellationToken ct = default) => Task.CompletedTask;
         public Task<Guid> SaveMeetingProtocolAsync(Guid meetingId, string title, string summary, List<string> decisions, string? rawTranscript = null, string? docxPath = null, string? pdfPath = null, CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
@@ -170,7 +173,6 @@ public class FotoprintAiAgentTests
         {
             _simulateNetworkError = simulateNetworkError;
         }
-
         public HttpClient CreateClient(string name)
         {
             var handler = new FakeHttpHandler(_simulateNetworkError);
@@ -185,7 +187,6 @@ public class FotoprintAiAgentTests
             {
                 _simulateNetworkError = simulateNetworkError;
             }
-
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
                 if (_simulateNetworkError)
@@ -254,6 +255,51 @@ public class FotoprintAiAgentTests
     }
 
     [Fact]
+    public async Task Agent_Executes_Multiple_ToolCalls_In_Single_Turn()
+    {
+        var gemini = new BatchToolFakeGeminiClient();
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+        var res = await agent.ProcessMessageAsync(100001, 55555, "Заказ 44102, задачи и встречи");
+
+        Assert.True(res.IsSuccess);
+        Assert.Equal(2, res.TotalLlmCalls);
+        Assert.Equal(3, res.ToolsInvoked.Count);
+        Assert.Contains("get_order_status", res.ToolsInvoked);
+        Assert.Contains("get_user_tasks", res.ToolsInvoked);
+        Assert.Contains("get_upcoming_meetings", res.ToolsInvoked);
+        Assert.Contains("Сводка по всем 3 системам", res.AnswerText);
+    }
+
+    private class BatchToolFakeGeminiClient : IGeminiClient
+    {
+        private int _step;
+        public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => Task.FromResult(new GeminiGenerateResponse(true, "ok", "STOP", 1, 1, 2, 1, null));
+
+        public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            _step++;
+            if (_step == 1)
+            {
+                var calls = new List<GeminiFunctionCall>
+                {
+                    new("get_order_status", JsonSerializer.SerializeToElement(new { order_id = "44102" }), "c1"),
+                    new("get_user_tasks", JsonSerializer.SerializeToElement(new { employee_id = 1 }), "c2"),
+                    new("get_upcoming_meetings", JsonSerializer.SerializeToElement(new { hours_ahead = 24 }), "c3")
+                };
+                return Task.FromResult(new GeminiTurnResponse(true, null, calls[0], "tool_calls", 50, 20, 70, 1, null, calls));
+            }
+            return Task.FromResult(new GeminiTurnResponse(true, "Сводка по всем 3 системам готова.", null, "stop", 100, 30, 130, 1, null));
+        }
+
+        public GeminiCallStats GetStats() => new(1, 1, 60, 59, 1.0, DateTime.UtcNow, 0);
+    }
+
+    [Fact]
     public async Task Agent_Gracefully_Falls_Back_When_Database_Is_Offline()
     {
         var gemini = new FakeGeminiClient(triggerTool: false);
@@ -270,6 +316,12 @@ public class FotoprintAiAgentTests
 
         Assert.True(res.IsSuccess);
         Assert.NotNull(res.AnswerText);
+        Assert.NotNull(gemini.LastSystemInstruction);
+        Assert.Contains("Роли: [Guest]", gemini.LastSystemInstruction);
+        Assert.Contains("ID сотрудника: 0", gemini.LastSystemInstruction);
+        Assert.DoesNotContain("admin", gemini.LastSystemInstruction, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Director", gemini.LastSystemInstruction, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("operator", gemini.LastSystemInstruction, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -289,6 +341,10 @@ public class FotoprintAiAgentTests
 
         Assert.True(res.IsSuccess);
         Assert.Contains("get_production_kpis", res.ToolsInvoked);
+
+        var serializedContents = JsonSerializer.Serialize(gemini.LastContents);
+        Assert.Contains("Connection refused to MCP service", serializedContents);
+        Assert.DoesNotContain("mock_offline", serializedContents);
     }
 }
 

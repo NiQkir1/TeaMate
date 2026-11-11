@@ -144,6 +144,13 @@ public class ContextSwitchDetectorTests
         var plainFalse = "{\"context_switched\": false}";
         var r3 = ContextSwitchDetector.ParseLlmResponse(plainFalse);
         Assert.False(r3.IsSwitched);
+
+        // 4. JSON с окружающим текстом рассуждений
+        var proseWithJson = "Анализирую историю...\n{\"context_switched\": true, \"suggested_branch\": \"general_chat\", \"reason\": \"Новая тема\"}\nГотово.";
+        var r4 = ContextSwitchDetector.ParseLlmResponse(proseWithJson);
+        Assert.True(r4.IsSwitched);
+        Assert.Equal("general_chat", r4.SuggestedBranch);
+        Assert.Equal("Новая тема", r4.Reason);
     }
 }
 

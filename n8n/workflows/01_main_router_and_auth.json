@@ -1,5 +1,10 @@
 {
+  "id": "fotoprint-main-router-01",
   "name": "01_Main_Router_And_Auth",
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
   "nodes": [
     {
       "parameters": {
@@ -12,11 +17,13 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [220, 300],
-      "id": "node-webhook-1"
+      "id": "node-webhook-1",
+      "webhookId": "fotoprint-chat"
     },
     {
       "parameters": {
         "url": "=http://mcp-employee-reader:8081/tools/get_employee_security_context?telegram_id={{ $json.body.user_id }}",
+        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
@@ -46,25 +53,37 @@
     {
       "parameters": {
         "conditions": {
-          "number": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{ $json.statusCode }}",
-              "operation": "equal",
-              "value2": 200
+              "id": "cond-auth-200",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "name": "Is Authorized Employee?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "typeVersion": 2.2,
       "position": [660, 300],
       "id": "node-if-auth"
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={\n  \"status\": \"forbidden\",\n  \"message\": \"🚫 Доступ запрещен. Ваш Telegram аккаунт не зарегистрирован в системе корпоративного ассистента Fotoprint Copilot. Обратитесь к администратору.\"\n}",
+        "responseBody": "={{ JSON.stringify({ status: 'forbidden', orchestrator: 'n8n', message: '🚫 Доступ запрещен. Ваш аккаунт не зарегистрирован в системе Fotoprint Copilot. Обратитесь к администратору.' }) }}",
         "options": {
           "responseCode": 403
         }
@@ -77,7 +96,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const gw = $('Gateway Webhook').item.json.body;\nconst secContext = $json.body;\n\n// 2-й этап (LLM ContextSwitchDetector) уже выполнен в AiGateway.\n// Получаем строго определенные нейросетью флаги и ветку для вызова нужных MCP в n8n:\nconst is_context_switched = gw.is_context_switched ?? false;\nconst branch = gw.branch || 'doc_search';\n\nreturn [{\n  json: {\n    user_id: gw.user_id,\n    chat_id: gw.chat_id,\n    trace_id: gw.trace_id,\n    session_id: gw.session_id,\n    text: gw.text,\n    branch: branch,\n    is_context_switched: is_context_switched,\n    switch_reason: gw.switch_reason || '',\n    security_context: secContext\n  }\n}];"
+        "jsCode": "const gw = $('Gateway Webhook').item.json.body;\nconst secContext = $json.body || {};\n\nconst is_context_switched = gw.is_context_switched ?? false;\nconst branch = gw.branch || 'general_chat';\n\nreturn [{\n  json: {\n    user_id: gw.user_id,\n    chat_id: gw.chat_id ?? gw.user_id,\n    trace_id: gw.trace_id,\n    session_id: gw.session_id || '',\n    channel: gw.channel || 'telegram',\n    text: gw.text || '',\n    branch: branch,\n    is_context_switched: is_context_switched,\n    switch_reason: gw.switch_reason || '',\n    security_context: secContext\n  }\n}];"
       },
       "name": "ContextSwitchDetector",
       "type": "n8n-nodes-base.code",
@@ -87,35 +106,101 @@
     },
     {
       "parameters": {
-        "dataType": "string",
-        "value1": "={{ $json.branch }}",
         "rules": {
-          "rules": [
-            { "value2": "meeting_prep", "output": 0 },
-            { "value2": "live_meeting_notes", "output": 1 },
-            { "value2": "meeting_summary", "output": 2 },
-            { "value2": "task_management", "output": 3 },
-            { "value2": "executive_report", "output": 4 },
-            { "value2": "doc_search", "output": 5 }
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [{ "leftValue": "={{ $json.branch }}", "rightValue": "meeting_prep", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "meeting_prep"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [{ "leftValue": "={{ $json.branch }}", "rightValue": "live_meeting_notes", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "live_meeting_notes"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [{ "leftValue": "={{ $json.branch }}", "rightValue": "meeting_summary", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "meeting_summary"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [{ "leftValue": "={{ $json.branch }}", "rightValue": "task_management", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "task_management"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [{ "leftValue": "={{ $json.branch }}", "rightValue": "executive_report", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "executive_report"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [{ "leftValue": "={{ $json.branch }}", "rightValue": "doc_search", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "doc_search"
+            }
           ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
         }
       },
       "name": "Branch Router",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
+      "typeVersion": 3.2,
       "position": [1120, 240],
       "id": "node-branch-switch"
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "http://ai-gateway:8080/api/agent/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ telegramId: Number($('ContextSwitchDetector').item.json.user_id), chatId: Number($('ContextSwitchDetector').item.json.chat_id), message: $('ContextSwitchDetector').item.json.text, traceId: $('ContextSwitchDetector').item.json.trace_id }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "name": "Execute Fotoprint AI Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 240],
+      "id": "node-exec-agent"
+    },
+    {
+      "parameters": {
         "respondWith": "json",
-        "responseBody": "={\n  \"status\": \"processed\",\n  \"branch\": $json.branch,\n  \"user\": $json.security_context.FullName,\n  \"response_text\": \"✅ Запрос принят веткой '\" + $json.branch + \"'. Данные контекста безопасности успешно валидированы.\"\n}",
+        "responseBody": "={{ JSON.stringify({ answer: $json.answer, tools_invoked: $json.tools_invoked || [], total_llm_calls: $json.total_llm_calls || 0, total_tokens: $json.total_tokens || 0, is_success: $json.is_success !== false, trace_id: $json.trace_id || $('ContextSwitchDetector').item.json.trace_id, orchestrator: 'n8n', branch: $('ContextSwitchDetector').item.json.branch, user: $('ContextSwitchDetector').item.json.security_context.fullName || $('ContextSwitchDetector').item.json.security_context.FullName || '' }) }}",
         "options": {}
       },
-      "name": "Return Success Result",
+      "name": "Return Agent Result",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1400, 240],
+      "position": [1620, 240],
       "id": "node-respond-success"
     }
   ],
@@ -153,14 +238,21 @@
     },
     "Branch Router": {
       "main": [
-        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
-        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
-        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
-        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
-        [{ "node": "Return Success Result", "type": "main", "index": 0 }],
-        [{ "node": "Return Success Result", "type": "main", "index": 0 }]
+        [{ "node": "Execute Fotoprint AI Agent", "type": "main", "index": 0 }],
+        [{ "node": "Execute Fotoprint AI Agent", "type": "main", "index": 0 }],
+        [{ "node": "Execute Fotoprint AI Agent", "type": "main", "index": 0 }],
+        [{ "node": "Execute Fotoprint AI Agent", "type": "main", "index": 0 }],
+        [{ "node": "Execute Fotoprint AI Agent", "type": "main", "index": 0 }],
+        [{ "node": "Execute Fotoprint AI Agent", "type": "main", "index": 0 }],
+        [{ "node": "Execute Fotoprint AI Agent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Fotoprint AI Agent": {
+      "main": [
+        [
+          { "node": "Return Agent Result", "type": "main", "index": 0 }
+        ]
       ]
     }
   }
 }
-

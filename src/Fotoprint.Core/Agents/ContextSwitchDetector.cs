@@ -100,13 +100,13 @@ public class ContextSwitchDetector : IContextSwitchDetector
             Твоя цель — определить, сменил ли пользователь тему разговора по отношению к предыдущей сессии.
             Если пользователь переключился на совершенно другую тему или задачу (например, обсуждали брак и технологию печати, а он попросил поставить задачу в Битрикс или назначить встречу) — context_switched = true.
             Если сообщение развивает, уточняет или продолжает предыдущий диалог — context_switched = false.
-            Всегда отвечай строго валидным JSON.
+            Всегда отвечай максимально кратко и строго валидным JSON без markdown-обертки.
             """;
 
         try
         {
             var startTime = DateTime.UtcNow;
-            var response = await _gemini.GenerateContentAsync(
+            var response = await _gemini.GenerateJsonNoThinkingAsync(
                 prompt: prompt,
                 systemInstruction: systemInstruction,
                 temperature: _config.ContextSwitch.Temperature,
@@ -147,7 +147,7 @@ public class ContextSwitchDetector : IContextSwitchDetector
                 await _langfuse.LogEventAsync(
                     traceId,
                     "ContextSwitch:Detected",
-                    result.IsSwitched ? "WARNING" : "INFO",
+                    "DEFAULT",
                     $"Switch={result.IsSwitched}, Branch={result.SuggestedBranch}, Reason={result.Reason}");
             }
 
@@ -187,6 +187,13 @@ public class ContextSwitchDetector : IContextSwitchDetector
             }
             cleanJson = cleanJson.Trim();
 
+            var firstBrace = cleanJson.IndexOf('{');
+            var lastBrace = cleanJson.LastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace)
+            {
+                cleanJson = cleanJson[firstBrace..(lastBrace + 1)];
+            }
+
             using var doc = JsonDocument.Parse(cleanJson);
             var root = doc.RootElement;
 
@@ -225,7 +232,7 @@ public class ContextSwitchDetector : IContextSwitchDetector
                              lower.Contains("context_switched: true") ||
                              lower.Contains("true");
 
-            return new ContextSwitchResult(isSwitched, "doc_search", $"Parsed from text: {raw.Trim()}");
+            return new ContextSwitchResult(isSwitched, "general_chat", $"Parsed from text: {raw.Trim()}");
         }
     }
 }

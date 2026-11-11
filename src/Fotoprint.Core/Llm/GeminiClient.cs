@@ -37,6 +37,31 @@ public interface ILlmClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// Диалоговый шаг без thinking-режима (быстрый синтез финального ответа по данным MCP).
+    /// </summary>
+    Task<GeminiTurnResponse> ChatTurnNoThinkingAsync(
+        List<object> contents,
+        object? tools = null,
+        string? systemInstruction = null,
+        double? temperature = null,
+        int? maxOutputTokens = null,
+        string? traceId = null,
+        CancellationToken ct = default)
+        => ChatTurnAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, ct);
+
+    /// <summary>
+    /// Быстрый вызов без thinking-режима (оптимально для JSON-классификаторов).
+    /// </summary>
+    Task<GeminiGenerateResponse> GenerateJsonNoThinkingAsync(
+        string prompt,
+        string? systemInstruction = null,
+        double? temperature = null,
+        int? maxOutputTokens = null,
+        string? traceId = null,
+        CancellationToken ct = default)
+        => GenerateContentAsync(prompt, systemInstruction, temperature, maxOutputTokens, traceId, ct);
+
+    /// <summary>
     /// Статистика вызовов LLM: скользящее окно 60 сек, остаток лимита RPM.
     /// </summary>
     GeminiCallStats GetStats();
@@ -45,7 +70,7 @@ public interface ILlmClient
 public interface INvidiaClient : ILlmClient { }
 public interface IGeminiClient : ILlmClient { }
 
-public record GeminiFunctionCall(string Name, JsonElement Arguments);
+public record GeminiFunctionCall(string Name, JsonElement Arguments, string? CallId = null);
 
 public record GeminiTurnResponse(
     bool IsSuccess,
@@ -56,7 +81,8 @@ public record GeminiTurnResponse(
     int CandidatesTokens,
     int TotalTokens,
     int AttemptsMade,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    IReadOnlyList<GeminiFunctionCall>? FunctionCalls = null);
 
 public record GeminiCallStats(
     int TotalCalls,
@@ -93,6 +119,8 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
 
     private readonly string _apiKey;
     private readonly string _model;
+    private readonly string _fastModel;
+    private readonly string _fallbackModel;
     private readonly string _baseUrl;
     private readonly int _rpmLimit;
 
@@ -132,6 +160,17 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             _model = "nvidia/nemotron-3.5-super-vl-120b-a12b";
         }
 
+        _fastModel = !string.IsNullOrWhiteSpace(_config.Llm.Models.FastModel) &&
+                     !_config.Llm.Models.FastModel.StartsWith("gemini")
+            ? _config.Llm.Models.FastModel
+            : "nvidia/nemotron-3.5-lightning-30b-a3b";
+
+        _fallbackModel = !string.IsNullOrWhiteSpace(_config.Llm.Models.FallbackModel) &&
+                         !_config.Llm.Models.FallbackModel.StartsWith("gemini") &&
+                         !string.Equals(_config.Llm.Models.FallbackModel, _model, StringComparison.OrdinalIgnoreCase)
+            ? _config.Llm.Models.FallbackModel
+            : "nvidia/nemotron-3.5-lightning-30b-a3b";
+
         var configBaseUrl = Environment.GetEnvironmentVariable("LLM_BASE_URL")
             ?? _config.Llm.Proxy.BaseUrl;
 
@@ -142,26 +181,48 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         _rpmLimit = _config.Llm.RateLimits.Rpm > 0 ? _config.Llm.RateLimits.Rpm : 60;
     }
 
-    public async Task<GeminiGenerateResponse> GenerateContentAsync(
+    public Task<GeminiGenerateResponse> GenerateContentAsync(
         string prompt,
         string? systemInstruction = null,
         double? temperature = null,
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
+        => GenerateContentCoreAsync(prompt, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: _model, ct: ct);
+
+    public Task<GeminiGenerateResponse> GenerateJsonNoThinkingAsync(
+        string prompt,
+        string? systemInstruction = null,
+        double? temperature = null,
+        int? maxOutputTokens = null,
+        string? traceId = null,
+        CancellationToken ct = default)
+        => GenerateContentCoreAsync(prompt, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, preferredModel: _fastModel, ct: ct);
+
+    private async Task<GeminiGenerateResponse> GenerateContentCoreAsync(
+        string prompt,
+        string? systemInstruction,
+        double? temperature,
+        int? maxOutputTokens,
+        string? traceId,
+        bool enableThinking,
+        string preferredModel,
+        CancellationToken ct)
     {
         var contents = new List<object>
         {
             new { role = "user", content = prompt }
         };
 
-        var turn = await ChatTurnAsync(
+        var turn = await ChatTurnCoreAsync(
             contents: contents,
             tools: null,
             systemInstruction: systemInstruction,
             temperature: temperature,
             maxOutputTokens: maxOutputTokens,
             traceId: traceId,
+            enableThinking: enableThinking,
+            preferredModel: preferredModel,
             ct: ct);
 
         return new GeminiGenerateResponse(
@@ -175,7 +236,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             ErrorMessage: turn.ErrorMessage);
     }
 
-    public async Task<GeminiTurnResponse> ChatTurnAsync(
+    public Task<GeminiTurnResponse> ChatTurnAsync(
         List<object> contents,
         object? tools = null,
         string? systemInstruction = null,
@@ -183,22 +244,52 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
+        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: _model, ct: ct);
+
+    public Task<GeminiTurnResponse> ChatTurnNoThinkingAsync(
+        List<object> contents,
+        object? tools = null,
+        string? systemInstruction = null,
+        double? temperature = null,
+        int? maxOutputTokens = null,
+        string? traceId = null,
+        CancellationToken ct = default)
+        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: false, preferredModel: _model, ct: ct);
+
+    private async Task<GeminiTurnResponse> ChatTurnCoreAsync(
+        List<object> contents,
+        object? tools,
+        string? systemInstruction,
+        double? temperature,
+        int? maxOutputTokens,
+        string? traceId,
+        bool enableThinking,
+        string preferredModel,
+        CancellationToken ct)
     {
         var temp = temperature ?? _config.Llm.Parameters.Temperature;
         var maxTokens = maxOutputTokens ?? _config.Llm.Parameters.MaxTokens;
 
         return await _loadBalancer.ScheduleAsync(
-            taskName: $"Nvidia:{_model}:ChatTurn",
+            taskName: $"Nvidia:{preferredModel}:ChatTurn",
             work: async token =>
             {
                 var rollbackResult = await _rollbackManager.ExecuteWithRollbackAsync(
-                    nodeName: $"Nvidia:{_model}:Turn",
+                    nodeName: $"Nvidia:{preferredModel}:Turn",
                     action: async (attempt, retryToken) =>
                     {
                         RecordCall();
 
+                        // На 1-й попытке используем целевую модель, а при сбое (например 503 content safety screening) автоматически переключаемся на резервную модель семейства Nemotron 3.5
+                        var activeModel = attempt == 1 ? preferredModel : _fallbackModel;
+                        if (attempt > 1 && !string.Equals(activeModel, preferredModel, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger?.LogInformation("🔀 [NVIDIA Fallback] Попытка {Attempt}: переключение с '{Primary}' на резервную модель '{Fallback}'",
+                                attempt, preferredModel, activeModel);
+                        }
+
                         var endpointUrl = $"{_baseUrl}/chat/completions";
-                        var requestBody = BuildNvidiaRequestBody(contents, tools, systemInstruction, temp, maxTokens, _model);
+                        var requestBody = BuildNvidiaRequestBody(contents, tools, systemInstruction, temp, maxTokens, activeModel, enableThinking);
 
                         using var request = new HttpRequestMessage(HttpMethod.Post, endpointUrl);
                         request.Content = JsonContent.Create(requestBody);
@@ -208,7 +299,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiKey);
                         }
 
-                        var response = await _httpClient.SendAsync(request, retryToken);
+                        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, retryToken);
 
                         if (!response.IsSuccessStatusCode)
                         {
@@ -219,6 +310,13 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                             throw new NodeTransientException(
                                 $"LLM API вернул код {statusCode}: {response.ReasonPhrase}. Детали: {errContent}",
                                 statusCode);
+                        }
+
+                        var mediaType = response.Content.Headers.ContentType?.MediaType;
+                        if (!string.IsNullOrWhiteSpace(mediaType) &&
+                            mediaType.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return await ParseNvidiaStreamResponseAsync(response, attempt, retryToken);
                         }
 
                         var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
@@ -259,30 +357,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                         ErrorMessage: lastErr);
                 }
 
-                var turn = rollbackResult.Value!;
-
-                if (_langfuse != null && !string.IsNullOrEmpty(traceId))
-                {
-                    _ = _langfuse.CreateGenerationAsync(
-                        traceId: traceId,
-                        name: $"Gen:Nvidia-{_model}",
-                        model: _model,
-                        startTime: DateTime.UtcNow.AddMilliseconds(-100),
-                        endTime: DateTime.UtcNow,
-                        promptTokens: turn.PromptTokens,
-                        completionTokens: turn.CandidatesTokens,
-                        totalTokens: turn.TotalTokens,
-                        input: JsonSerializer.Serialize(contents),
-                        output: turn.FunctionCall != null ? $"FunctionCall: {turn.FunctionCall.Name}" : turn.Text,
-                        metadata: new
-                        {
-                            attempts = turn.AttemptsMade,
-                            finishReason = turn.FinishReason,
-                            hasFunctionCall = turn.FunctionCall != null
-                        });
-                }
-
-                return turn;
+                return rollbackResult.Value!;
             },
             traceId: traceId,
             ct: ct);
@@ -342,7 +417,8 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         string? systemInstruction,
         double temperature,
         int maxOutputTokens,
-        string model)
+        string model,
+        bool enableThinking = true)
     {
         var messages = new List<object>();
 
@@ -369,7 +445,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                 // Проверяем наличие content в OpenAI формате (строка или массив мультимодальных блоков)
                 if (root.TryGetProperty("content", out var contentProp))
                 {
-                    if (contentProp.ValueKind == JsonValueKind.Array)
+                    if (role != "tool" && contentProp.ValueKind == JsonValueKind.Array)
                     {
                         var blocks = new List<object>();
                         foreach (var b in contentProp.EnumerateArray())
@@ -380,10 +456,17 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                     }
                     else
                     {
+                        var contentText = contentProp.ValueKind switch
+                        {
+                            JsonValueKind.String => contentProp.GetString() ?? "",
+                            JsonValueKind.Null or JsonValueKind.Undefined => "",
+                            _ => contentProp.GetRawText()
+                        };
+
                         var msgObj = new Dictionary<string, object>
                         {
                             ["role"] = role,
-                            ["content"] = contentProp.GetString() ?? ""
+                            ["content"] = contentText
                         };
                         if (root.TryGetProperty("tool_call_id", out var tcid))
                         {
@@ -427,9 +510,11 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             ["temperature"] = temperature,
             ["top_p"] = 0.95,
             ["max_tokens"] = maxOutputTokens,
+            ["stream"] = true,
+            ["stream_options"] = new { include_usage = true },
             ["chat_template_kwargs"] = new
             {
-                enable_thinking = true
+                enable_thinking = enableThinking
             }
         };
 
@@ -492,7 +577,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
     {
         string? text = null;
         string? finishReason = null;
-        GeminiFunctionCall? functionCall = null;
+        var allCalls = new List<GeminiFunctionCall>();
         int promptTokens = 0;
         int candidatesTokens = 0;
         int totalTokens = 0;
@@ -515,19 +600,22 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
 
                 if (msg.TryGetProperty("tool_calls", out var toolCalls) && toolCalls.GetArrayLength() > 0)
                 {
-                    var firstTool = toolCalls[0];
-                    if (firstTool.TryGetProperty("function", out var fn))
+                    foreach (var toolItem in toolCalls.EnumerateArray())
                     {
-                        var fnName = fn.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                        var fnArgsStr = fn.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}";
-                        try
+                        var callId = toolItem.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                        if (toolItem.TryGetProperty("function", out var fn))
                         {
-                            using var doc = JsonDocument.Parse(fnArgsStr);
-                            functionCall = new GeminiFunctionCall(fnName, doc.RootElement.Clone());
-                        }
-                        catch
-                        {
-                            // fallback
+                            var fnName = fn.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                            var fnArgsStr = fn.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}";
+                            try
+                            {
+                                using var doc = JsonDocument.Parse(fnArgsStr);
+                                allCalls.Add(new GeminiFunctionCall(fnName, doc.RootElement.Clone(), callId));
+                            }
+                            catch
+                            {
+                                // fallback
+                            }
                         }
                     }
                 }
@@ -549,13 +637,136 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         return new GeminiTurnResponse(
             IsSuccess: true,
             Text: text,
-            FunctionCall: functionCall,
+            FunctionCall: allCalls.FirstOrDefault(),
             FinishReason: finishReason ?? "stop",
             PromptTokens: promptTokens,
             CandidatesTokens: candidatesTokens,
             TotalTokens: totalTokens,
             AttemptsMade: attempt,
-            ErrorMessage: null);
+            ErrorMessage: null,
+            FunctionCalls: allCalls.Count > 0 ? allCalls : null);
+    }
+
+    private static async Task<GeminiTurnResponse> ParseNvidiaStreamResponseAsync(
+        HttpResponseMessage response,
+        int attempt,
+        CancellationToken ct)
+    {
+        var contentBuilder = new System.Text.StringBuilder();
+        var reasoningBuilder = new System.Text.StringBuilder();
+        var toolBuilders = new SortedDictionary<int, (string? Id, System.Text.StringBuilder Name, System.Text.StringBuilder Args)>();
+        string? finishReason = null;
+        int promptTokens = 0;
+        int candidatesTokens = 0;
+        int totalTokens = 0;
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+
+        while (!reader.EndOfStream)
+        {
+            ct.ThrowIfCancellationRequested();
+            var line = await reader.ReadLineAsync(ct);
+            if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.Ordinal))
+                continue;
+
+            var data = line[5..].Trim();
+            if (data == "[DONE]")
+                break;
+
+            using var doc = JsonDocument.Parse(data);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
+            {
+                if (usage.TryGetProperty("prompt_tokens", out var pt)) promptTokens = pt.GetInt32();
+                if (usage.TryGetProperty("completion_tokens", out var comp)) candidatesTokens = comp.GetInt32();
+                if (usage.TryGetProperty("total_tokens", out var tt)) totalTokens = tt.GetInt32();
+            }
+
+            if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+            {
+                var ch = choices[0];
+                if (ch.TryGetProperty("finish_reason", out var fr) && fr.ValueKind == JsonValueKind.String)
+                {
+                    finishReason = fr.GetString();
+                }
+
+                if (ch.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object)
+                {
+                    if (delta.TryGetProperty("content", out var dc) && dc.ValueKind == JsonValueKind.String)
+                    {
+                        contentBuilder.Append(dc.GetString());
+                    }
+
+                    if (delta.TryGetProperty("reasoning_content", out var dr) && dr.ValueKind == JsonValueKind.String)
+                    {
+                        reasoningBuilder.Append(dr.GetString());
+                    }
+
+                    if (delta.TryGetProperty("tool_calls", out var dtc) && dtc.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var tc in dtc.EnumerateArray())
+                        {
+                            var idx = tc.TryGetProperty("index", out var idxProp) ? idxProp.GetInt32() : 0;
+                            if (!toolBuilders.TryGetValue(idx, out var entry))
+                            {
+                                entry = (null, new System.Text.StringBuilder(), new System.Text.StringBuilder());
+                            }
+
+                            if (tc.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.String)
+                            {
+                                entry.Id = idProp.GetString();
+                            }
+
+                            if (tc.TryGetProperty("function", out var fn))
+                            {
+                                if (fn.TryGetProperty("name", out var nProp) && nProp.ValueKind == JsonValueKind.String)
+                                    entry.Name.Append(nProp.GetString());
+                                if (fn.TryGetProperty("arguments", out var aProp) && aProp.ValueKind == JsonValueKind.String)
+                                    entry.Args.Append(aProp.GetString());
+                            }
+
+                            toolBuilders[idx] = entry;
+                        }
+                    }
+                }
+            }
+        }
+
+        var text = contentBuilder.Length > 0
+            ? contentBuilder.ToString()
+            : (reasoningBuilder.Length > 0 ? reasoningBuilder.ToString() : null);
+
+        var allCalls = new List<GeminiFunctionCall>();
+        foreach (var kvp in toolBuilders)
+        {
+            var fnName = kvp.Value.Name.ToString();
+            if (string.IsNullOrWhiteSpace(fnName)) continue;
+
+            var argsStr = kvp.Value.Args.Length > 0 ? kvp.Value.Args.ToString() : "{}";
+            try
+            {
+                using var argDoc = JsonDocument.Parse(argsStr);
+                allCalls.Add(new GeminiFunctionCall(fnName, argDoc.RootElement.Clone(), kvp.Value.Id));
+            }
+            catch
+            {
+                // fallback
+            }
+        }
+
+        return new GeminiTurnResponse(
+            IsSuccess: true,
+            Text: text,
+            FunctionCall: allCalls.FirstOrDefault(),
+            FinishReason: finishReason ?? "stop",
+            PromptTokens: promptTokens,
+            CandidatesTokens: candidatesTokens,
+            TotalTokens: totalTokens,
+            AttemptsMade: attempt,
+            ErrorMessage: null,
+            FunctionCalls: allCalls.Count > 0 ? allCalls : null);
     }
 }
 

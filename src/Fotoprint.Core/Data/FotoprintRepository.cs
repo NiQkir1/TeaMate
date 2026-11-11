@@ -62,6 +62,7 @@ public class FotoprintRepository : IFotoprintRepository
 
     static FotoprintRepository()
     {
+        DefaultTypeMap.MatchNamesWithUnderscores = true;
         SqlMapper.AddTypeHandler(new VectorTypeHandler());
     }
 
@@ -231,14 +232,51 @@ public class FotoprintRepository : IFotoprintRepository
     public async Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        const string sql = "SELECT * FROM employees WHERE id = @Id;";
+        const string sql = """
+            SELECT
+                id AS Id,
+                master_id AS MasterId,
+                first_name AS FirstName,
+                last_name AS LastName,
+                middle_name AS MiddleName,
+                email AS Email,
+                telegram_id AS TelegramId,
+                telegram_username AS TelegramUsername,
+                whatsapp_id AS WhatsappId,
+                department AS Department,
+                position AS Position,
+                is_active AS IsActive,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM employees
+            WHERE id = @Id;
+        """;
         return await conn.QueryFirstOrDefaultAsync<Employee>(new CommandDefinition(sql, new { Id = id }, cancellationToken: ct));
     }
 
     public async Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        const string sql = "SELECT * FROM employees WHERE is_active = TRUE ORDER BY id;";
+        const string sql = """
+            SELECT
+                id AS Id,
+                master_id AS MasterId,
+                first_name AS FirstName,
+                last_name AS LastName,
+                middle_name AS MiddleName,
+                email AS Email,
+                telegram_id AS TelegramId,
+                telegram_username AS TelegramUsername,
+                whatsapp_id AS WhatsappId,
+                department AS Department,
+                position AS Position,
+                is_active AS IsActive,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM employees
+            WHERE is_active = TRUE
+            ORDER BY id;
+        """;
         var results = await conn.QueryAsync<Employee>(new CommandDefinition(sql, cancellationToken: ct));
         return results.ToList();
     }
@@ -268,9 +306,9 @@ public class FotoprintRepository : IFotoprintRepository
 
         // 3. Создаем новую активную сессию с новым UUID SessionId
         const string insertSql = """
-            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, telegram_chat_id, is_active, title, current_branch)
-            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, @MessengerChatId, TRUE, 'Диалог ' || @MasterId, 'general')
-            RETURNING *;
+            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, is_active, title, current_branch)
+            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, TRUE, 'Диалог ' || @MasterId, 'general')
+            RETURNING *, messenger_chat_id AS TelegramChatId;
         """;
 
         return await conn.QuerySingleAsync<ChatSession>(
@@ -311,9 +349,9 @@ public class FotoprintRepository : IFotoprintRepository
 
         var branch = !string.IsNullOrWhiteSpace(newBranch) ? newBranch : "general";
         const string insertNewSql = """
-            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, telegram_chat_id, is_active, title, current_branch)
-            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, @MessengerChatId, TRUE, 'Диалог (' || @Branch || ') ' || @MasterId, @Branch)
-            RETURNING *;
+            INSERT INTO chat_sessions (id, master_id, employee_id, messenger_type, messenger_chat_id, is_active, title, current_branch)
+            VALUES (gen_random_uuid(), @MasterId, @EmployeeId, @MessengerType, @MessengerChatId, TRUE, 'Диалог (' || @Branch || ') ' || @MasterId, @Branch)
+            RETURNING *, messenger_chat_id AS TelegramChatId;
         """;
 
         return await conn.QuerySingleAsync<ChatSession>(
@@ -374,23 +412,30 @@ public class FotoprintRepository : IFotoprintRepository
     public async Task<ChatSession> GetOrCreateSessionAsync(long telegramChatId, long? telegramUserId = null, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        const string selectSql = "SELECT * FROM chat_sessions WHERE telegram_chat_id = @TelegramChatId ORDER BY updated_at DESC LIMIT 1;";
+        const string selectSql = "SELECT *, messenger_chat_id AS TelegramChatId FROM chat_sessions WHERE messenger_chat_id = @TelegramChatId ORDER BY updated_at DESC LIMIT 1;";
         var session = await conn.QueryFirstOrDefaultAsync<ChatSession>(new CommandDefinition(selectSql, new { TelegramChatId = telegramChatId }, cancellationToken: ct));
 
         if (session != null) return session;
 
         int? employeeId = null;
+        long masterId = telegramUserId ?? telegramChatId;
         if (telegramUserId.HasValue)
         {
-            employeeId = await conn.ExecuteScalarAsync<int?>("SELECT id FROM employees WHERE telegram_id = @TgId LIMIT 1;", new { TgId = telegramUserId.Value });
+            var emp = await conn.QueryFirstOrDefaultAsync<(int Id, long MasterId)>(
+                new CommandDefinition("SELECT id AS Id, master_id AS MasterId FROM employees WHERE telegram_id = @TgId LIMIT 1;", new { TgId = telegramUserId.Value }, cancellationToken: ct));
+            if (emp.Id > 0)
+            {
+                employeeId = emp.Id;
+                masterId = emp.MasterId;
+            }
         }
 
         const string insertSql = """
-            INSERT INTO chat_sessions (telegram_chat_id, employee_id, title, current_branch)
-            VALUES (@TelegramChatId, @EmployeeId, 'Чат-сессия ' || @TelegramChatId, 'general')
-            RETURNING *;
+            INSERT INTO chat_sessions (master_id, employee_id, messenger_type, messenger_chat_id, title, current_branch)
+            VALUES (@MasterId, @EmployeeId, 'telegram', @TelegramChatId, 'Чат-сессия ' || @TelegramChatId, 'general')
+            RETURNING *, messenger_chat_id AS TelegramChatId;
         """;
-        return await conn.QuerySingleAsync<ChatSession>(new CommandDefinition(insertSql, new { TelegramChatId = telegramChatId, EmployeeId = employeeId }, cancellationToken: ct));
+        return await conn.QuerySingleAsync<ChatSession>(new CommandDefinition(insertSql, new { MasterId = masterId, TelegramChatId = telegramChatId, EmployeeId = employeeId }, cancellationToken: ct));
     }
 
     public async Task SaveMessageAsync(Guid sessionId, string contextId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default)
@@ -495,27 +540,122 @@ public class FotoprintRepository : IFotoprintRepository
     public async Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
-        var groupsJson = JsonSerializer.Serialize(userAccessGroups);
+        var effectiveGroups = (userAccessGroups != null && userAccessGroups.Count > 0)
+            ? userAccessGroups.Union(new[] { "all" }, StringComparer.OrdinalIgnoreCase).ToList()
+            : new List<string> { "all" };
+        var groupsJson = JsonSerializer.Serialize(effectiveGroups);
+
+        // Если запрос пустой или общий («что лежит в раг», «все документы», «база знаний») — возвращаем все доступные пользователю регламенты
+        var normalizedQuery = (queryText ?? "").Trim().ToLowerInvariant();
+        bool isGeneralCatalogQuery = string.IsNullOrWhiteSpace(normalizedQuery)
+            || normalizedQuery is "*" or "all" or "все" or "раг" or "rag"
+            || normalizedQuery.Contains("что лежит")
+            || normalizedQuery.Contains("что есть")
+            || normalizedQuery.Contains("какие документ")
+            || normalizedQuery.Contains("какие регламент")
+            || normalizedQuery.Contains("список документ")
+            || normalizedQuery.Contains("база знаний")
+            || normalizedQuery.Contains(" в раг")
+            || normalizedQuery.Contains(" в rag");
+
+        const string allAccessibleSql = """
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   c.metadata::text AS MetadataJson
+            FROM corporate_document_chunks c
+            JOIN corporate_documents d ON d.id = c.document_id
+            WHERE (
+                c.allowed_access_groups ? 'all'
+                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+            )
+            ORDER BY d.created_at ASC, c.chunk_index ASC
+            LIMIT @TopK;
+        """;
+
+        if (isGeneralCatalogQuery)
+        {
+            var allChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(allAccessibleSql, new
+            {
+                Groups = groupsJson,
+                TopK = Math.Max(topK, 10)
+            }, cancellationToken: ct));
+            return allChunks.ToList();
+        }
 
         const string sql = """
-            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex, c.chunk_text AS ChunkText, c.metadata::text AS MetadataJson
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
+            JOIN corporate_documents d ON d.id = c.document_id
             WHERE (
                 c.allowed_access_groups ? 'all' 
                 OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
             )
-            AND c.chunk_text ILIKE '%' || @QueryText || '%'
+            AND (c.chunk_text ILIKE '%' || @QueryText || '%' OR d.title ILIKE '%' || @QueryText || '%')
             LIMIT @TopK;
         """;
 
-        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new
+        var chunks = (await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new
         {
             QueryText = queryText,
             Groups = groupsJson,
             TopK = topK
+        }, cancellationToken: ct))).ToList();
+
+        if (chunks.Count > 0)
+        {
+            return chunks;
+        }
+
+        // Фолбэк по отдельным ключевым словам (>= 3 символов), включая корни слов (первые 4-5 букв для русской морфологии)
+        var rawWords = (queryText ?? "")
+            .Split(new[] { ' ', ',', '.', ';', '?', '!', '-', '"', '\'', '«', '»' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(t => t.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var patternSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var word in rawWords)
+        {
+            patternSet.Add($"%{word}%");
+            if (word.Length >= 5)
+            {
+                patternSet.Add($"%{word[..^1]}%");
+            }
+            if (word.Length >= 6)
+            {
+                patternSet.Add($"%{word[..^2]}%");
+            }
+        }
+
+        if (patternSet.Count == 0)
+        {
+            return chunks;
+        }
+
+        const string kwSql = """
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   c.metadata::text AS MetadataJson
+            FROM corporate_document_chunks c
+            JOIN corporate_documents d ON d.id = c.document_id
+            WHERE (
+                c.allowed_access_groups ? 'all'
+                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+            )
+            AND (c.chunk_text ILIKE ANY(@Patterns) OR d.title ILIKE ANY(@Patterns))
+            LIMIT @TopK;
+        """;
+
+        var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
+        {
+            Patterns = patternSet.ToArray(),
+            Groups = groupsJson,
+            TopK = topK
         }, cancellationToken: ct));
 
-        return chunks.ToList();
+        return kwChunks.ToList();
     }
 
     public async Task<Guid> CreateMeetingAsync(
@@ -645,7 +785,7 @@ public class FotoprintRepository : IFotoprintRepository
     {
         await using var conn = await CreateConnectionAsync(ct);
         var sql = "SELECT * FROM action_items WHERE responsible_id = @ResponsibleId";
-        if (!string.IsNullOrWhiteSpace(statusFilter))
+        if (!string.IsNullOrWhiteSpace(statusFilter) && !statusFilter.Equals("all", StringComparison.OrdinalIgnoreCase))
         {
             sql += " AND status = @StatusFilter";
         }

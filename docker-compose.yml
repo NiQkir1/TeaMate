@@ -70,13 +70,22 @@ services:
       N8N_HOST: ${N8N_HOST:-localhost}
       N8N_PORT: 5678
       N8N_PROTOCOL: http
-      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
       GENERIC_TIMEZONE: Europe/Moscow
       TZ: Europe/Moscow
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-fotoprint-n8n-encryption-key-2026}
-      NODE_FUNCTION_ALLOW_EXTERNAL: axios,lodash,form-data,pdf-parse,docx
+      NODE_FUNCTION_ALLOW_EXTERNAL: axios,lodash,form-data
       NODE_FUNCTION_ALLOW_BUILTIN: "*"
-      N8N_COMMUNITY_PACKAGES_ENABLED: "true"
+      N8N_COMMUNITY_PACKAGES_ENABLED: "false"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_TEMPLATES_ENABLED: "false"
+      N8N_HIRING_BANNER_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "268435456"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "1000"
       # Внутренние URL наших .NET 9 сервисов
       GATEWAY_API_URL: http://ai-gateway:8080
       MCP_EMPLOYEE_READER_URL: http://mcp-employee-reader:8081
@@ -221,6 +230,17 @@ services:
   # =========================================================================
   # 4. .NET 9 Сервисы (API Gateway + MCP Серверы)
   # =========================================================================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: fotoprint-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --protocol http2 --metrics 0.0.0.0:2000 --url http://nginx:80
+    depends_on:
+      nginx:
+        condition: service_healthy
+    networks:
+      - fotoprint-net
+
   ai-gateway:
     build:
       context: .
@@ -235,6 +255,8 @@ services:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-fotoprint};Username=${POSTGRES_USER:-fotoprint};Password=${POSTGRES_PASSWORD:-fotoprint_secret}
       N8n__WebhookBaseUrl: http://n8n:5678/webhook
       Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-demo-bot-token}
+      Telegram__WebhookSecret: ${TELEGRAM_WEBHOOK_SECRET:-}
+      Telegram__CloudflaredMetricsUrl: http://cloudflared:2000/quicktunnel
       LLM_PROVIDER: ${LLM_PROVIDER:-nvidia}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
       LLM_MODEL: ${LLM_MODEL:-nvidia/nemotron-3.5-super-vl-120b-a12b}

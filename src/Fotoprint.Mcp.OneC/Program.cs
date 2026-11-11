@@ -83,21 +83,49 @@ app.MapGet("/tools/list", () => Results.Ok(new { tools }));
 // Tool 1: get_order_status
 app.MapGet("/tools/get_order_status", [RequirePermission("onec:read_orders")] (string order_id) =>
 {
-    // Моковые производственные данные 1С
+    // Реалистичные моковые производственные данные 1С:УНТ
     var cleanId = order_id.Replace("ЗК-", "").Trim();
-    var isUrgent = cleanId == "44102";
-
-    var orderData = new
+    object orderData = cleanId switch
     {
-        order_id = $"ЗК-{cleanId}",
-        client = isUrgent ? "Альфа-Маркет" : "ГринВей Корпорейшн",
-        item_name = isUrgent ? "Рекламный каталог А4, 48 полос, тираж 50 000 экз." : "Буклеты евро, 4+4, тираж 10 000 экз.",
-        current_stage = isUrgent ? "Офсетная печать (Heidelberg Speedmaster XL 75)" : "Склад готовой продукции",
-        readiness_percent = isUrgent ? 65 : 100,
-        status = isUrgent ? "in_progress" : "ready_for_dispatch",
-        materials_status = isUrgent ? "Мелованная бумага 130г доставлена, краска в наличии" : "Все материалы списаны",
-        planned_delivery = isUrgent ? DateTime.UtcNow.AddDays(2).ToString("yyyy-MM-dd") : DateTime.UtcNow.ToString("yyyy-MM-dd"),
-        alerts = isUrgent ? new[] { "Внимание: Зафиксировано отставание от графика на 6 часов из-за юстировки валов." } : Array.Empty<string>()
+        "44102" => new
+        {
+            order_id = "ЗК-44102",
+            client = "Альфа-Маркет",
+            item_name = "Рекламный каталог А4, 48 полос, тираж 50 000 экз.",
+            current_stage = "Офсетная печать (Heidelberg Speedmaster XL 75)",
+            readiness_percent = 65,
+            status = "in_progress",
+            materials_status = "Мелованная бумага 130г доставлена, краска в наличии",
+            planned_delivery = DateTime.UtcNow.AddDays(2).ToString("yyyy-MM-dd"),
+            alerts = new[] { "Внимание: Зафиксировано отставание от графика на 6 часов из-за юстировки валов." },
+            source = "1c_mock"
+        },
+        "44103" => new
+        {
+            order_id = "ЗК-44103",
+            client = "ТехноМир",
+            item_name = "Брошюры А5 на скрепке, тираж 25 000 экз.",
+            current_stage = "Постпечатная сборка и ВШРА (Muller Martini)",
+            readiness_percent = 88,
+            status = "in_progress",
+            materials_status = "Все материалы в цехе, обложка с УФ-лаком отпечатана",
+            planned_delivery = DateTime.UtcNow.AddDays(1).ToString("yyyy-MM-dd"),
+            alerts = Array.Empty<string>(),
+            source = "1c_mock"
+        },
+        _ => new
+        {
+            order_id = $"ЗК-{cleanId}",
+            client = "ГринВей Корпорейшн",
+            item_name = "Буклеты евро, 4+4, тираж 10 000 экз.",
+            current_stage = "Склад готовой продукции (ожидает отгрузки)",
+            readiness_percent = 100,
+            status = "ready_for_dispatch",
+            materials_status = "Все материалы списаны, тираж упакован на паллеты",
+            planned_delivery = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+            alerts = Array.Empty<string>(),
+            source = "1c_mock"
+        }
     };
 
     return Results.Ok(orderData);
