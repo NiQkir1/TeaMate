@@ -345,5 +345,72 @@ public class FotoprintAiAgentTests
         Assert.Contains("Connection refused to MCP service", serializedContents);
         Assert.DoesNotContain("mock_offline", serializedContents);
     }
+
+    [Fact]
+    public async Task Agent_Blocks_CreateTask_Without_Confirmation_And_Returns_ActionPlan()
+    {
+        var gemini = new CreateTaskFakeGeminiClient();
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(
+            telegramId: 100001,
+            chatId: 55555,
+            messageText: "Поставь задачу Сидорову подготовить финансовый отчет до пятницы");
+
+        Assert.True(res.IsSuccess);
+        Assert.Empty(res.ToolsInvoked);
+        Assert.Contains("План действий (требуется подтверждение)", res.AnswerText);
+        Assert.Contains("Подготовить финансовый отчет", res.AnswerText);
+        Assert.Contains("подтвердите выполнение плана", res.AnswerText);
+    }
+
+    [Fact]
+    public async Task Agent_Executes_CreateTask_Only_After_User_Confirmation()
+    {
+        var history = new List<ChatMessage>
+        {
+            new() { Role = "user", Content = "Поставь задачу Сидорову подготовить финансовый отчет до пятницы" },
+            new() { Role = "assistant", Content = "📋 **План действий (требуется подтверждение):**\n1. Создание новой задачи в Битрикс24\nПожалуйста, подтвердите выполнение плана (напишите «Да, подтверждаю»)." }
+        };
+
+        Assert.False(FotoprintAiAgent.IsMutatingActionConfirmed(new List<ChatMessage>(), "Поставь задачу Сидорову"));
+        Assert.False(FotoprintAiAgent.IsMutatingActionConfirmed(history, "Нет, отмена"));
+        Assert.False(FotoprintAiAgent.IsMutatingActionConfirmed(history, "Поменяй срок на понедельник"));
+        Assert.True(FotoprintAiAgent.IsMutatingActionConfirmed(history, "Да, подтверждаю"));
+        Assert.True(FotoprintAiAgent.IsMutatingActionConfirmed(history, "Выполняй"));
+    }
+
+    private class CreateTaskFakeGeminiClient : IGeminiClient
+    {
+        public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => Task.FromResult(new GeminiGenerateResponse(true, "ok", "STOP", 1, 1, 2, 1, null));
+
+        public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            var argsJson = JsonSerializer.SerializeToElement(new
+            {
+                title = "Подготовить финансовый отчет",
+                description = "Финансовый отчет за квартал",
+                responsible_id = 4,
+                deadline = "2026-11-15"
+            });
+            return Task.FromResult(new GeminiTurnResponse(
+                IsSuccess: true,
+                Text: null,
+                FunctionCall: new GeminiFunctionCall("create_task", argsJson),
+                FinishReason: "tool_calls",
+                PromptTokens: 40,
+                CandidatesTokens: 15,
+                TotalTokens: 55,
+                AttemptsMade: 1,
+                ErrorMessage: null));
+        }
+
+        public GeminiCallStats GetStats() => new(1, 1, 60, 59, 1.0, DateTime.UtcNow, 0);
+    }
 }
 

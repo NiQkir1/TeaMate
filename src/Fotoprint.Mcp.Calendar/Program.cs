@@ -78,13 +78,31 @@ var tools = new List<McpToolDefinition>
             },
             required = new[] { "topic_keywords" }
         }
+    },
+    new()
+    {
+        Name = "schedule_meeting",
+        Description = "Создает (назначает) новую встречу или совещание в корпоративном календаре.",
+        InputSchema = new
+        {
+            type = "object",
+            properties = new
+            {
+                title = new { type = "string", description = "Тема встречи" },
+                description = new { type = "string", description = "Повестка / описание встречи" },
+                start_time = new { type = "string", description = "Дата и время начала (ГГГГ-ММ-ДД ЧЧ:ММ)" },
+                duration_minutes = new { type = "integer", description = "Длительность в минутах (по умолчанию 30)" },
+                participants = new { type = "string", description = "Список участников через запятую" }
+            },
+            required = new[] { "title" }
+        }
     }
 };
 
 app.MapGet("/tools/list", () => Results.Ok(new { tools }));
 
 // Tool 1: get_upcoming_meetings
-app.MapGet("/tools/get_upcoming_meetings", [RequirePermission("calendar:read_meetings")] async (int? time_window_minutes, IFotoprintRepository repo) =>
+app.MapGet("/tools/get_upcoming_meetings", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (int? time_window_minutes, IFotoprintRepository repo) =>
 {
     var minutes = time_window_minutes ?? 30;
     var meetings = await repo.GetUpcomingMeetingsAsync(minutes);
@@ -127,7 +145,7 @@ app.MapGet("/tools/get_upcoming_meetings", [RequirePermission("calendar:read_mee
 });
 
 // Tool 2: get_meeting_history
-app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meetings")] async (string topic_keywords, IFotoprintRepository repo) =>
+app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (string topic_keywords, IFotoprintRepository repo) =>
 {
     var allMeetings = await repo.GetUpcomingMeetingsAsync(10000);
     var tokens = (topic_keywords ?? "")
@@ -190,6 +208,32 @@ app.MapGet("/tools/get_meeting_history", [RequirePermission("calendar:read_meeti
     return Results.Ok(history);
 });
 
+// Tool 3: schedule_meeting
+app.MapPost("/tools/schedule_meeting", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(true)] async (ScheduleMeetingRequest req, ILangfuseClient langfuse, HttpContext ctx) =>
+{
+    var meetingId = Guid.NewGuid();
+    var startTime = DateTime.TryParse(req.StartTime, out var st) ? st : DateTime.UtcNow.AddDays(1).Date.AddHours(10);
+    var duration = req.DurationMinutes is > 0 ? req.DurationMinutes.Value : 30;
+    var endTime = startTime.AddMinutes(duration);
+
+    var traceId = ctx.Request.Headers.TryGetValue("X-Trace-Id", out var tr) ? tr.ToString() : langfuse.GenerateTraceId();
+    await langfuse.LogEventAsync(traceId, "Calendar:MeetingScheduled", "INFO", $"Встреча '{req.Title}' запланирована в календаре (ID: {meetingId})");
+
+    return Results.Ok(new
+    {
+        success = true,
+        meeting_id = meetingId,
+        title = req.Title,
+        description = req.Description ?? "Рабочее совещание",
+        start_time = startTime.ToString("yyyy-MM-dd HH:mm (МСК)"),
+        end_time = endTime.ToString("yyyy-MM-dd HH:mm (МСК)"),
+        duration_minutes = duration,
+        participants = req.Participants ?? "По списку отдела",
+        status = "scheduled",
+        calendar_url = $"https://calendar.fotoprint.local/meetings/{meetingId}"
+    });
+});
+
 // MCP tools call router
 app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepository repo, ISecurityValidator validator, ILangfuseClient langfuse, HttpContext ctx) =>
 {
@@ -247,6 +291,22 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
         });
     }
 
+    if (toolName == "schedule_meeting")
+    {
+        var title = request.Params?.Arguments?.GetValueOrDefault("title")?.ToString() ?? "Совещание";
+        var meetingId = Guid.NewGuid();
+        return Results.Ok(new McpJsonRpcResponse
+        {
+            Id = request.Id,
+            Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
+            {
+                meeting_id = meetingId,
+                title,
+                status = "scheduled"
+            }))
+        });
+    }
+
     return Results.BadRequest(new McpJsonRpcResponse
     {
         Id = request.Id,
@@ -255,3 +315,5 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
 });
 
 app.Run();
+
+public record ScheduleMeetingRequest(string Title, string? Description, string? StartTime, int? DurationMinutes, string? Participants);

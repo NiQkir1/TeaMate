@@ -197,7 +197,7 @@ static object BuildMockCrmDeal(string dealQuery)
 }
 
 // Tool 1: get_user_tasks
-app.MapGet("/tools/get_user_tasks", [RequirePermission("bitrix24:read_tasks")] async (int employee_id, string? status_filter, IFotoprintRepository repo) =>
+app.MapGet("/tools/get_user_tasks", [RequirePermission("bitrix24:read_tasks")] [RequireConfirmation(false)] async (int employee_id, string? status_filter, IFotoprintRepository repo) =>
 {
     var dbFilter = string.Equals(status_filter, "overdue", StringComparison.OrdinalIgnoreCase) ? null : status_filter;
     var tasks = await repo.GetActionItemsByResponsibleAsync(employee_id, dbFilter);
@@ -230,7 +230,7 @@ app.MapGet("/tools/get_user_tasks", [RequirePermission("bitrix24:read_tasks")] a
 });
 
 // Tool 2: create_task
-app.MapPost("/tools/create_task", [RequirePermission("bitrix24:create_tasks")] async (CreateTaskRequest req, IFotoprintRepository repo, ILangfuseClient langfuse, HttpContext ctx) =>
+app.MapPost("/tools/create_task", [RequirePermission("bitrix24:create_tasks")] [RequireConfirmation(true)] async (CreateTaskRequest req, IFotoprintRepository repo, ILangfuseClient langfuse, HttpContext ctx) =>
 {
     var bitrixId = Random.Shared.Next(1050, 9999);
     var actionItemId = Guid.NewGuid();
@@ -274,7 +274,7 @@ app.MapPost("/tools/create_task", [RequirePermission("bitrix24:create_tasks")] a
 });
 
 // Tool 3: get_crm_deal_info
-app.MapGet("/tools/get_crm_deal_info", [RequirePermission("bitrix24:read_tasks")] (string deal_query) =>
+app.MapGet("/tools/get_crm_deal_info", [RequirePermission("bitrix24:read_tasks")] [RequireConfirmation(false)] (string deal_query) =>
 {
     return Results.Ok(BuildMockCrmDeal(deal_query));
 });

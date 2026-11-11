@@ -127,28 +127,10 @@ public class FotoprintAiAgent : IFotoprintAgent
             }
         }
 
-        var systemInstruction = $"""
-            Ты — корпоративный AI-ассистент типографии «Фотопринт» (Fotoprint Copilot).
-            Ты общаешься с сотрудником: {userName} (ID сотрудника: {secContext?.EmployeeId ?? 0}, Отдел: {deptStr}, Должность: {secContext?.Position ?? "Сотрудник"}, Роли: [{rolesStr}]).
-
-            Твоя цель: понимать любые свободные запросы пользователя и самостоятельно выбирать подходящие MCP-инструменты:
-            1. Заказы и тиражи (1С) -> вызови 'get_order_status'
-            2. Производственные метрики, выработка, процент брака, загрузка машин (1С) -> вызови 'get_production_kpis'
-            3. Задачи, поручения и CRM-сделки сотрудника (Битрикс24) -> вызови 'get_user_tasks', 'get_crm_deal_info' или создай задачу через 'create_task'
-            4. Расписание и история планерок/совещаний (Календарь) -> вызови 'get_upcoming_meetings' или 'get_meeting_history'
-            5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, правила внутреннего трудового распорядка, а также любые вопросы о том, какие документы/данные лежат в RAG (базе знаний) -> вызови 'search_typography_regulations'
-
-            Если запрос требует данных из нескольких систем (например, заказ в 1С, задачи в Битрикс24 и встречи в календаре), вызывай все нужные инструменты сразу за один шаг.
-            Если запрос не требует инструментов (приветствие, уточнение), сразу дай вежливый и профессиональный ответ.
-            Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов.
-            """;
-
-        // 2. Формируем список Function Tools для LLM (OpenAI / NVIDIA формат)
-        var toolDeclarations = GetAvailableTools();
-
         var contents = new List<object>();
         const int maxHistoryMessagesInContext = 10;
         int loadedHistoryCount = 0;
+        var validHistory = new List<ChatMessage>();
 
         // Подгружаем историю текущей активной сессии (до 10 последних незамороженных сообщений: если 9 — берем 9, если 11+ — берем 10 последних)
         if (secContext != null && secContext.MasterId > 0)
@@ -158,7 +140,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                 var activeSession = await _repo.GetOrCreateActiveSessionByMasterIdAsync(secContext.MasterId, chatId, "web", ct);
                 var sessionMessages = await _repo.GetMessagesBySessionIdAsync(activeSession.Id, limit: maxHistoryMessagesInContext + 5, ct: ct);
 
-                var validHistory = sessionMessages
+                validHistory = sessionMessages
                     .Where(m => !m.IsFrozen && !string.IsNullOrWhiteSpace(m.Content))
                     .ToList();
 
@@ -194,6 +176,26 @@ public class FotoprintAiAgent : IFotoprintAgent
             }
         }
 
+        bool isConfirmedByUser = IsMutatingActionConfirmed(validHistory, messageText);
+
+        var systemInstruction = $"""
+            Ты — корпоративный AI-ассистент типографии «Фотопринт» (Fotoprint Copilot).
+            Ты общаешься с сотрудником: {userName} (ID сотрудника: {secContext?.EmployeeId ?? 0}, Отдел: {deptStr}, Должность: {secContext?.Position ?? "Сотрудник"}, Роли: [{rolesStr}]).
+
+            Твоя цель: понимать любые свободные запросы пользователя и самостоятельно выбирать подходящие MCP-инструменты:
+            1. Заказы и тиражи (1С) -> вызови 'get_order_status'
+            2. Производственные метрики, выработка, процент брака, загрузка машин (1С) -> вызови 'get_production_kpis'
+            3. Задачи, поручения и CRM-сделки сотрудника (Битрикс24) -> вызови 'get_user_tasks', 'get_crm_deal_info' или 'create_task'
+            4. Расписание и история планерок/совещаний (Календарь) -> вызови 'get_upcoming_meetings', 'get_meeting_history' или 'schedule_meeting'
+            5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, ПВТР и база знаний (RAG) -> вызови 'search_typography_regulations'
+
+            Правило подтверждения (Human-in-the-Loop): для инструментов с атрибутом [RequireConfirmation(true)] ('create_task', 'schedule_meeting') без подтверждения пользователя (сейчас confirmed={isConfirmedByUser}) сначала выведи точный «📋 План действий (требуется подтверждение)» со всеми параметрами и попроси подтвердить выполнение («Да, подтверждаю» / «Выполняй»). Если confirmed=True — сразу вызови инструмент создания.
+            Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов.
+            """;
+
+        // 2. Формируем список Function Tools для LLM (OpenAI / NVIDIA формат)
+        var toolDeclarations = GetAvailableTools();
+
         contents.Add(new
         {
             role = "user",
@@ -210,8 +212,8 @@ public class FotoprintAiAgent : IFotoprintAgent
         {
             llmCallsCount++;
             var startTurn = DateTime.UtcNow;
-            var toolsForTurn = turnIdx < maxLlmTurns ? toolDeclarations : null;
-            var turn = toolsInvoked.Count > 0
+            var toolsForTurn = (turnIdx == 1 && toolsInvoked.Count == 0) ? toolDeclarations : null;
+            var turn = turnIdx > 1
                 ? await _gemini.ChatTurnNoThinkingAsync(
                     contents: contents,
                     tools: toolsForTurn,
@@ -272,7 +274,14 @@ public class FotoprintAiAgent : IFotoprintAgent
                 break;
             }
 
-            foreach (var fnCall in calls)
+            // Проверяем атрибут [RequireConfirmation] на выбранных инструментах
+            if (!isConfirmedByUser && calls.All(c => RequiresConfirmation(c.Name)))
+            {
+                finalAnswer = FormatConfirmationPrompt(calls);
+                break;
+            }
+
+            foreach (var fnCall in calls.Where(c => isConfirmedByUser || !RequiresConfirmation(c.Name)))
             {
                 toolsInvoked.Add(fnCall.Name);
                 _logger?.LogInformation("🧠 [Agent] Модель выбрала инструмент '{ToolName}' (шаг {Turn}) с аргументами: {Args}",
@@ -301,7 +310,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                     ? fnCall.CallId!
                     : $"call_{fnCall.Name}_{Guid.NewGuid():N}";
                 var startSpan = DateTime.UtcNow;
-                var result = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, empId, userAccessGroups, traceId, ct);
+                var result = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, empId, userAccessGroups, traceId, isConfirmedByUser, ct);
                 var endSpan = DateTime.UtcNow;
                 return (Call: fnCall, CallId: callId, Result: result, Start: startSpan, End: endSpan);
             });
@@ -410,7 +419,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             TotalTokensUsed: totalTokens,
             ErrorMessage: lastTurn?.ErrorMessage);
 
-        if (cacheKey != null && finalResponse.IsSuccess && !toolsInvoked.Contains("create_task", StringComparer.OrdinalIgnoreCase))
+        if (cacheKey != null && finalResponse.IsSuccess && !toolsInvoked.Any(RequiresConfirmation))
         {
             _responseCache[cacheKey] = (finalResponse, DateTime.UtcNow.Add(ResponseCacheTtl));
         }
@@ -418,24 +427,61 @@ public class FotoprintAiAgent : IFotoprintAgent
         return finalResponse;
     }
 
+    public static bool RequiresConfirmation(string toolName)
+    {
+        var method = typeof(FotoprintAiAgent).GetMethod(
+            $"Tool_{toolName}",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.IgnoreCase);
+        var attr = method != null
+            ? System.Reflection.CustomAttributeExtensions.GetCustomAttribute<RequireConfirmationAttribute>(method)
+            : null;
+        return attr?.Required ?? false;
+    }
+
+    public static bool IsMutatingActionConfirmed(IReadOnlyList<ChatMessage> validHistory, string currentMessage)
+    {
+        if (validHistory == null || validHistory.Count == 0 || string.IsNullOrWhiteSpace(currentMessage)) return false;
+        var t = currentMessage.Trim().ToLowerInvariant();
+
+        if (t.Contains("нет") || t.Contains("отмен") || t.Contains("не надо") || t.Contains("не нужно") ||
+            t.StartsWith("измени ") || t.StartsWith("поменяй ") ||
+            t.Contains("поставь задач") || t.Contains("создай задач") || t.Contains("назначь встреч"))
+            return false;
+
+        var lastReply = validHistory.LastOrDefault(m => string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))?.Content?.ToLowerInvariant();
+        if (lastReply == null || (!lastReply.Contains("план действий") && !lastReply.Contains("подтвердите") && !lastReply.Contains("подтверждение")))
+            return false;
+
+        return ContextSwitchDetector.IsActionPlanConfirmationOrAdjustment(t);
+    }
+
+    private static string FormatConfirmationPrompt(IReadOnlyList<GeminiFunctionCall> calls)
+    {
+        var lines = calls.Select(c => $"- **{c.Name}**: `{JsonSerializer.Serialize(c.Arguments, Utf8JsonOptions)}`");
+        return $"📋 **План действий (требуется подтверждение):**\n{string.Join("\n", lines)}\n\nПожалуйста, подтвердите выполнение плана (напишите **«Да, подтверждаю»** или **«Выполняй»**).";
+    }
+
     private static bool IsCacheableReadQuery(string messageText)
     {
         if (string.IsNullOrWhiteSpace(messageText) || messageText.Length < 4) return false;
         var t = messageText.Trim().ToLowerInvariant();
-        if (t.Contains("поставь") || t.Contains("создай") || t.Contains("назначь") || t.Contains("добавь") || t.Contains("удали") || t.Contains("измени"))
+        if (t.Contains("поставь") || t.Contains("создай") || t.Contains("назначь") || t.Contains("заведи") ||
+            t.Contains("запланируй") || t.Contains("организуй") ||
+            t.Contains("добавь") || t.Contains("удали") || t.Contains("измени") || t.Contains("поменяй") ||
+            ContextSwitchDetector.IsActionPlanConfirmationOrAdjustment(t))
             return false;
-        // Не кэшируем короткие местоименные фразы, зависящие от предыдущей реплики диалога
         if (t.StartsWith("а ") || t.StartsWith("и ") || t.StartsWith("подробнее") || t.StartsWith("уточни"))
             return false;
         return true;
     }
 
-    private HttpClient CreateMcpClient(long telegramId, string traceId)
+    private HttpClient CreateMcpClient(long telegramId, string traceId, bool isConfirmed = false)
     {
         var client = _httpClientFactory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Internal-Service-Key", _config.Security.InternalServiceSecretKey);
         client.DefaultRequestHeaders.Add("X-Telegram-Id", telegramId.ToString());
         client.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
+        client.DefaultRequestHeaders.Add("X-User-Confirmed", isConfirmed ? "true" : "false");
         return client;
     }
 
@@ -477,115 +523,168 @@ public class FotoprintAiAgent : IFotoprintAgent
         int defaultEmployeeId,
         List<string> userAccessGroups,
         string traceId,
+        bool isConfirmed,
         CancellationToken ct)
     {
         try
         {
-            switch (toolName)
+            if (RequiresConfirmation(toolName) && !isConfirmed)
             {
-                case "get_order_status":
+                return new
                 {
-                    var orderId = TryGetStringArg(arguments, "order_id") ?? "44102";
-                    var url = "http://mcp-1c:8082/tools/get_order_status?order_id=" + Uri.EscapeDataString(orderId);
-                    return await GetMcpJsonAsync(url, "1C", telegramId, traceId, ct);
-                }
-
-                case "get_production_kpis":
-                {
-                    var queryParts = new List<string>();
-                    var dept = TryGetStringArg(arguments, "department");
-                    var dateFrom = TryGetStringArg(arguments, "date_from");
-                    var dateTo = TryGetStringArg(arguments, "date_to");
-                    if (!string.IsNullOrWhiteSpace(dept)) queryParts.Add("department=" + Uri.EscapeDataString(dept));
-                    if (!string.IsNullOrWhiteSpace(dateFrom)) queryParts.Add("date_from=" + Uri.EscapeDataString(dateFrom));
-                    if (!string.IsNullOrWhiteSpace(dateTo)) queryParts.Add("date_to=" + Uri.EscapeDataString(dateTo));
-                    var qs = queryParts.Count > 0 ? "?" + string.Join("&", queryParts) : "";
-                    return await GetMcpJsonAsync($"http://mcp-1c:8082/tools/get_production_kpis{qs}", "1C", telegramId, traceId, ct);
-                }
-
-                case "get_user_tasks":
-                {
-                    var empId = TryGetIntArg(arguments, "employee_id") ?? defaultEmployeeId;
-                    var statusFilter = TryGetStringArg(arguments, "status_filter");
-                    var url = $"http://mcp-bitrix24:8083/tools/get_user_tasks?employee_id={empId}";
-                    if (!string.IsNullOrWhiteSpace(statusFilter))
-                        url += "&status_filter=" + Uri.EscapeDataString(statusFilter);
-                    return await GetMcpJsonAsync(url, "Bitrix24", telegramId, traceId, ct);
-                }
-
-                case "get_crm_deal_info":
-                {
-                    var dealQuery = TryGetStringArg(arguments, "deal_query") ?? "44102";
-                    var url = "http://mcp-bitrix24:8083/tools/get_crm_deal_info?deal_query=" + Uri.EscapeDataString(dealQuery);
-                    return await GetMcpJsonAsync(url, "Bitrix24", telegramId, traceId, ct);
-                }
-
-                case "create_task":
-                {
-                    var title = TryGetStringArg(arguments, "title") ?? "Поручение по запросу";
-                    var description = TryGetStringArg(arguments, "description");
-                    var responsibleId = TryGetIntArg(arguments, "responsible_id") ?? defaultEmployeeId;
-                    DateTime? deadline = DateTime.TryParse(TryGetStringArg(arguments, "deadline"), out var dl) ? dl : null;
-                    Guid? meetingId = Guid.TryParse(TryGetStringArg(arguments, "meeting_id"), out var mid) ? mid : null;
-
-                    var client = CreateMcpClient(telegramId, traceId);
-                    var res = await client.PostAsJsonAsync("http://mcp-bitrix24:8083/tools/create_task", new
-                    {
-                        title,
-                        description,
-                        responsibleId,
-                        deadline,
-                        meetingId
-                    }, ct);
-                    if (res.IsSuccessStatusCode)
-                    {
-                        return await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-                    }
-                    return new { status = "error", message = $"Bitrix24 вернул код {res.StatusCode}" };
-                }
-
-                case "get_upcoming_meetings":
-                {
-                    var windowMinutes = TryGetIntArg(arguments, "time_window_minutes") ?? 60;
-                    var url = $"http://mcp-calendar:8084/tools/get_upcoming_meetings?time_window_minutes={windowMinutes}";
-                    return await GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
-                }
-
-                case "get_meeting_history":
-                {
-                    var keywords = TryGetStringArg(arguments, "topic_keywords") ?? "";
-                    var url = "http://mcp-calendar:8084/tools/get_meeting_history?topic_keywords=" + Uri.EscapeDataString(keywords);
-                    return await GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
-                }
-
-                case "search_typography_regulations":
-                {
-                    var query = TryGetStringArg(arguments, "query") ?? "";
-                    var topK = _config.Rag.TopK > 0 ? _config.Rag.TopK : 5;
-                    var chunks = await _repo.SearchTextChunksAsync(query, userAccessGroups, topK, ct);
-                    if (chunks.Count > 0)
-                    {
-                        return chunks.Select(c => new { chunk_id = c.Id, document_id = c.DocumentId, text = c.ChunkText }).ToList();
-                    }
-
-                    return new
-                    {
-                        status = "no_matches_or_restricted",
-                        query,
-                        user_access_groups = userAccessGroups,
-                        message = "В корпоративной базе знаний (RAG) не найдено фрагментов по данному запросу для ваших групп доступа."
-                    };
-                }
-
-                default:
-                    return new { status = "unknown_tool", tool = toolName };
+                    status = "confirmation_required",
+                    tool = toolName,
+                    planned_arguments = arguments,
+                    message = "Действие НЕ выполнено: требуется подтверждение пользователя. Выведи точный План действий и попроси подтвердить его выполнение."
+                };
             }
+
+            return toolName switch
+            {
+                "get_order_status" => await Tool_get_order_status(arguments, telegramId, traceId, ct),
+                "get_production_kpis" => await Tool_get_production_kpis(arguments, telegramId, traceId, ct),
+                "get_user_tasks" => await Tool_get_user_tasks(arguments, telegramId, defaultEmployeeId, traceId, ct),
+                "get_crm_deal_info" => await Tool_get_crm_deal_info(arguments, telegramId, traceId, ct),
+                "create_task" => await Tool_create_task(arguments, telegramId, defaultEmployeeId, traceId, isConfirmed, ct),
+                "get_upcoming_meetings" => await Tool_get_upcoming_meetings(arguments, telegramId, traceId, ct),
+                "get_meeting_history" => await Tool_get_meeting_history(arguments, telegramId, traceId, ct),
+                "schedule_meeting" => await Tool_schedule_meeting(arguments, telegramId, traceId, isConfirmed, ct),
+                "search_typography_regulations" => await Tool_search_typography_regulations(arguments, userAccessGroups, ct),
+                _ => new { status = "unknown_tool", tool = toolName }
+            };
         }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Ошибка исполнения инструмента {ToolName}", toolName);
             return new { error = ex.Message };
         }
+    }
+
+    [RequireConfirmation(false)]
+    private Task<object> Tool_get_order_status(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
+    {
+        var orderId = TryGetStringArg(arguments, "order_id") ?? "44102";
+        var url = "http://mcp-1c:8082/tools/get_order_status?order_id=" + Uri.EscapeDataString(orderId);
+        return GetMcpJsonAsync(url, "1C", telegramId, traceId, ct);
+    }
+
+    [RequireConfirmation(false)]
+    private Task<object> Tool_get_production_kpis(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
+    {
+        var queryParts = new List<string>();
+        var dept = TryGetStringArg(arguments, "department");
+        var dateFrom = TryGetStringArg(arguments, "date_from");
+        var dateTo = TryGetStringArg(arguments, "date_to");
+        if (!string.IsNullOrWhiteSpace(dept)) queryParts.Add("department=" + Uri.EscapeDataString(dept));
+        if (!string.IsNullOrWhiteSpace(dateFrom)) queryParts.Add("date_from=" + Uri.EscapeDataString(dateFrom));
+        if (!string.IsNullOrWhiteSpace(dateTo)) queryParts.Add("date_to=" + Uri.EscapeDataString(dateTo));
+        var qs = queryParts.Count > 0 ? "?" + string.Join("&", queryParts) : "";
+        return GetMcpJsonAsync($"http://mcp-1c:8082/tools/get_production_kpis{qs}", "1C", telegramId, traceId, ct);
+    }
+
+    [RequireConfirmation(false)]
+    private Task<object> Tool_get_user_tasks(JsonElement arguments, long telegramId, int defaultEmployeeId, string traceId, CancellationToken ct)
+    {
+        var empId = TryGetIntArg(arguments, "employee_id") ?? defaultEmployeeId;
+        var statusFilter = TryGetStringArg(arguments, "status_filter");
+        var url = $"http://mcp-bitrix24:8083/tools/get_user_tasks?employee_id={empId}";
+        if (!string.IsNullOrWhiteSpace(statusFilter))
+            url += "&status_filter=" + Uri.EscapeDataString(statusFilter);
+        return GetMcpJsonAsync(url, "Bitrix24", telegramId, traceId, ct);
+    }
+
+    [RequireConfirmation(false)]
+    private Task<object> Tool_get_crm_deal_info(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
+    {
+        var dealQuery = TryGetStringArg(arguments, "deal_query") ?? "44102";
+        var url = "http://mcp-bitrix24:8083/tools/get_crm_deal_info?deal_query=" + Uri.EscapeDataString(dealQuery);
+        return GetMcpJsonAsync(url, "Bitrix24", telegramId, traceId, ct);
+    }
+
+    [RequireConfirmation(true)]
+    private async Task<object> Tool_create_task(JsonElement arguments, long telegramId, int defaultEmployeeId, string traceId, bool isConfirmed, CancellationToken ct)
+    {
+        var title = TryGetStringArg(arguments, "title") ?? "Поручение по запросу";
+        var description = TryGetStringArg(arguments, "description");
+        var responsibleId = TryGetIntArg(arguments, "responsible_id") ?? defaultEmployeeId;
+        DateTime? deadline = DateTime.TryParse(TryGetStringArg(arguments, "deadline"), out var dl) ? dl : null;
+        Guid? meetingId = Guid.TryParse(TryGetStringArg(arguments, "meeting_id"), out var mid) ? mid : null;
+
+        var client = CreateMcpClient(telegramId, traceId, isConfirmed);
+        var res = await client.PostAsJsonAsync("http://mcp-bitrix24:8083/tools/create_task", new
+        {
+            title,
+            description,
+            responsibleId,
+            deadline,
+            meetingId
+        }, ct);
+        if (res.IsSuccessStatusCode)
+        {
+            return await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        }
+        return new { status = "error", message = $"Bitrix24 вернул код {res.StatusCode}" };
+    }
+
+    [RequireConfirmation(false)]
+    private Task<object> Tool_get_upcoming_meetings(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
+    {
+        var windowMinutes = TryGetIntArg(arguments, "time_window_minutes") ?? 60;
+        var url = $"http://mcp-calendar:8084/tools/get_upcoming_meetings?time_window_minutes={windowMinutes}";
+        return GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
+    }
+
+    [RequireConfirmation(false)]
+    private Task<object> Tool_get_meeting_history(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
+    {
+        var keywords = TryGetStringArg(arguments, "topic_keywords") ?? "";
+        var url = "http://mcp-calendar:8084/tools/get_meeting_history?topic_keywords=" + Uri.EscapeDataString(keywords);
+        return GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
+    }
+
+    [RequireConfirmation(true)]
+    private async Task<object> Tool_schedule_meeting(JsonElement arguments, long telegramId, string traceId, bool isConfirmed, CancellationToken ct)
+    {
+        var title = TryGetStringArg(arguments, "title") ?? "Рабочее совещание";
+        var description = TryGetStringArg(arguments, "description");
+        var startTime = TryGetStringArg(arguments, "start_time");
+        var durationMinutes = TryGetIntArg(arguments, "duration_minutes") ?? 30;
+        var participants = TryGetStringArg(arguments, "participants");
+
+        var client = CreateMcpClient(telegramId, traceId, isConfirmed);
+        var res = await client.PostAsJsonAsync("http://mcp-calendar:8084/tools/schedule_meeting", new
+        {
+            title,
+            description,
+            startTime,
+            durationMinutes,
+            participants
+        }, ct);
+        if (res.IsSuccessStatusCode)
+        {
+            return await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        }
+        return new { status = "error", message = $"Календарь вернул код {res.StatusCode}" };
+    }
+
+    [RequireConfirmation(false)]
+    private async Task<object> Tool_search_typography_regulations(JsonElement arguments, List<string> userAccessGroups, CancellationToken ct)
+    {
+        var query = TryGetStringArg(arguments, "query") ?? "";
+        var topK = _config.Rag.TopK > 0 ? _config.Rag.TopK : 5;
+        var chunks = await _repo.SearchTextChunksAsync(query, userAccessGroups, topK, ct);
+        if (chunks.Count > 0)
+        {
+            return chunks.Select(c => new { chunk_id = c.Id, document_id = c.DocumentId, text = c.ChunkText }).ToList();
+        }
+
+        return new
+        {
+            status = "no_matches_or_restricted",
+            query,
+            user_access_groups = userAccessGroups,
+            message = "В корпоративной базе знаний (RAG) не найдено фрагментов по данному запросу для ваших групп доступа."
+        };
     }
 
     private static object GetAvailableTools()
@@ -671,7 +770,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                 function = new
                 {
                     name = "create_task",
-                    description = "Создает новую задачу/поручение в Битрикс24.",
+                    description = "Создает новую задачу/поручение в Битрикс24 (вызывать ТОЛЬКО после получения подтверждения плана действий от пользователя).",
                     parameters = new
                     {
                         type = "object",
@@ -681,6 +780,28 @@ public class FotoprintAiAgent : IFotoprintAgent
                             description = new { type = "string", description = "Подробное описание задачи" },
                             responsible_id = new { type = "integer", description = "ID ответственного сотрудника" },
                             deadline = new { type = "string", description = "Срок выполнения (ГГГГ-ММ-ДД)" }
+                        },
+                        required = new[] { "title" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "schedule_meeting",
+                    description = "Назначает (создает) новую встречу или совещание в корпоративном календаре (вызывать ТОЛЬКО после получения подтверждения плана действий от пользователя).",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            title = new { type = "string", description = "Тема встречи" },
+                            description = new { type = "string", description = "Повестка и описание встречи" },
+                            start_time = new { type = "string", description = "Дата и время начала (ГГГГ-ММ-ДД ЧЧ:ММ)" },
+                            duration_minutes = new { type = "integer", description = "Длительность в минутах (по умолчанию 30)" },
+                            participants = new { type = "string", description = "Участники встречи через запятую" }
                         },
                         required = new[] { "title" }
                     }
