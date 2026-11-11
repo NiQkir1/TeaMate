@@ -10,6 +10,7 @@
 .PARAMETER SkipModelDownload
     Skips downloading the Whisper GGML model file if not found locally.
 #>
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$LightModel = $false,
     [switch]$SkipModelDownload = $false
@@ -65,6 +66,7 @@ if ($TsukikoExe) {
     Write-Ok "Found existing Tsukiko CLI: $TsukikoExe"
 } else {
     Write-Info "Tsukiko CLI not found. Installing portable version into $ToolsDir (no admin rights required)..."
+    $ZipPath = Join-Path $ToolsDir "tsukiko-portable.zip"
     try {
         if (-not (Test-Path -LiteralPath $ToolsDir)) {
             New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null
@@ -72,18 +74,12 @@ if ($TsukikoExe) {
 
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $ReleaseUrl = "https://github.com/Yukovsky/tsukiko/releases/download/v1.5.3/tsukiko-portable.zip"
-        $ZipPath = Join-Path $ToolsDir "tsukiko-portable.zip"
 
         Write-Info "Downloading Tsukiko Portable v1.5.3 from $ReleaseUrl ..."
         Invoke-WebRequest -Uri $ReleaseUrl -OutFile $ZipPath -UseBasicParsing
 
         Write-Info "Extracting archive to $ToolsDir ..."
         Expand-Archive -Path $ZipPath -DestinationPath $ToolsDir -Force
-
-        if (Test-Path -LiteralPath $ZipPath) {
-            Remove-Item -LiteralPath $ZipPath -Force
-            Write-DebugLog "Cleaned up temporary archive $ZipPath"
-        }
 
         # Re-check extracted binary location
         foreach ($candidate in $CandidateCliPaths) {
@@ -107,6 +103,11 @@ if ($TsukikoExe) {
     } catch {
         Write-Err "Failed to download or extract Tsukiko Portable: $($_.Exception.Message)"
         exit 1
+    } finally {
+        if (Test-Path -LiteralPath $ZipPath) {
+            Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
+            Write-DebugLog "Cleaned up temporary archive $ZipPath"
+        }
     }
 }
 

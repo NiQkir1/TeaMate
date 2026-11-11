@@ -15,6 +15,12 @@ set -euo pipefail
 LIGHT_MODEL=false
 SKIP_MODEL=false
 
+print_usage() {
+    echo "Usage: $0 [--light] [--skip-model]"
+    echo "  --light       Download lightweight ggml-base.bin (~148 MB) instead of ggml-large-v3-turbo.bin (~1.6 GB)"
+    echo "  --skip-model  Skip downloading the Whisper GGML model if missing"
+}
+
 for arg in "$@"; do
     case "$arg" in
         --light|-l)
@@ -24,13 +30,13 @@ for arg in "$@"; do
             SKIP_MODEL=true
             ;;
         --help|-h)
-            echo "Usage: $0 [--light] [--skip-model]"
-            echo "  --light       Download lightweight ggml-base.bin (~148 MB) instead of ggml-large-v3-turbo.bin (~1.6 GB)"
-            echo "  --skip-model  Skip downloading the Whisper GGML model if missing"
+            print_usage
             exit 0
             ;;
         *)
-            echo "[WARN] Unknown argument ignored: $arg"
+            echo "[ERROR] Unknown argument: $arg" >&2
+            print_usage >&2
+            exit 1
             ;;
     esac
 done
