@@ -149,7 +149,7 @@ public class ContextSwitchDetector : IContextSwitchDetector
                 await _langfuse.CreateGenerationAsync(
                     traceId: traceId,
                     name: "Gen:ContextSwitchDetector",
-                    model: _config.Llm.Models.FastModel,
+                    model: response.Model ?? _config.Llm.Models.FastModel,
                     startTime: startTime,
                     endTime: endTime,
                     promptTokens: response.PromptTokens,

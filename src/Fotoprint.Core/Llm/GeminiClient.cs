@@ -82,7 +82,8 @@ public record GeminiTurnResponse(
     int TotalTokens,
     int AttemptsMade,
     string? ErrorMessage,
-    IReadOnlyList<GeminiFunctionCall>? FunctionCalls = null);
+    IReadOnlyList<GeminiFunctionCall>? FunctionCalls = null,
+    string? Model = null);
 
 public record GeminiCallStats(
     int TotalCalls,
@@ -101,10 +102,11 @@ public record GeminiGenerateResponse(
     int CandidatesTokens,
     int TotalTokens,
     int AttemptsMade,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    string? Model = null);
 
 /// <summary>
-/// Клиент вызова модели NVIDIA NIM (nvidia/nemotron-3.5-super-vl-120b-a12b).
+/// Клиент вызова моделей NVIDIA NIM (ChatModel / FastModel / FallbackModel).
 /// Реализует стандартный OpenAI-совместимый протокол с поддержкой reasoning (enable_thinking),
 /// function calling, мультимодальности и интеграции с Langfuse и балансировщиком нагрузки.
 /// </summary>
@@ -130,7 +132,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
     private readonly string _fallbackModel;
     private readonly string _baseUrl;
     private readonly int _rpmLimit;
-    private DateTime _primaryModelCircuitOpenUntilUtc = DateTime.MinValue;
+    private long _primaryModelCircuitOpenUntilTicks = DateTime.MinValue.Ticks;
 
     // Счётчик вызовов в скользящем окне 60 секунд
     private readonly Queue<DateTime> _callTimestamps = new();
@@ -171,19 +173,26 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
 
         if (string.IsNullOrWhiteSpace(_model) || _model.StartsWith("gemini") || _model.Equals("gpt-4o", StringComparison.OrdinalIgnoreCase))
         {
-            _model = "nvidia/nemotron-3.5-super-vl-120b-a12b";
+            _model = "nvidia/nemotron-3-ultra-550b-a55b";
         }
 
         _fastModel = !string.IsNullOrWhiteSpace(_config.Llm.Models.FastModel) &&
                      !_config.Llm.Models.FastModel.StartsWith("gemini")
             ? _config.Llm.Models.FastModel
-            : "nvidia/nemotron-3.5-lightning-30b-a3b";
+            : "nvidia/nemotron-3.5-bolt-e4b";
 
         _fallbackModel = !string.IsNullOrWhiteSpace(_config.Llm.Models.FallbackModel) &&
                          !_config.Llm.Models.FallbackModel.StartsWith("gemini") &&
                          !string.Equals(_config.Llm.Models.FallbackModel, _model, StringComparison.OrdinalIgnoreCase)
             ? _config.Llm.Models.FallbackModel
-            : "nvidia/nemotron-3.5-lightning-30b-a3b";
+            : "nvidia/nemotron-3.5-bolt-e4b";
+
+        if (string.Equals(_fallbackModel, _model, StringComparison.OrdinalIgnoreCase))
+        {
+            _fallbackModel = string.Equals(_model, "nvidia/nemotron-3.5-bolt-e4b", StringComparison.OrdinalIgnoreCase)
+                ? "nvidia/nemotron-3-ultra-550b-a55b"
+                : "nvidia/nemotron-3.5-bolt-e4b";
+        }
 
         var configBaseUrl = Environment.GetEnvironmentVariable("LLM_BASE_URL")
             ?? _config.Llm.Proxy.BaseUrl;
@@ -247,7 +256,8 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             CandidatesTokens: turn.CandidatesTokens,
             TotalTokens: turn.TotalTokens,
             AttemptsMade: turn.AttemptsMade,
-            ErrorMessage: turn.ErrorMessage);
+            ErrorMessage: turn.ErrorMessage,
+            Model: turn.Model);
     }
 
     public Task<GeminiTurnResponse> ChatTurnAsync(
@@ -258,7 +268,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
         int? maxOutputTokens = null,
         string? traceId = null,
         CancellationToken ct = default)
-        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: tools != null ? _fastModel : _model, ct: ct);
+        => ChatTurnCoreAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, enableThinking: true, preferredModel: _model, ct: ct);
 
     public Task<GeminiTurnResponse> ChatTurnNoThinkingAsync(
         List<object> contents,
@@ -288,6 +298,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
             taskName: $"Nvidia:{preferredModel}:ChatTurn",
             work: async token =>
             {
+                var lastAttemptedModel = preferredModel;
                 var rollbackResult = await _rollbackManager.ExecuteWithRollbackAsync(
                     nodeName: $"Nvidia:{preferredModel}:Turn",
                     action: async (attempt, retryToken) =>
@@ -295,10 +306,11 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                         RecordCall();
 
                         // Если основная тяжелая модель временно недоступна (Circuit Breaker открыт после таймаута/503) или это повторная попытка — сразу используем быструю модель
-                        bool isCircuitOpen = DateTime.UtcNow < _primaryModelCircuitOpenUntilUtc &&
+                        bool isCircuitOpen = DateTime.UtcNow.Ticks < Volatile.Read(ref _primaryModelCircuitOpenUntilTicks) &&
                                              string.Equals(preferredModel, _model, StringComparison.OrdinalIgnoreCase);
 
                         var activeModel = (attempt == 1 && !isCircuitOpen) ? preferredModel : _fallbackModel;
+                        lastAttemptedModel = activeModel;
                         if (attempt > 1 && !string.Equals(activeModel, preferredModel, StringComparison.OrdinalIgnoreCase))
                         {
                             _logger?.LogInformation("🔀 [NVIDIA Fallback] Попытка {Attempt}: переключение с '{Primary}' на резервную модель '{Fallback}'",
@@ -317,24 +329,25 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", activeKey);
                         }
 
-                        // Защита от зависаний тяжелой модели (TTFT timeout 10 сек на 1-й попытке, чтобы не ждать 30 сек перед фоллбэком)
+                        // Защита от зависаний модели (HTTP TTFB timeout 15 сек на 1-й попытке, если настроен отличный fallback)
                         using var ttftCts = CancellationTokenSource.CreateLinkedTokenSource(retryToken);
-                        if (attempt == 1 && string.Equals(activeModel, _model, StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(_model, _fallbackModel, StringComparison.OrdinalIgnoreCase))
+                        if (attempt == 1 && (string.Equals(activeModel, _model, StringComparison.OrdinalIgnoreCase) || string.Equals(activeModel, _fastModel, StringComparison.OrdinalIgnoreCase)) &&
+                            !string.Equals(activeModel, _fallbackModel, StringComparison.OrdinalIgnoreCase))
                         {
-                            ttftCts.CancelAfter(TimeSpan.FromSeconds(10));
+                            ttftCts.CancelAfter(TimeSpan.FromSeconds(15));
                         }
 
                         HttpResponseMessage response;
                         try
                         {
                             response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ttftCts.Token);
+                            ttftCts.CancelAfter(Timeout.InfiniteTimeSpan);
                         }
                         catch (Exception ex) when (!retryToken.IsCancellationRequested)
                         {
                             if (string.Equals(activeModel, _model, StringComparison.OrdinalIgnoreCase))
                             {
-                                _primaryModelCircuitOpenUntilUtc = DateTime.UtcNow.AddMinutes(3);
+                                Interlocked.Exchange(ref _primaryModelCircuitOpenUntilTicks, DateTime.UtcNow.AddMinutes(3).Ticks);
                                 _logger?.LogWarning("⚡ [CircuitBreaker] Основная модель '{Model}' не ответила вовремя ({Message}). Переключаем трафик на '{Fallback}' на 3 мин.",
                                     _model, ex.Message, _fallbackModel);
                             }
@@ -351,7 +364,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
 
                                 if (string.Equals(activeModel, _model, StringComparison.OrdinalIgnoreCase) && statusCode >= 500)
                                 {
-                                    _primaryModelCircuitOpenUntilUtc = DateTime.UtcNow.AddMinutes(3);
+                                    Interlocked.Exchange(ref _primaryModelCircuitOpenUntilTicks, DateTime.UtcNow.AddMinutes(3).Ticks);
                                 }
 
                                 throw new NodeTransientException(
@@ -363,11 +376,11 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                             if (!string.IsNullOrWhiteSpace(mediaType) &&
                                 mediaType.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
                             {
-                                return await ParseNvidiaStreamResponseAsync(response, attempt, retryToken);
+                                return (await ParseNvidiaStreamResponseAsync(response, attempt, retryToken)) with { Model = activeModel };
                             }
 
                             var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
-                            return ParseNvidiaTurnResponse(json, attempt);
+                            return ParseNvidiaTurnResponse(json, attempt) with { Model = activeModel };
                         }
                     },
                     compensatingRollbackAction: (ex, rollbackToken) =>
@@ -390,7 +403,7 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                             "Nvidia:TurnFailed",
                             "ERROR",
                             lastErr,
-                            metadata: new { model = _model, attempts = rollbackResult.AttemptsMade });
+                            metadata: new { model = lastAttemptedModel, attempts = rollbackResult.AttemptsMade });
                     }
 
                     return new GeminiTurnResponse(
@@ -402,7 +415,8 @@ public class NvidiaClient : INvidiaClient, IGeminiClient
                         CandidatesTokens: 0,
                         TotalTokens: 0,
                         AttemptsMade: rollbackResult.AttemptsMade,
-                        ErrorMessage: lastErr);
+                        ErrorMessage: lastErr,
+                        Model: lastAttemptedModel);
                 }
 
                 return rollbackResult.Value!;

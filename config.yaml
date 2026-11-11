@@ -32,14 +32,14 @@ llm:
 
   # Модели для различных задач
   models:
-    # Основная модель: nvidia/nemotron-3.5-super-vl-120b-a12b
-    chat_model: "nvidia/nemotron-3.5-super-vl-120b-a12b"
-    # Быстрая экономичная модель для роутинга и первичной классификации (~0.7с вместо 32с)
-    fast_model: "nvidia/nemotron-3.5-lightning-30b-a3b"
+    # Основная модель: nvidia/nemotron-3-ultra-550b-a55b (выбор и параллельный вызов инструментов + сложный анализ)
+    chat_model: "nvidia/nemotron-3-ultra-550b-a55b"
+    # Быстрая модель для синтеза ответа после инструментов, роутинга и ContextSwitch (~1.1-3.9с)
+    fast_model: "nvidia/nemotron-3.5-bolt-e4b"
     # Модель для вычисления векторных эмбеддингов регламентов
     embedding_model: "text-embedding-004"
-    # Резервная модель при недоступности основной (например при 503 content safety screening)
-    fallback_model: "nvidia/nemotron-3.5-lightning-30b-a3b"
+    # Резервная модель при недоступности основной (Circuit Breaker и повторы)
+    fallback_model: "nvidia/nemotron-3.5-bolt-e4b"
 
   # Гиперпараметры генерации ответов нейросетью
   parameters:

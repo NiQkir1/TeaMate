@@ -13,7 +13,7 @@
         "McpUrls__Bitrix24": "http://localhost:8083",
         "LLM_PROVIDER": "nvidia",
         "LLM_BASE_URL": "https://integrate.api.nvidia.com/v1",
-        "LLM_MODEL": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "LLM_MODEL": "nvidia/nemotron-3-ultra-550b-a55b",
         "NVIDIA_API_KEY": "your-nvidia-api-key"
       }
     }
