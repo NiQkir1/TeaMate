@@ -1553,17 +1553,29 @@ app.MapPost("/api/telemetry/evaluate-formatting-policy", async (
 
 app.MapGet("/", () =>
 {
-    var candidates = new[]
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    while (dir != null)
     {
-        Path.Combine(AppContext.BaseDirectory, "infra", "nginx", "html", "index.html"),
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../infra/nginx/html/index.html")),
-        Path.Combine(Directory.GetCurrentDirectory(), "infra", "nginx", "html", "index.html")
-    };
+        var target = Path.Combine(dir.FullName, "infra", "nginx", "html", "index.html");
+        if (File.Exists(target))
+        {
+            return Results.File(target, "text/html; charset=utf-8");
+        }
+        dir = dir.Parent;
+    }
 
-    var htmlPath = candidates.FirstOrDefault(File.Exists);
-    return htmlPath != null
-        ? Results.File(htmlPath, "text/html; charset=utf-8")
-        : Results.Content("<h1>Fotoprint AI Gateway</h1><p>Web UI is served via Nginx in Docker.</p>", "text/html");
+    dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+    while (dir != null)
+    {
+        var target = Path.Combine(dir.FullName, "infra", "nginx", "html", "index.html");
+        if (File.Exists(target))
+        {
+            return Results.File(target, "text/html; charset=utf-8");
+        }
+        dir = dir.Parent;
+    }
+
+    return Results.Content("<h1>Fotoprint AI Gateway</h1><p>Web UI is served via Nginx in Docker.</p>", "text/html");
 });
 
 app.Run();
