@@ -1551,6 +1551,21 @@ app.MapPost("/api/telemetry/evaluate-formatting-policy", async (
     return Results.Ok(new { trace_id = traceId, metric = "formatting_and_policy", score });
 });
 
+app.MapGet("/", () =>
+{
+    var candidates = new[]
+    {
+        Path.Combine(AppContext.BaseDirectory, "infra", "nginx", "html", "index.html"),
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../infra/nginx/html/index.html")),
+        Path.Combine(Directory.GetCurrentDirectory(), "infra", "nginx", "html", "index.html")
+    };
+
+    var htmlPath = candidates.FirstOrDefault(File.Exists);
+    return htmlPath != null
+        ? Results.File(htmlPath, "text/html; charset=utf-8")
+        : Results.Content("<h1>Fotoprint AI Gateway</h1><p>Web UI is served via Nginx in Docker.</p>", "text/html");
+});
+
 app.Run();
 
 public record EvaluateFaithfulnessRequest(string? TraceId, string UserQuestion, string RawContextData, string AgentAnswer);
