@@ -592,7 +592,7 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
     {
         if (string.IsNullOrWhiteSpace(input))
         {
-            return input ?? string.Empty;
+            return string.Empty;
         }
 
         var text = input.Trim();
@@ -603,7 +603,7 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
         // Pass 2: Deduplicate multi-word and repeated phrase loops
         text = DeduplicateWordNGrams(text);
 
-        return text;
+        return Regex.Replace(text, @"[,;\s]+$", "").Trim();
     }
 
     public static bool IsDuplicateSegmentText(string? current, string? previous)
@@ -744,16 +744,40 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                         var keptLastWordVal = words[i + n - 1].Value;
                         if (!Regex.IsMatch(keptLastWordVal, @"[.!?]+$"))
                         {
-                            var keptEnd = words[i + n - 1].Index + words[i + n - 1].Length;
-                            if (keptLastWordVal.EndsWith(',') || keptLastWordVal.EndsWith(';'))
+                            while (keptLastWordVal.Length > 0 && (keptLastWordVal.EndsWith(',') || keptLastWordVal.EndsWith(';')))
                             {
-                                current = current.Remove(keptEnd - 1, 1).Insert(keptEnd - 1, trailingPunctMatch.Value);
+                                var keptEnd = words[i + n - 1].Index + keptLastWordVal.Length;
+                                current = current.Remove(keptEnd - 1, 1);
+                                keptLastWordVal = keptLastWordVal.Substring(0, keptLastWordVal.Length - 1);
+                                startRemove--;
+                                endRemove--;
                             }
-                            else
+
+                            var insertPos = words[i + n - 1].Index + keptLastWordVal.Length;
+                            current = current.Insert(insertPos, trailingPunctMatch.Value);
+                            startRemove += trailingPunctMatch.Length;
+                            endRemove += trailingPunctMatch.Length;
+                        }
+                    }
+                    else
+                    {
+                        // Duplicate did not end with terminal punctuation [.!?]
+                        // If duplicate was followed by end of string, dangling separator, or sentence boundary,
+                        // strip trailing separator punctuation (commas, semicolons) from the kept phrase
+                        var textAfter = current.Substring(endRemove);
+                        var isEndOrSentenceBoundary = string.IsNullOrWhiteSpace(textAfter) ||
+                                                      Regex.IsMatch(textAfter, @"^[,;\s]*$") ||
+                                                      Regex.IsMatch(textAfter, @"^\s*[.!?\n\r]");
+                        if (isEndOrSentenceBoundary)
+                        {
+                            var keptLastWordVal = words[i + n - 1].Value;
+                            while (keptLastWordVal.Length > 0 && (keptLastWordVal.EndsWith(',') || keptLastWordVal.EndsWith(';')))
                             {
-                                current = current.Insert(keptEnd, trailingPunctMatch.Value);
-                                startRemove += trailingPunctMatch.Length;
-                                endRemove += trailingPunctMatch.Length;
+                                var keptEnd = words[i + n - 1].Index + keptLastWordVal.Length;
+                                current = current.Remove(keptEnd - 1, 1);
+                                keptLastWordVal = keptLastWordVal.Substring(0, keptLastWordVal.Length - 1);
+                                startRemove--;
+                                endRemove--;
                             }
                         }
                     }
@@ -775,7 +799,8 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
             if (!changed) break;
         }
 
-        return Regex.Replace(current.Trim(), @"\s+", " ");
+        var result = Regex.Replace(current.Trim(), @"\s+", " ");
+        return Regex.Replace(result, @"[,;\s]+$", "").Trim();
     }
 
     private static string CleanWordForComparison(string word)

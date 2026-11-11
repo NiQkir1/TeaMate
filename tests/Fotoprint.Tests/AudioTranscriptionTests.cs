@@ -320,6 +320,27 @@ public class AudioTranscriptionTests
         Assert.Equal("Обычный текст расшифровки без таймкодов.", plainResult.Text);
     }
 
+    [Theory]
+    [InlineData("да, письмо, да, письмо", "да, письмо")]
+    [InlineData("проверить заказ, проверить заказ, проверить заказ", "проверить заказ")]
+    [InlineData("да, да, да", "да")]
+    [InlineData("   ", "")]
+    [InlineData(null, "")]
+    [InlineData("Заказ 44102. Заказ 44102.", "Заказ 44102.")]
+    [InlineData("проверить заказ; проверить заказ", "проверить заказ")]
+    [InlineData("проверить заказ,", "проверить заказ")]
+    [InlineData("проверить заказ;", "проверить заказ")]
+    [InlineData("да, письмо, да, письмо.", "да, письмо.")]
+    [InlineData("да, письмо, да, письмо, отправьте его.", "да, письмо, отправьте его.")]
+    [InlineData("Я сказал да, да, да, и он согласился.", "Я сказал да, и он согласился.")]
+    public void LocalEngineAudioTranscriber_DeduplicateRepeatedPhrases_Eliminates_Duplicates_And_Dangling_Separators(
+        string? input,
+        string expected)
+    {
+        var result = LocalEngineAudioTranscriber.DeduplicateRepeatedPhrases(input);
+        Assert.Equal(expected, result);
+    }
+
     [Fact]
     public async Task CompositeAudioTranscriber_Returns_Primary_When_Local_Succeeds()
     {
