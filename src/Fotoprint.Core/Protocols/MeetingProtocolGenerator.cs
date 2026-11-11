@@ -114,11 +114,15 @@ public class MeetingProtocolGenerator : IMeetingProtocolGenerator
             for (int i = 0; i < data.ActionItems.Count; i++)
             {
                 var item = data.ActionItems[i];
+                var responsibleText = string.IsNullOrWhiteSpace(item.ResponsibleName)
+                    ? "требует уточнения"
+                    : item.ResponsibleName;
+                var deadlineText = item.Deadline?.ToString("dd.MM.yyyy") ?? "требует уточнения";
                 var row = table.AppendChild(new TableRow());
                 AddTableCell(row, (i + 1).ToString(), width: "600");
                 AddTableCell(row, item.Title, width: "4500");
-                AddTableCell(row, item.ResponsibleName, width: "2200");
-                AddTableCell(row, item.Deadline?.ToString("dd.MM.yyyy") ?? "Не указан", width: "1500");
+                AddTableCell(row, responsibleText, width: "2200");
+                AddTableCell(row, deadlineText, width: "1500");
                 AddTableCell(row, item.Status, width: "1200");
             }
 
@@ -169,7 +173,11 @@ public class MeetingProtocolGenerator : IMeetingProtocolGenerator
         for (int i = 0; i < data.ActionItems.Count; i++)
         {
             var item = data.ActionItems[i];
-            sb.AppendLine($"<tr><td>{i + 1}</td><td>{item.Title}</td><td>{item.ResponsibleName}</td><td>{item.Deadline:dd.MM.yyyy}</td><td><span class=\"badge\">{item.Status}</span></td></tr>");
+            var responsibleText = string.IsNullOrWhiteSpace(item.ResponsibleName)
+                ? "требует уточнения"
+                : item.ResponsibleName;
+            var deadlineText = item.Deadline?.ToString("dd.MM.yyyy") ?? "требует уточнения";
+            sb.AppendLine($"<tr><td>{i + 1}</td><td>{item.Title}</td><td>{responsibleText}</td><td>{deadlineText}</td><td><span class=\"badge\">{item.Status}</span></td></tr>");
         }
         sb.AppendLine("</tbody></table>");
         sb.AppendLine("</body></html>");

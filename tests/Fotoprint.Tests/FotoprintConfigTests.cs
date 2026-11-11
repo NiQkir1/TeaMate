@@ -47,6 +47,15 @@ public class FotoprintConfigTests
 
         // 7. Проверка конфигурации автономного агента
         Assert.Equal("autonomous_tool_calling", config.Agent.Mode);
+
+        // 8. Проверка параметров распознавания речи и аудиопротоколирования (Audio)
+        Assert.NotNull(config.Audio);
+        Assert.True(config.Audio.Enabled);
+        Assert.Equal("auto", config.Audio.Provider);
+        Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
+        Assert.Equal(300, config.Audio.Engine.TimeoutSeconds);
+        Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
+        Assert.Equal(100, config.Audio.MaxFileSizeMb);
     }
 
     [Fact]
@@ -63,5 +72,11 @@ public class FotoprintConfigTests
         Assert.Equal(3, config.Resilience.MaxRetries);
         Assert.True(config.Security.EnforceInternalServiceAuth);
         Assert.Equal("autonomous_tool_calling", config.Agent.Mode);
+        Assert.True(config.Audio.Enabled);
+        Assert.Equal("auto", config.Audio.Provider);
+        Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
+        Assert.Equal(300, config.Audio.Engine.TimeoutSeconds);
+        Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
+        Assert.Equal(100, config.Audio.MaxFileSizeMb);
     }
 }

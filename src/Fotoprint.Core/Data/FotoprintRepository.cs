@@ -35,6 +35,15 @@ public interface IFotoprintRepository
     Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default);
 
     // Meetings, Notes, Protocols, Action Items
+    Task<Guid> CreateMeetingAsync(
+        string title,
+        string? description,
+        DateTime startTime,
+        DateTime? endTime = null,
+        string status = "completed",
+        int? organizerId = null,
+        List<int>? participantIds = null,
+        CancellationToken ct = default);
     Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default);
     Task<Meeting?> GetMeetingByIdAsync(Guid meetingId, CancellationToken ct = default);
     Task<List<MeetingNote>> GetMeetingNotesAsync(Guid meetingId, CancellationToken ct = default);
@@ -647,6 +656,35 @@ public class FotoprintRepository : IFotoprintRepository
         }, cancellationToken: ct));
 
         return kwChunks.ToList();
+    }
+
+    public async Task<Guid> CreateMeetingAsync(
+        string title,
+        string? description,
+        DateTime startTime,
+        DateTime? endTime = null,
+        string status = "completed",
+        int? organizerId = null,
+        List<int>? participantIds = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var participantsJson = JsonSerializer.Serialize(participantIds ?? new List<int>());
+        const string sql = """
+            INSERT INTO meetings (title, description, start_time, end_time, status, organizer_id, participant_ids)
+            VALUES (@Title, @Description, @StartTime, @EndTime, @Status, @OrganizerId, @Participants::jsonb)
+            RETURNING id;
+        """;
+        return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
+        {
+            Title = title,
+            Description = description,
+            StartTime = startTime,
+            EndTime = endTime,
+            Status = status,
+            OrganizerId = organizerId,
+            Participants = participantsJson
+        }, cancellationToken: ct));
     }
 
     public async Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default)

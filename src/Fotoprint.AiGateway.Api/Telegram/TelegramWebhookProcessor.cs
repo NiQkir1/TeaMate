@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Fotoprint.Core.Agents;
+using Fotoprint.Core.Audio;
 using Fotoprint.Core.Configuration;
 using Fotoprint.Core.Data;
 using Fotoprint.Core.Resilience;
@@ -35,6 +36,12 @@ public sealed class TelegramWebhookProcessor
         bool IsAuthorized,
         JsonElement? Payload = null,
         string? ErrorMessage = null);
+
+    private sealed record VoiceMediaInfo(
+        string? FileId,
+        string FileName,
+        string? LocalFilePath,
+        string? AudioBase64);
 
     public TelegramWebhookProcessor(
         IServiceScopeFactory scopeFactory,
@@ -83,15 +90,15 @@ public sealed class TelegramWebhookProcessor
         }
 
         if (rawUpdate.TryGetProperty("message", out var message) &&
-            TryExtractIncomingMessage(message, out var chatId, out var userId, out var text))
+            TryExtractIncomingMessage(message, out var chatId, out var userId, out var text, out var voiceMedia))
         {
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(text) && voiceMedia == null)
             {
                 return Results.Ok(new { status = "ignored_empty_message", trace_id = traceId });
             }
 
             var updateClone = rawUpdate.Clone();
-            _ = Task.Run(() => ProcessMessageSafelyAsync(chatId, userId, text, updateClone, traceId));
+            _ = Task.Run(() => ProcessMessageSafelyAsync(chatId, userId, text, voiceMedia, updateClone, traceId));
 
             return Results.Ok(new
             {
@@ -243,6 +250,7 @@ public sealed class TelegramWebhookProcessor
         long chatId,
         long userId,
         string text,
+        VoiceMediaInfo? voiceMedia,
         JsonElement rawUpdateClone,
         string traceId)
     {
@@ -256,6 +264,7 @@ public sealed class TelegramWebhookProcessor
             var judgeService = scope.ServiceProvider.GetRequiredService<ILlmJudgeService>();
             var loadBalancer = scope.ServiceProvider.GetRequiredService<ILlmLoadBalancer>();
             var rollbackManager = scope.ServiceProvider.GetRequiredService<IRollbackManager>();
+            var transcriber = scope.ServiceProvider.GetService<IAudioTranscriber>();
 
             // ШАГ 1: Получение MasterId из EmployeeReader или fallback к Postgres
             var masterId = await ResolveMasterIdAsync(userId, repo, traceId, cts.Token);
@@ -281,6 +290,25 @@ public sealed class TelegramWebhookProcessor
 
             try
             {
+                if (voiceMedia != null && transcriber != null)
+                {
+                    var voiceText = await TryTranscribeVoiceAsync(voiceMedia, transcriber, traceId, cts.Token);
+                    if (!string.IsNullOrWhiteSpace(voiceText))
+                    {
+                        text = string.IsNullOrWhiteSpace(text)
+                            ? voiceText
+                            : $"{text}\n{voiceText}";
+                    }
+                    else if (string.IsNullOrWhiteSpace(text))
+                    {
+                        await _telegramBot.SendMessageAsync(
+                            chatId,
+                            "⚠️ Не удалось распознать голосовое сообщение. Попробуйте сказать чётче или напишите текстом.",
+                            ct: cts.Token);
+                        return;
+                    }
+                }
+
                 // ШАГ 2: Активный диалог в БД по MasterId
                 var activeSession = await repo.GetOrCreateActiveSessionByMasterIdAsync(masterId.Value, chatId, "telegram", cts.Token);
                 var currentSessionId = activeSession.Id;
@@ -607,15 +635,101 @@ public sealed class TelegramWebhookProcessor
         }
     }
 
+    private async Task<string?> TryTranscribeVoiceAsync(
+        VoiceMediaInfo media,
+        IAudioTranscriber transcriber,
+        string traceId,
+        CancellationToken ct)
+    {
+        var startAudio = DateTime.UtcNow;
+        TranscriptionResult? result = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(media.LocalFilePath) && File.Exists(media.LocalFilePath))
+            {
+                result = await transcriber.TranscribeFileAsync(media.LocalFilePath, "ru", ct);
+            }
+            else if (!string.IsNullOrWhiteSpace(media.AudioBase64))
+            {
+                var bytes = Convert.FromBase64String(media.AudioBase64);
+                using var ms = new MemoryStream(bytes);
+                result = await transcriber.TranscribeAsync(ms, media.FileName, "ru", ct);
+            }
+            else if (!string.IsNullOrWhiteSpace(media.FileId) && File.Exists(media.FileId))
+            {
+                result = await transcriber.TranscribeFileAsync(media.FileId, "ru", ct);
+            }
+            else if (!string.IsNullOrWhiteSpace(media.FileId) && _botOptions.IsConfigured)
+            {
+                var apiBase = _botOptions.ApiBaseUrl.TrimEnd('/');
+                var client = _httpFactory.CreateClient();
+                var getFileResp = await client.GetAsync(
+                    $"{apiBase}/bot{_botOptions.BotToken}/getFile?file_id={Uri.EscapeDataString(media.FileId)}",
+                    ct);
+                if (getFileResp.IsSuccessStatusCode)
+                {
+                    var fileJson = await getFileResp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+                    if (fileJson.TryGetProperty("ok", out var okProp) && okProp.GetBoolean() &&
+                        fileJson.TryGetProperty("result", out var resProp) &&
+                        resProp.TryGetProperty("file_path", out var fpProp))
+                    {
+                        var tgFilePath = fpProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(tgFilePath))
+                        {
+                            var dlResp = await client.GetAsync($"{apiBase}/file/bot{_botOptions.BotToken}/{tgFilePath}", ct);
+                            if (dlResp.IsSuccessStatusCode)
+                            {
+                                await using var tgStream = await dlResp.Content.ReadAsStreamAsync(ct);
+                                var resolvedName = Path.GetFileName(tgFilePath);
+                                result = await transcriber.TranscribeAsync(
+                                    tgStream,
+                                    string.IsNullOrWhiteSpace(resolvedName) ? media.FileName : resolvedName,
+                                    "ru",
+                                    ct);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Voice transcription error for trace={TraceId}", traceId);
+            await _langfuse.LogEventAsync(traceId, "Telegram:VoiceTranscriptionError", "ERROR", ex.Message, ct: ct);
+        }
+
+        if (result != null)
+        {
+            await _langfuse.CreateSpanAsync(
+                traceId: traceId,
+                name: "Span:Telegram_VoiceTranscription",
+                startTime: startAudio,
+                endTime: DateTime.UtcNow,
+                input: new { file_name = media.FileName, has_file_id = !string.IsNullOrWhiteSpace(media.FileId) },
+                output: new { success = result.Success, provider = result.Provider, text = result.Text },
+                metadata: new { duration_ms = result.DurationMs, error = result.ErrorMessage },
+                ct: ct);
+
+            if (result.Success && !string.IsNullOrWhiteSpace(result.Text))
+            {
+                return result.Text.Trim();
+            }
+        }
+
+        return null;
+    }
+
     private static bool TryExtractIncomingMessage(
         JsonElement message,
         out long chatId,
         out long userId,
-        out string text)
+        out string text,
+        out VoiceMediaInfo? voiceMedia)
     {
         chatId = 0;
         userId = 0;
         text = string.Empty;
+        voiceMedia = null;
 
         if (!message.TryGetProperty("chat", out var chatObj) ||
             !chatObj.TryGetProperty("id", out var chatIdProp) ||
@@ -638,6 +752,35 @@ public sealed class TelegramWebhookProcessor
         else if (message.TryGetProperty("caption", out var capProp) && capProp.ValueKind == JsonValueKind.String)
         {
             text = capProp.GetString() ?? string.Empty;
+        }
+
+        JsonElement mediaElem = default;
+        string? defaultAudioName = null;
+        if (message.TryGetProperty("voice", out var voiceElem) && voiceElem.ValueKind == JsonValueKind.Object)
+        {
+            mediaElem = voiceElem;
+            defaultAudioName = "voice.ogg";
+        }
+        else if (message.TryGetProperty("audio", out var audioElem) && audioElem.ValueKind == JsonValueKind.Object)
+        {
+            mediaElem = audioElem;
+            defaultAudioName = "audio.m4a";
+        }
+
+        if (defaultAudioName != null)
+        {
+            var fileId = mediaElem.TryGetProperty("file_id", out var fidProp) ? fidProp.GetString() : null;
+            var fileName = mediaElem.TryGetProperty("file_name", out var fnProp) && !string.IsNullOrWhiteSpace(fnProp.GetString())
+                ? fnProp.GetString()!
+                : defaultAudioName;
+            var localFilePath = mediaElem.TryGetProperty("local_file_path", out var lfpProp)
+                ? lfpProp.GetString()
+                : (message.TryGetProperty("local_file_path", out var msgLfp) ? msgLfp.GetString() : null);
+            var audioBase64 = mediaElem.TryGetProperty("audio_base64", out var b64Prop)
+                ? b64Prop.GetString()
+                : (message.TryGetProperty("audio_base64", out var msgB64) ? msgB64.GetString() : null);
+
+            voiceMedia = new VoiceMediaInfo(fileId, fileName, localFilePath, audioBase64);
         }
 
         return true;

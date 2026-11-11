@@ -1,5 +1,7 @@
+using System.Text;
 using System.Text.Json;
 using Fotoprint.Core.Agents;
+using Fotoprint.Core.Audio;
 using Fotoprint.Core.Configuration;
 using Fotoprint.Core.Data;
 using Fotoprint.Core.Documents;
@@ -94,6 +96,21 @@ builder.Services.AddSingleton<ILlmJudgeService, LlmJudgeService>();
 // Автономный AI-агент с Tool Calling (автоматический выбор нужного MCP)
 builder.Services.AddSingleton<IFotoprintAgent, FotoprintAiAgent>();
 
+// Аудиотранскрибация (локальный C++ Whisper/Vulkan GPU + облачный Gemini Fallback) и MoM-анализатор
+builder.Services.AddSingleton<IVocabularyProvider, YamlVocabularyProvider>();
+builder.Services.AddSingleton<IVocabularyPostProcessor, VocabularyPostProcessor>();
+builder.Services.AddSingleton<IAudioEngineResolver, AudioEngineResolver>();
+builder.Services.AddSingleton<LocalEngineAudioTranscriber>();
+builder.Services.AddHttpClient<CloudGeminiAudioTranscriber>();
+builder.Services.AddSingleton<IAudioTranscriber>(sp =>
+    new CompositeAudioTranscriber(
+        sp.GetRequiredService<LocalEngineAudioTranscriber>(),
+        sp.GetRequiredService<CloudGeminiAudioTranscriber>(),
+        sp.GetRequiredService<FotoprintConfig>(),
+        sp.GetService<ILangfuseClient>(),
+        sp.GetRequiredService<ILogger<CompositeAudioTranscriber>>()));
+builder.Services.AddSingleton<IMeetingTranscriptAnalyzer, MeetingTranscriptAnalyzer>();
+
 builder.Services.AddHttpClient("N8nClient", client =>
 {
     client.BaseAddress = new Uri(n8nWebhookBaseUrl.TrimEnd('/') + "/");
@@ -123,6 +140,98 @@ var app = builder.Build();
 
 // Защита периметра от сканеров портов, ботов и поиска уязвимых файлов
 app.UseMiddleware<PerimeterDefenseMiddleware>();
+
+// Веб-интерфейс (при локальном запуске без Nginx отдает infra/nginx/html/index.html)
+app.MapGet("/", () =>
+{
+    var roots = new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory };
+    foreach (var root in roots)
+    {
+        var dir = root;
+        for (var i = 0; i <= 6 && !string.IsNullOrEmpty(dir); i++)
+        {
+            var candidate = Path.Combine(dir, "infra", "nginx", "html", "index.html");
+            if (File.Exists(candidate))
+            {
+                return Results.File(candidate, "text/html; charset=utf-8");
+            }
+            dir = Directory.GetParent(dir)?.FullName ?? string.Empty;
+        }
+    }
+
+    return Results.NotFound("Web UI (infra/nginx/html/index.html) not found.");
+});
+
+// Аудиотранскрибация речи (Speech-to-Text: локальный Whisper C++ Vulkan/CPU + Gemini Fallback)
+app.MapPost("/api/audio/transcribe", async (
+    IFormFile file,
+    [FromQuery] string? language,
+    IAudioTranscriber transcriber,
+    ILangfuseClient langfuse,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    if (file == null || file.Length == 0)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            text = string.Empty,
+            segments = new List<AudioSegment>(),
+            duration_ms = 0L,
+            provider = "none",
+            error = "Аудиофайл пуст или отсутствует."
+        });
+    }
+
+    var maxBytes = Math.Max(1, config.Audio.MaxFileSizeMb) * 1024L * 1024L;
+    if (file.Length > maxBytes)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            text = string.Empty,
+            segments = new List<AudioSegment>(),
+            duration_ms = 0L,
+            provider = "none",
+            error = $"Размер файла превышает лимит {config.Audio.MaxFileSizeMb} МБ."
+        });
+    }
+
+    var startSpan = DateTime.UtcNow;
+    await using var stream = file.OpenReadStream();
+    var result = await transcriber.TranscribeAsync(
+        stream,
+        string.IsNullOrWhiteSpace(file.FileName) ? "audio.wav" : file.FileName,
+        string.IsNullOrWhiteSpace(language) ? "ru" : language,
+        ct);
+    var endSpan = DateTime.UtcNow;
+
+    try
+    {
+        await langfuse.CreateSpanAsync(
+            traceId: traceId,
+            name: "Span:Audio_Transcribe",
+            startTime: startSpan,
+            endTime: endSpan,
+            input: new { file_name = file.FileName, size_bytes = file.Length, language = language ?? "ru" },
+            output: new { success = result.Success, provider = result.Provider, text_length = result.Text?.Length ?? 0 },
+            metadata: new { duration_ms = result.DurationMs, error = result.ErrorMessage },
+            ct: ct);
+    }
+    catch { }
+
+    return Results.Ok(new
+    {
+        success = result.Success,
+        text = result.Text,
+        segments = result.Segments ?? new List<AudioSegment>(),
+        duration_ms = result.DurationMs,
+        provider = result.Provider,
+        error = result.ErrorMessage
+    });
+}).DisableAntiforgery();
 
 // Health
 app.MapGet("/health", () => Results.Ok(new
@@ -726,6 +835,331 @@ app.MapGet("/api/meetings/{id:guid}/export-docx", async (
     var bytes = generator.GenerateDocx(exportData);
     return Results.File(bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"Protocol_{id}.docx");
 });
+
+// Сквозной пайплайн аудиопротоколирования встречи (MoM):
+// Аудиофайл -> Whisper/Gemini STT -> MoM-разбор -> БД -> .DOCX -> Кнопки Битрикс24
+app.MapPost("/api/meetings/process-audio", async (
+    IFormFile file,
+    [FromForm] string? title,
+    [FromForm] int? organizer_id,
+    [FromForm] long? chat_id,
+    [FromQuery] string? language,
+    IAudioTranscriber transcriber,
+    IMeetingTranscriptAnalyzer analyzer,
+    IFotoprintRepository repo,
+    IMeetingProtocolGenerator protocolGenerator,
+    ILangfuseClient langfuse,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    var traceId = langfuse.GenerateTraceId();
+    if (file == null || file.Length == 0)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            trace_id = traceId,
+            error = "Аудиофайл пуст или отсутствует."
+        });
+    }
+
+    var maxBytes = Math.Max(1, config.Audio.MaxFileSizeMb) * 1024L * 1024L;
+    if (file.Length > maxBytes)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            trace_id = traceId,
+            error = $"Размер файла превышает лимит {config.Audio.MaxFileSizeMb} МБ."
+        });
+    }
+
+    await using var audioStream = file.OpenReadStream();
+    var transcription = await transcriber.TranscribeAsync(
+        audioStream,
+        string.IsNullOrWhiteSpace(file.FileName) ? "meeting.m4a" : file.FileName,
+        string.IsNullOrWhiteSpace(language) ? "ru" : language,
+        ct);
+
+    if (!transcription.Success || string.IsNullOrWhiteSpace(transcription.Text))
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            trace_id = traceId,
+            provider = transcription.Provider,
+            error = transcription.ErrorMessage ?? "Не удалось распознать речь из аудиофайла."
+        });
+    }
+
+    var analysis = await analyzer.AnalyzeTranscriptAsync(transcription.Text, title, traceId, ct);
+    var effectiveTitle = !string.IsNullOrWhiteSpace(title)
+        ? title!
+        : (!string.IsNullOrWhiteSpace(analysis.Title)
+            ? analysis.Title
+            : $"Рабочее совещание от {DateTime.UtcNow:dd.MM.yyyy HH:mm}");
+
+    var employees = new List<Employee>();
+    try
+    {
+        employees = await repo.GetAllEmployeesAsync(ct);
+    }
+    catch { /* Автономный fallback при недоступной БД */ }
+
+    var empDict = employees.ToDictionary(e => e.Id, e => e.FullName);
+    var organizerName = organizer_id.HasValue && empDict.TryGetValue(organizer_id.Value, out var orgName)
+        ? orgName
+        : "Руководитель совещания";
+
+    var normalizedItems = (analysis.ActionItems ?? new List<ExtractedActionItem>())
+        .Select(MeetingTranscriptAnalyzer.NormalizeActionItem)
+        .ToList();
+
+    var participants = normalizedItems
+        .Select(a => a.Responsible)
+        .Where(r => !string.IsNullOrWhiteSpace(r) && !string.Equals(r, "требует уточнения", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (participants.Count == 0)
+    {
+        participants.Add("Участники рабочей группы");
+    }
+
+    var meetingDate = DateTime.UtcNow;
+    Guid meetingId;
+    try
+    {
+        meetingId = await repo.CreateMeetingAsync(
+            title: effectiveTitle,
+            description: analysis.Summary,
+            startTime: meetingDate,
+            endTime: meetingDate,
+            status: "completed",
+            organizerId: organizer_id,
+            participantIds: organizer_id.HasValue ? new List<int> { organizer_id.Value } : new List<int>(),
+            ct: ct);
+    }
+    catch
+    {
+        meetingId = Guid.NewGuid();
+    }
+
+    var docxSummaryBuilder = new StringBuilder();
+    docxSummaryBuilder.AppendLine(analysis.Summary);
+    if (analysis.Discussed.Count > 0)
+    {
+        docxSummaryBuilder.AppendLine();
+        docxSummaryBuilder.AppendLine("Обсуждали: " + string.Join("; ", analysis.Discussed));
+    }
+    if (analysis.Risks.Count > 0)
+    {
+        docxSummaryBuilder.AppendLine();
+        docxSummaryBuilder.AppendLine("Риски и блокеры: " + string.Join("; ", analysis.Risks));
+    }
+    if (analysis.RequiresClarification.Count > 0)
+    {
+        docxSummaryBuilder.AppendLine();
+        docxSummaryBuilder.AppendLine("Требует уточнения: " + string.Join("; ", analysis.RequiresClarification));
+    }
+
+    var exportActionItems = normalizedItems.Select(item => new ActionItemExportData(
+        Title: item.Title,
+        ResponsibleName: string.IsNullOrWhiteSpace(item.Responsible) ? "требует уточнения" : item.Responsible,
+        Deadline: item.ParsedDeadline,
+        Status: "pending"
+    )).ToList();
+
+    var exportData = new ProtocolExportData(
+        Title: effectiveTitle,
+        MeetingDate: meetingDate,
+        OrganizerName: organizerName,
+        Participants: participants,
+        Summary: docxSummaryBuilder.ToString().Trim(),
+        Decisions: analysis.Decisions,
+        ActionItems: exportActionItems
+    );
+
+    var startProto = DateTime.UtcNow;
+    var docxBytes = protocolGenerator.GenerateDocx(exportData);
+    var htmlPreview = protocolGenerator.GenerateHtml(exportData);
+    var endProto = DateTime.UtcNow;
+
+    var protocolsDir = Path.Combine(Path.GetTempPath(), "fotoprint_protocols");
+    Directory.CreateDirectory(protocolsDir);
+    var docxFilePath = Path.Combine(protocolsDir, $"Protocol_{meetingId}.docx");
+    await File.WriteAllBytesAsync(docxFilePath, docxBytes, ct);
+
+    Guid protocolId;
+    try
+    {
+        protocolId = await repo.SaveMeetingProtocolAsync(
+            meetingId: meetingId,
+            title: $"Протокол: {effectiveTitle}",
+            summary: analysis.Summary,
+            decisions: analysis.Decisions,
+            rawTranscript: transcription.Text,
+            docxPath: docxFilePath,
+            ct: ct);
+    }
+    catch
+    {
+        protocolId = Guid.NewGuid();
+    }
+
+    var savedActionItems = new List<object>();
+    var inlineButtons = new List<object[]>();
+
+    foreach (var item in normalizedItems)
+    {
+        int? responsibleEmpId = null;
+        if (!string.Equals(item.Responsible, "требует уточнения", StringComparison.OrdinalIgnoreCase) && employees.Count > 0)
+        {
+            var matchedEmp = employees.FirstOrDefault(e =>
+                (!string.IsNullOrWhiteSpace(e.LastName) && item.Responsible.Contains(e.LastName, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(e.FullName) && item.Responsible.Contains(e.FullName, StringComparison.OrdinalIgnoreCase)));
+            if (matchedEmp != null)
+            {
+                responsibleEmpId = matchedEmp.Id;
+            }
+        }
+
+        Guid actionItemId;
+        try
+        {
+            actionItemId = await repo.CreateActionItemAsync(
+                meetingId: meetingId,
+                protocolId: protocolId,
+                title: item.Title,
+                description: item.Description ?? $"Ответственный: {item.Responsible}; Срок: {item.DeadlineText}",
+                responsibleId: responsibleEmpId,
+                deadline: item.ParsedDeadline,
+                ct: ct);
+        }
+        catch
+        {
+            actionItemId = Guid.NewGuid();
+        }
+
+        var callbackData = $"create_bitrix_task:{actionItemId}";
+        var deadlineDisplay = item.ParsedDeadline.HasValue
+            ? item.ParsedDeadline.Value.ToString("yyyy-MM-dd")
+            : (string.IsNullOrWhiteSpace(item.DeadlineText) ? "требует уточнения" : item.DeadlineText);
+
+        savedActionItems.Add(new
+        {
+            id = actionItemId,
+            title = item.Title,
+            description = item.Description,
+            responsible = string.IsNullOrWhiteSpace(item.Responsible) ? "требует уточнения" : item.Responsible,
+            responsible_id = responsibleEmpId,
+            deadline = deadlineDisplay,
+            deadline_text = string.IsNullOrWhiteSpace(item.DeadlineText) ? "требует уточнения" : item.DeadlineText,
+            parsed_deadline = item.ParsedDeadline,
+            status = "pending",
+            callback_data = callbackData
+        });
+
+        inlineButtons.Add(new object[]
+        {
+            new
+            {
+                text = $"✅ Поставить в Битрикс: \"{item.Title}\"",
+                callback_data = callbackData
+            }
+        });
+    }
+
+    var tgTextBuilder = new StringBuilder();
+    tgTextBuilder.AppendLine($"📋 *Протокол встречи: {effectiveTitle}*");
+    tgTextBuilder.AppendLine();
+    tgTextBuilder.AppendLine($"📝 *Резюме:* {analysis.Summary}");
+
+    if (analysis.Decisions.Count > 0)
+    {
+        tgTextBuilder.AppendLine();
+        tgTextBuilder.AppendLine("✅ *Принятые решения:*");
+        foreach (var dec in analysis.Decisions)
+        {
+            tgTextBuilder.AppendLine($"• {dec}");
+        }
+    }
+
+    if (normalizedItems.Count > 0)
+    {
+        tgTextBuilder.AppendLine();
+        tgTextBuilder.AppendLine("📌 *Поручения (нажмите кнопку для постановки задачи в Битрикс24):*");
+        for (int i = 0; i < normalizedItems.Count; i++)
+        {
+            var ai = normalizedItems[i];
+            tgTextBuilder.AppendLine($"{i + 1}. *{ai.Title}* — Отв.: _{ai.Responsible}_ | Срок: _{ai.DeadlineText}_");
+        }
+    }
+
+    var telegramMessage = new
+    {
+        chat_id = chat_id,
+        text = tgTextBuilder.ToString().Trim(),
+        parse_mode = "Markdown",
+        reply_markup = new { inline_keyboard = inlineButtons }
+    };
+
+    try
+    {
+        await langfuse.CreateGenerationAsync(
+            traceId: traceId,
+            name: "Gen:Audio_MoM_Protocol",
+            model: config.Llm.Models.ChatModel,
+            startTime: startProto,
+            endTime: endProto,
+            promptTokens: Math.Max(1, transcription.Text.Length / 4),
+            completionTokens: Math.Max(1, htmlPreview.Length / 4),
+            totalTokens: Math.Max(2, (transcription.Text.Length + htmlPreview.Length) / 4),
+            input: transcription.Text,
+            output: analysis.Summary,
+            metadata: new
+            {
+                meeting_id = meetingId,
+                protocol_id = protocolId,
+                audio_provider = transcription.Provider,
+                duration_ms = transcription.DurationMs,
+                decisions_count = analysis.Decisions.Count,
+                action_items_count = normalizedItems.Count
+            },
+            ct: ct);
+    }
+    catch { }
+
+    return Results.Ok(new
+    {
+        success = true,
+        meeting_id = meetingId,
+        protocol_id = protocolId,
+        trace_id = traceId,
+        transcription = new
+        {
+            text = transcription.Text,
+            provider = transcription.Provider,
+            duration_ms = transcription.DurationMs,
+            segments_count = transcription.Segments?.Count ?? 0,
+            segments = transcription.Segments ?? new List<AudioSegment>()
+        },
+        protocol = new
+        {
+            title = effectiveTitle,
+            summary = analysis.Summary,
+            decisions = analysis.Decisions,
+            discussed = analysis.Discussed,
+            risks = analysis.Risks,
+            requires_clarification = analysis.RequiresClarification,
+            docx_file_path = docxFilePath,
+            docx_base64 = Convert.ToBase64String(docxBytes),
+            docx_size_bytes = docxBytes.Length,
+            html_preview = htmlPreview
+        },
+        action_items = savedActionItems,
+        telegram_message = telegramMessage
+    });
+}).DisableAntiforgery();
 
 // Прямой вызов детектора смены контекста через LLM (2-й этап)
 app.MapPost("/api/context/detect-switch", async (

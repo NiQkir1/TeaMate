@@ -213,4 +213,18 @@ context_switch:
   # Автоматическая заморозка (изоляция) предыдущих сообщений в БД при смене темы
   auto_freeze_on_switch: true
 
+# -----------------------------------------------------------------------------
+# 11. РАСПОЗНАВАНИЕ РЕЧИ И АУДИОПРОТОКОЛИРОВАНИЕ (SPEECH-TO-TEXT & AUDIO MOM)
+# -----------------------------------------------------------------------------
+audio:
+  enabled: true
+  provider: "auto" # "auto" | "local" | "tsukiko" | "gemini"
+  vocabulary_path: "config/vocabulary.yaml"
+  engine:
+    timeout_seconds: 300
+  gemini:
+    model: "gemini-1.5-flash"
+  max_file_size_mb: 100
+
+
 

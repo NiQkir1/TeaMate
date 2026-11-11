@@ -562,11 +562,30 @@ public class FotoprintAiAgent : IFotoprintAgent
         }
     }
 
+    private static string ResolveMcpBaseUrl(string envKey, string containerDefault, string localDefault)
+    {
+        var configured = Environment.GetEnvironmentVariable(envKey);
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.TrimEnd('/');
+        }
+
+        var inContainer = string.Equals(
+            Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+        return inContainer ? containerDefault : localDefault;
+    }
+
+    private static string OneCMcpBaseUrl => ResolveMcpBaseUrl("McpUrls__OneC", "http://mcp-1c:8082", "http://localhost:8082");
+    private static string BitrixMcpBaseUrl => ResolveMcpBaseUrl("McpUrls__Bitrix24", "http://mcp-bitrix24:8083", "http://localhost:8083");
+    private static string CalendarMcpBaseUrl => ResolveMcpBaseUrl("McpUrls__Calendar", "http://mcp-calendar:8084", "http://localhost:8084");
+
     [RequireConfirmation(false)]
     private Task<object> Tool_get_order_status(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
     {
         var orderId = TryGetStringArg(arguments, "order_id") ?? "44102";
-        var url = "http://mcp-1c:8082/tools/get_order_status?order_id=" + Uri.EscapeDataString(orderId);
+        var url = $"{OneCMcpBaseUrl}/tools/get_order_status?order_id=" + Uri.EscapeDataString(orderId);
         return GetMcpJsonAsync(url, "1C", telegramId, traceId, ct);
     }
 
@@ -581,7 +600,7 @@ public class FotoprintAiAgent : IFotoprintAgent
         if (!string.IsNullOrWhiteSpace(dateFrom)) queryParts.Add("date_from=" + Uri.EscapeDataString(dateFrom));
         if (!string.IsNullOrWhiteSpace(dateTo)) queryParts.Add("date_to=" + Uri.EscapeDataString(dateTo));
         var qs = queryParts.Count > 0 ? "?" + string.Join("&", queryParts) : "";
-        return GetMcpJsonAsync($"http://mcp-1c:8082/tools/get_production_kpis{qs}", "1C", telegramId, traceId, ct);
+        return GetMcpJsonAsync($"{OneCMcpBaseUrl}/tools/get_production_kpis{qs}", "1C", telegramId, traceId, ct);
     }
 
     [RequireConfirmation(false)]
@@ -589,7 +608,7 @@ public class FotoprintAiAgent : IFotoprintAgent
     {
         var empId = TryGetIntArg(arguments, "employee_id") ?? defaultEmployeeId;
         var statusFilter = TryGetStringArg(arguments, "status_filter");
-        var url = $"http://mcp-bitrix24:8083/tools/get_user_tasks?employee_id={empId}";
+        var url = $"{BitrixMcpBaseUrl}/tools/get_user_tasks?employee_id={empId}";
         if (!string.IsNullOrWhiteSpace(statusFilter))
             url += "&status_filter=" + Uri.EscapeDataString(statusFilter);
         return GetMcpJsonAsync(url, "Bitrix24", telegramId, traceId, ct);
@@ -599,7 +618,7 @@ public class FotoprintAiAgent : IFotoprintAgent
     private Task<object> Tool_get_crm_deal_info(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
     {
         var dealQuery = TryGetStringArg(arguments, "deal_query") ?? "44102";
-        var url = "http://mcp-bitrix24:8083/tools/get_crm_deal_info?deal_query=" + Uri.EscapeDataString(dealQuery);
+        var url = $"{BitrixMcpBaseUrl}/tools/get_crm_deal_info?deal_query=" + Uri.EscapeDataString(dealQuery);
         return GetMcpJsonAsync(url, "Bitrix24", telegramId, traceId, ct);
     }
 
@@ -613,7 +632,7 @@ public class FotoprintAiAgent : IFotoprintAgent
         Guid? meetingId = Guid.TryParse(TryGetStringArg(arguments, "meeting_id"), out var mid) ? mid : null;
 
         var client = CreateMcpClient(telegramId, traceId, isConfirmed);
-        var res = await client.PostAsJsonAsync("http://mcp-bitrix24:8083/tools/create_task", new
+        var res = await client.PostAsJsonAsync($"{BitrixMcpBaseUrl}/tools/create_task", new
         {
             title,
             description,
@@ -632,7 +651,7 @@ public class FotoprintAiAgent : IFotoprintAgent
     private Task<object> Tool_get_upcoming_meetings(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
     {
         var windowMinutes = TryGetIntArg(arguments, "time_window_minutes") ?? 60;
-        var url = $"http://mcp-calendar:8084/tools/get_upcoming_meetings?time_window_minutes={windowMinutes}";
+        var url = $"{CalendarMcpBaseUrl}/tools/get_upcoming_meetings?time_window_minutes={windowMinutes}";
         return GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
     }
 
@@ -640,7 +659,7 @@ public class FotoprintAiAgent : IFotoprintAgent
     private Task<object> Tool_get_meeting_history(JsonElement arguments, long telegramId, string traceId, CancellationToken ct)
     {
         var keywords = TryGetStringArg(arguments, "topic_keywords") ?? "";
-        var url = "http://mcp-calendar:8084/tools/get_meeting_history?topic_keywords=" + Uri.EscapeDataString(keywords);
+        var url = $"{CalendarMcpBaseUrl}/tools/get_meeting_history?topic_keywords=" + Uri.EscapeDataString(keywords);
         return GetMcpJsonAsync(url, "Календарь", telegramId, traceId, ct);
     }
 
@@ -654,7 +673,7 @@ public class FotoprintAiAgent : IFotoprintAgent
         var participants = TryGetStringArg(arguments, "participants");
 
         var client = CreateMcpClient(telegramId, traceId, isConfirmed);
-        var res = await client.PostAsJsonAsync("http://mcp-calendar:8084/tools/schedule_meeting", new
+        var res = await client.PostAsJsonAsync($"{CalendarMcpBaseUrl}/tools/schedule_meeting", new
         {
             title,
             description,
