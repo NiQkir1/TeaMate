@@ -323,11 +323,11 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                 return targetWavPath;
             }
 
-            _logger?.LogDebug("[LocalEngineAudioTranscriber] Audio converter exited with {ExitCode}: {Error}. Using original file.", exitCode, stderr.Trim());
+            _logger?.LogWarning("[LocalEngineAudioTranscriber] Audio converter '{Converter}' exited with {ExitCode}: {Error}. Target exists: {Exists}", converterPath, exitCode, stderr.Trim(), File.Exists(targetWavPath));
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "[LocalEngineAudioTranscriber] Audio conversion failed. Using original file.");
+            _logger?.LogWarning(ex, "[LocalEngineAudioTranscriber] Audio conversion exception for input '{InputPath}'", inputPath);
         }
 
         return inputPath;

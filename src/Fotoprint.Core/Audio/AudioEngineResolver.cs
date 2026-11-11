@@ -113,8 +113,8 @@ public class AudioEngineResolver : IAudioEngineResolver
         if (!string.IsNullOrWhiteSpace(customSearchRoot))
         {
             var candidates = isWindows
-                ? new[] { Path.Combine(customSearchRoot, relWinFfmpeg), Path.Combine(customSearchRoot, "ffmpeg.exe"), Path.Combine(customSearchRoot, relMacFfmpeg), Path.Combine(customSearchRoot, "ffmpeg") }
-                : new[] { Path.Combine(customSearchRoot, relMacFfmpeg), Path.Combine(customSearchRoot, "ffmpeg"), Path.Combine(customSearchRoot, relWinFfmpeg), Path.Combine(customSearchRoot, "ffmpeg.exe") };
+                ? new[] { Path.Combine(customSearchRoot, relWinFfmpeg), Path.Combine(customSearchRoot, "ffmpeg.exe") }
+                : new[] { Path.Combine(customSearchRoot, relMacFfmpeg), Path.Combine(customSearchRoot, "ffmpeg") };
 
             foreach (var candidate in candidates)
             {
@@ -136,7 +136,7 @@ public class AudioEngineResolver : IAudioEngineResolver
             return null;
         }
 
-        // 2. Repo roots relative traversal for tools/engine/macos/ffmpeg and tools/engine/win/ffmpeg.exe
+        // 2. Repo roots relative traversal for tools/engine/macos/ffmpeg or tools/engine/win/ffmpeg.exe
         var roots = new List<string>
         {
             Directory.GetCurrentDirectory(),
@@ -144,8 +144,8 @@ public class AudioEngineResolver : IAudioEngineResolver
         };
 
         var targetRelatives = isWindows
-            ? new[] { relWinFfmpeg, relMacFfmpeg }
-            : new[] { relMacFfmpeg, relWinFfmpeg };
+            ? new[] { relWinFfmpeg }
+            : new[] { relMacFfmpeg };
 
         foreach (var root in roots)
         {

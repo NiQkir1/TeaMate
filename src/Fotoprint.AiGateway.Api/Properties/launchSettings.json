@@ -5,7 +5,7 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": false,
-      "applicationUrl": "http://localhost:8088",
+      "applicationUrl": "http://localhost:8899",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "ConnectionStrings__Postgres": "Host=localhost;Port=5434;Database=fotoprint;Username=fotoprint;Password=fotoprint_secret",
@@ -14,7 +14,7 @@
         "LLM_PROVIDER": "nvidia",
         "LLM_BASE_URL": "https://integrate.api.nvidia.com/v1",
         "LLM_MODEL": "nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "NVIDIA_API_KEY": "your-nvidia-api-key"
+        "NVIDIA_API_KEY": "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"
       }
     }
   }
