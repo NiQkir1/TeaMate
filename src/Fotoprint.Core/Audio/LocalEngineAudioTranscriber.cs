@@ -390,11 +390,20 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                         {
                             if (item.ValueKind != JsonValueKind.Object) continue;
 
-                            var segText = TryGetPropertyCaseInsensitive(item, "text", out var tProp) && tProp.ValueKind == JsonValueKind.String
+                            var rawSegText = TryGetPropertyCaseInsensitive(item, "text", out var tProp) && tProp.ValueKind == JsonValueKind.String
                                 ? (tProp.GetString()?.Trim() ?? string.Empty)
                                 : string.Empty;
 
+                            if (string.IsNullOrWhiteSpace(rawSegText)) continue;
+
+                            var segText = DeduplicateRepeatedPhrases(rawSegText);
                             if (string.IsNullOrWhiteSpace(segText)) continue;
+
+                            // Consecutive duplicate segment filtering
+                            if (whisperSegments.Count > 0 && IsDuplicateSegmentText(segText, whisperSegments[^1].Text))
+                            {
+                                continue;
+                            }
 
                             double startSec = 0;
                             double endSec = 0;
@@ -435,6 +444,7 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                         }
 
                         var combinedWhisperText = string.Join(" ", textParts).Trim();
+                        combinedWhisperText = DeduplicateRepeatedPhrases(combinedWhisperText);
                         return new TranscriptionResult(
                             Success: !string.IsNullOrWhiteSpace(combinedWhisperText),
                             Text: combinedWhisperText,
@@ -457,11 +467,20 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                             {
                                 if (seg.ValueKind != JsonValueKind.Object) continue;
 
-                                var segText = TryGetPropertyCaseInsensitive(seg, "text", out var stProp) && stProp.ValueKind == JsonValueKind.String
+                                var rawSegText = TryGetPropertyCaseInsensitive(seg, "text", out var stProp) && stProp.ValueKind == JsonValueKind.String
                                     ? (stProp.GetString()?.Trim() ?? string.Empty)
                                     : string.Empty;
 
+                                if (string.IsNullOrWhiteSpace(rawSegText)) continue;
+
+                                var segText = DeduplicateRepeatedPhrases(rawSegText);
                                 if (string.IsNullOrWhiteSpace(segText)) continue;
+
+                                // Consecutive duplicate segment filtering
+                                if (segments.Count > 0 && IsDuplicateSegmentText(segText, segments[^1].Text))
+                                {
+                                    continue;
+                                }
 
                                 double startSec = ExtractSeconds(seg, "start", "start_seconds", "startSeconds", "startMs");
                                 double endSec = ExtractSeconds(seg, "end", "end_seconds", "endSeconds", "endMs");
@@ -480,9 +499,15 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                             ? (rootTextProp.GetString()?.Trim() ?? string.Empty)
                             : string.Empty;
 
+                        if (!string.IsNullOrWhiteSpace(rootText))
+                        {
+                            rootText = DeduplicateRepeatedPhrases(rootText);
+                        }
+
                         if (string.IsNullOrWhiteSpace(rootText) && segments.Count > 0)
                         {
                             rootText = string.Join(" ", segments.Select(s => s.Text)).Trim();
+                            rootText = DeduplicateRepeatedPhrases(rootText);
                         }
 
                         if (segments.Count == 0 && !string.IsNullOrWhiteSpace(rootText))
@@ -517,9 +542,18 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
             {
                 var startStr = match.Groups["start"].Value;
                 var endStr = match.Groups["end"].Value;
-                var lineText = match.Groups["text"].Value.Trim();
+                var rawLineText = match.Groups["text"].Value.Trim();
 
+                if (string.IsNullOrWhiteSpace(rawLineText)) continue;
+
+                var lineText = DeduplicateRepeatedPhrases(rawLineText);
                 if (string.IsNullOrWhiteSpace(lineText)) continue;
+
+                // Consecutive duplicate segment filtering
+                if (lineSegments.Count > 0 && IsDuplicateSegmentText(lineText, lineSegments[^1].Text))
+                {
+                    continue;
+                }
 
                 TryParseTimestampToSeconds(startStr, out var startSec);
                 TryParseTimestampToSeconds(endStr, out var endSec);
@@ -529,6 +563,7 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
             }
 
             var joinedText = string.Join(" ", lineTexts).Trim();
+            joinedText = DeduplicateRepeatedPhrases(joinedText);
             if (!string.IsNullOrWhiteSpace(joinedText))
             {
                 return new TranscriptionResult(
@@ -541,15 +576,220 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
         }
 
         // 3. Plain text fallback
+        var cleanedFallback = DeduplicateRepeatedPhrases(trimmed);
         return new TranscriptionResult(
             Success: true,
-            Text: trimmed,
+            Text: cleanedFallback,
             Segments: new List<AudioSegment>
             {
-                new(0.0, Math.Max(0.0, Math.Round(durationMs / 1000.0, 2)), trimmed)
+                new(0.0, Math.Max(0.0, Math.Round(durationMs / 1000.0, 2)), cleanedFallback)
             },
             Provider: provider,
             DurationMs: durationMs);
+    }
+
+    public static string DeduplicateRepeatedPhrases(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return input ?? string.Empty;
+        }
+
+        var text = input.Trim();
+
+        // Pass 1: Deduplicate consecutive identical sentences/clauses
+        text = DeduplicateConsecutiveSentences(text);
+
+        // Pass 2: Deduplicate multi-word and repeated phrase loops
+        text = DeduplicateWordNGrams(text);
+
+        return text;
+    }
+
+    public static bool IsDuplicateSegmentText(string? current, string? previous)
+    {
+        if (string.IsNullOrWhiteSpace(current) || string.IsNullOrWhiteSpace(previous))
+        {
+            return false;
+        }
+
+        if (string.Equals(current.Trim(), previous.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var normCur = NormalizeSentence(current);
+        var normPrev = NormalizeSentence(previous);
+
+        return !string.IsNullOrEmpty(normCur) && string.Equals(normCur, normPrev, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string DeduplicateConsecutiveSentences(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+        // Split sentences on sentence-ending punctuation followed by whitespace, or newline
+        // but avoid splitting on decimal numbers like 1.5 or 3.14
+        var rawSentences = Regex.Split(text, @"(?<=[.!?;\n\r])(?<!\d\.\d)\s+");
+        if (rawSentences.Length <= 1)
+        {
+            return text;
+        }
+
+        var kept = new List<string>();
+        string? lastNormalized = null;
+
+        foreach (var raw in rawSentences)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            var norm = NormalizeSentence(raw);
+            if (!string.IsNullOrEmpty(norm) && string.Equals(norm, lastNormalized, StringComparison.OrdinalIgnoreCase))
+            {
+                // Consecutive duplicate sentence - skip
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(norm))
+            {
+                lastNormalized = norm;
+            }
+
+            kept.Add(raw.Trim());
+        }
+
+        return string.Join(" ", kept).Trim();
+    }
+
+    private static string DeduplicateWordNGrams(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+        var current = text;
+        for (var pass = 0; pass < 5; pass++)
+        {
+            var wordMatches = Regex.Matches(current, @"\S+");
+            if (wordMatches.Count < 2)
+            {
+                break;
+            }
+
+            var words = new Match[wordMatches.Count];
+            var normWords = new string[wordMatches.Count];
+            for (var idx = 0; idx < wordMatches.Count; idx++)
+            {
+                words[idx] = wordMatches[idx];
+                normWords[idx] = CleanWordForComparison(wordMatches[idx].Value);
+            }
+
+            var changed = false;
+            var maxN = Math.Min(12, wordMatches.Count / 2);
+
+            for (var n = maxN; n >= 1; n--)
+            {
+                for (var i = 0; i <= wordMatches.Count - 2 * n; i++)
+                {
+                    // Check if phrase1 matches phrase2
+                    var matchesPhrase = true;
+                    for (var k = 0; k < n; k++)
+                    {
+                        if (string.IsNullOrEmpty(normWords[i + k]) ||
+                            !string.Equals(normWords[i + k], normWords[i + n + k], StringComparison.OrdinalIgnoreCase))
+                        {
+                            matchesPhrase = false;
+                            break;
+                        }
+                    }
+
+                    if (!matchesPhrase) continue;
+
+                    // Determine how many times it repeats consecutively
+                    var repeatCount = 2;
+                    while (i + (repeatCount + 1) * n <= wordMatches.Count)
+                    {
+                        var nextMatch = true;
+                        for (var k = 0; k < n; k++)
+                        {
+                            if (!string.Equals(normWords[i + k], normWords[i + repeatCount * n + k], StringComparison.OrdinalIgnoreCase))
+                            {
+                                nextMatch = false;
+                                break;
+                            }
+                        }
+                        if (nextMatch) repeatCount++;
+                        else break;
+                    }
+
+                    // For single words (n == 1), only deduplicate if repeatCount >= 3 or word is longer than 3 characters or exact match
+                    if (n == 1)
+                    {
+                        var raw1 = words[i].Value;
+                        var raw2 = words[i + 1].Value;
+                        var isExact = string.Equals(raw1, raw2, StringComparison.OrdinalIgnoreCase);
+                        if (repeatCount < 3 && !isExact && normWords[i].Length <= 3)
+                        {
+                            continue;
+                        }
+                    }
+
+                    // Remove repetitions: from words[i + n].Index to words[i + repeatCount * n - 1].Index + Length
+                    var startRemove = words[i + n].Index;
+                    var endRemove = words[i + repeatCount * n - 1].Index + words[i + repeatCount * n - 1].Length;
+
+                    // Preserve trailing sentence-ending punctuation from duplicate phrase if kept phrase ended with comma or nothing
+                    var lastDupWord = words[i + repeatCount * n - 1].Value;
+                    var trailingPunctMatch = Regex.Match(lastDupWord, @"[.!?]+$");
+                    if (trailingPunctMatch.Success)
+                    {
+                        var keptLastWordVal = words[i + n - 1].Value;
+                        if (!Regex.IsMatch(keptLastWordVal, @"[.!?]+$"))
+                        {
+                            var keptEnd = words[i + n - 1].Index + words[i + n - 1].Length;
+                            if (keptLastWordVal.EndsWith(',') || keptLastWordVal.EndsWith(';'))
+                            {
+                                current = current.Remove(keptEnd - 1, 1).Insert(keptEnd - 1, trailingPunctMatch.Value);
+                            }
+                            else
+                            {
+                                current = current.Insert(keptEnd, trailingPunctMatch.Value);
+                                startRemove += trailingPunctMatch.Length;
+                                endRemove += trailingPunctMatch.Length;
+                            }
+                        }
+                    }
+
+                    // Expand startRemove backwards to consume leading space if present
+                    while (startRemove > 0 && char.IsWhiteSpace(current[startRemove - 1]))
+                    {
+                        startRemove--;
+                    }
+
+                    current = current.Remove(startRemove, endRemove - startRemove);
+                    changed = true;
+                    break;
+                }
+
+                if (changed) break;
+            }
+
+            if (!changed) break;
+        }
+
+        return Regex.Replace(current.Trim(), @"\s+", " ");
+    }
+
+    private static string CleanWordForComparison(string word)
+    {
+        if (string.IsNullOrWhiteSpace(word)) return string.Empty;
+        var cleaned = Regex.Replace(word.Trim(), @"^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$", "");
+        return cleaned.ToLowerInvariant();
+    }
+
+    private static string NormalizeSentence(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+        var trimmed = s.Trim().TrimEnd('.', '!', '?', ';', ',', ':').Trim();
+        return Regex.Replace(trimmed, @"\s+", " ").ToLowerInvariant();
     }
 
     private static string? ExtractJsonObject(string input)

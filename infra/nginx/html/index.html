@@ -908,6 +908,8 @@
     let recordingInterval = null;
     let recordingSeconds = 0;
     let isRecordingCancelled = false;
+    let isConnectingMic = false;
+    let isTranscribing = false;
 
     const NUM_WAVE_BARS = 32;
     const smoothedHeights = new Float32Array(NUM_WAVE_BARS).fill(3.0);
@@ -1091,6 +1093,7 @@
     }
 
     async function toggleRecording() {
+      if (isConnectingMic) return;
       if (mediaRecorder && mediaRecorder.state === 'recording') {
         stopRecordingAndSend();
       } else {
@@ -1104,8 +1107,31 @@
         return;
       }
 
+      const inputBar = document.getElementById('input-bar');
+      const voiceBar = document.getElementById('voice-bar');
+      const timerSpan = document.getElementById('voice-timer');
+      const legacyTimerSpan = document.getElementById('record-timer');
+
+      // 0ms synchronous UI transition to voice-bar with connecting indicator
+      isConnectingMic = true;
+      isRecordingCancelled = false;
+
+      if (inputBar) inputBar.style.display = 'none';
+      if (voiceBar) voiceBar.style.display = 'flex';
+      if (timerSpan) timerSpan.textContent = 'Подключение...';
+      if (legacyTimerSpan) legacyTimerSpan.textContent = 'Подключение...';
+
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        isConnectingMic = false;
+
+        // If user cancelled while permission request was pending
+        if (isRecordingCancelled) {
+          cleanupAudioResources();
+          if (voiceBar) voiceBar.style.display = 'none';
+          if (inputBar) inputBar.style.display = 'flex';
+          return;
+        }
 
         // Initialize Web Audio API for real-time waveform visualizer
         try {
@@ -1141,7 +1167,6 @@
 
         mediaRecorder = new MediaRecorder(mediaStream, options);
         audioChunks = [];
-        isRecordingCancelled = false;
 
         mediaRecorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) {
@@ -1152,19 +1177,12 @@
         mediaRecorder.onstop = handleRecordingStop;
         mediaRecorder.start();
 
-        // Switch to sleek voice recording bar
-        const inputBar = document.getElementById('input-bar');
-        const voiceBar = document.getElementById('voice-bar');
-        const timerSpan = document.getElementById('voice-timer');
-        const legacyTimerSpan = document.getElementById('record-timer');
-
-        if (inputBar) inputBar.style.display = 'none';
-        if (voiceBar) voiceBar.style.display = 'flex';
-
+        // Once getUserMedia resolves and recorder starts: reset timer and start visualizer
         recordingSeconds = 0;
         if (timerSpan) timerSpan.textContent = '00:00';
         if (legacyTimerSpan) legacyTimerSpan.textContent = '00:00';
 
+        if (recordingInterval) clearInterval(recordingInterval);
         recordingInterval = setInterval(() => {
           recordingSeconds++;
           const mins = String(Math.floor(recordingSeconds / 60)).padStart(2, '0');
@@ -1177,13 +1195,17 @@
         startWaveformVisualizer();
 
       } catch (err) {
+        isConnectingMic = false;
         cleanupAudioResources();
+        if (voiceBar) voiceBar.style.display = 'none';
+        if (inputBar) inputBar.style.display = 'flex';
         alert('Не удалось получить доступ к микрофону: ' + err.message);
       }
     }
 
     function cancelRecording() {
       isRecordingCancelled = true;
+      isConnectingMic = false;
       cleanupAudioResources();
 
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -1202,6 +1224,7 @@
     }
 
     function stopRecordingAndSend() {
+      if (isConnectingMic) return;
       isRecordingCancelled = false;
       cleanupAudioResources();
 
@@ -1229,6 +1252,11 @@
         input.focus();
         return;
       }
+
+      if (isTranscribing) {
+        return;
+      }
+      isTranscribing = true;
 
       const mime = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
       const audioBlob = new Blob(audioChunks, { type: mime });
@@ -1262,8 +1290,7 @@
         }
 
         if (data && data.success && data.text) {
-          const currentVal = input.value.trim();
-          input.value = currentVal ? `${currentVal} ${data.text.trim()}` : data.text.trim();
+          input.value = data.text.trim();
           input.focus();
           const sec = data.duration_ms ? (data.duration_ms / 1000).toFixed(1) : '0.0';
           showSttBadge(`🎙️ Распознано: ${data.provider || 'local-metal'}, ${sec}s`);
@@ -1274,6 +1301,7 @@
       } catch (err) {
         showSttBadge(`⚠️ Ошибка сети: ${err.message}`, true);
       } finally {
+        isTranscribing = false;
         input.focus();
       }
     }
