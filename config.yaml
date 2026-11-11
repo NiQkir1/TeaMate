@@ -20,26 +20,26 @@ environment:
 # 2. ПАРАМЕТРЫ НЕЙРОСЕТИ (LLM & PROXY)
 # -----------------------------------------------------------------------------
 llm:
-  # Активный провайдер: gemini | openai | proxy | anthropic | local
-  provider: "gemini"
+  # Активный провайдер: gemini | openai | proxy | anthropic | local | nvidia
+  provider: "nvidia"
 
-  # Настройки Google AI Studio / Gemini API
+  # Настройки NVIDIA NIM / OpenAI Compatible API
   proxy:
-    enabled: false
-    base_url: "https://generativelanguage.googleapis.com/v1beta"
-    api_key_env_var: "GEMINI_API_KEY"
+    enabled: true
+    base_url: "https://integrate.api.nvidia.com/v1"
+    api_key_env_var: "NVIDIA_API_KEY"
     organization_id: ""
 
   # Модели для различных задач
   models:
-    # Основная модель: gemini-1.5-flash или gemini-3.5 (задается через GEMINI_MODEL в .env)
-    chat_model: "gemini-1.5-flash"
+    # Основная модель: nvidia/nemotron-3.5-super-vl-120b-a12b
+    chat_model: "nvidia/nemotron-3.5-super-vl-120b-a12b"
     # Быстрая экономичная модель для роутинга и первичной классификации
-    fast_model: "gemini-1.5-flash"
+    fast_model: "nvidia/nemotron-3.5-super-vl-120b-a12b"
     # Модель для вычисления векторных эмбеддингов регламентов
     embedding_model: "text-embedding-004"
     # Резервная модель при недоступности основной
-    fallback_model: "gemini-1.5-flash"
+    fallback_model: "nvidia/nemotron-3.5-super-vl-120b-a12b"
 
   # Гиперпараметры генерации ответов нейросетью
   parameters:

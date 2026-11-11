@@ -20,9 +20,9 @@ public class GeminiClientTests
         {
             CallCount++;
 
-            if (request.Headers.TryGetValues("x-goog-api-key", out var values))
+            if (request.Headers.Authorization != null)
             {
-                CapturedApiKeyHeader = values.FirstOrDefault();
+                CapturedApiKeyHeader = request.Headers.Authorization.Parameter;
             }
 
             if (request.Content != null)
@@ -32,26 +32,23 @@ public class GeminiClientTests
 
             var responseJson = new
             {
-                candidates = new[]
+                choices = new[]
                 {
                     new
                     {
-                        content = new
+                        message = new
                         {
-                            parts = new[]
-                            {
-                                new { text = "Ответ модели Gemini для типографии Fotoprint." }
-                            },
-                            role = "model"
+                            role = "assistant",
+                            content = "Ответ модели NVIDIA для типографии Fotoprint."
                         },
-                        finishReason = "STOP"
+                        finish_reason = "stop"
                     }
                 },
-                usageMetadata = new
+                usage = new
                 {
-                    promptTokenCount = 15,
-                    candidatesTokenCount = 28,
-                    totalTokenCount = 43
+                    prompt_tokens = 15,
+                    completion_tokens = 28,
+                    total_tokens = 43
                 }
             };
 
@@ -98,7 +95,7 @@ public class GeminiClientTests
         {
             var res = await client.GenerateContentAsync($"Тестовый запрос #{i + 1}");
             Assert.True(res.IsSuccess);
-            Assert.Equal("Ответ модели Gemini для типографии Fotoprint.", res.Text);
+            Assert.Equal("Ответ модели NVIDIA для типографии Fotoprint.", res.Text);
             Assert.Equal(43, res.TotalTokens);
         }
 
@@ -109,8 +106,81 @@ public class GeminiClientTests
         Assert.Equal(11, statsAfter4.RemainingQuotaInCurrentMinute);
         Assert.Equal(26.7, statsAfter4.CurrentUsagePercent);
 
-        // Проверяем, что заголовок x-goog-api-key был передан в запросе
+        // Проверяем, что токен Bearer был передан в запросе
         Assert.Equal("test-gemini-key-12345", handler.CapturedApiKeyHeader);
+    }
+
+    [Fact]
+    public async Task NvidiaClient_Sends_OpenAi_Compatible_Format_And_Parses_Response()
+    {
+        var openAiHandler = new FakeOpenAiMessageHandler();
+        var httpClient = new HttpClient(openAiHandler);
+
+        var config = new FotoprintConfig();
+        config.Llm.Provider = "nvidia";
+        config.Llm.Proxy.BaseUrl = "https://integrate.api.nvidia.com/v1";
+        config.Llm.Proxy.ApiKeyEnvVar = "NVIDIA_TEST_KEY";
+        config.Llm.Models.ChatModel = "nvidia/nemotron-3.5-super-vl-120b-a12b";
+
+        Environment.SetEnvironmentVariable("NVIDIA_TEST_KEY", "nvapi-test-token-123");
+
+        var lb = new LlmLoadBalancer(new LoadBalancerOptions { MaxConcurrentRequests = 5, MaxRequestsPerMinute = 60, MinIntervalBetweenRequestsMs = 1 });
+        var rollback = new RollbackManager();
+
+        var client = new GeminiClient(httpClient, config, lb, rollback);
+
+        var res = await client.GenerateContentAsync("Тестовый запрос в модель NVIDIA");
+
+        Assert.True(res.IsSuccess);
+        Assert.Equal("Ответ от модели NVIDIA Nemotron", res.Text);
+        Assert.Equal(50, res.TotalTokens);
+        Assert.Equal("Bearer nvapi-test-token-123", openAiHandler.CapturedAuthHeader);
+        Assert.Contains("chat/completions", openAiHandler.CapturedRequestUri);
+        Assert.Contains("nvidia/nemotron-3.5-super-vl-120b-a12b", openAiHandler.CapturedRequestBody);
+    }
+
+    private class FakeOpenAiMessageHandler : HttpMessageHandler
+    {
+        public string? CapturedAuthHeader { get; private set; }
+        public string? CapturedRequestUri { get; private set; }
+        public string? CapturedRequestBody { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            CapturedRequestUri = request.RequestUri?.ToString();
+            CapturedAuthHeader = request.Headers.Authorization?.ToString();
+            if (request.Content != null)
+            {
+                CapturedRequestBody = await request.Content.ReadAsStringAsync(cancellationToken);
+            }
+
+            var responseJson = new
+            {
+                choices = new[]
+                {
+                    new
+                    {
+                        message = new
+                        {
+                            role = "assistant",
+                            content = "Ответ от модели NVIDIA Nemotron"
+                        },
+                        finish_reason = "stop"
+                    }
+                },
+                usage = new
+                {
+                    prompt_tokens = 20,
+                    completion_tokens = 30,
+                    total_tokens = 50
+                }
+            };
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(responseJson), System.Text.Encoding.UTF8, "application/json")
+            };
+        }
     }
 }
 

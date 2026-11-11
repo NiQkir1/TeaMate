@@ -23,6 +23,9 @@ fi
 
 # 2. Установка npm пакетов для n8n в общий volume
 if [ -d "/home/node/.n8n" ]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    apk add --no-cache nodejs npm || true
+  fi
   echo "🔄 Установка внешних npm библиотек в volume n8n..."
   cd /home/node/.n8n
   npm install --no-audit --no-fund axios lodash form-data pdf-parse docx || true
