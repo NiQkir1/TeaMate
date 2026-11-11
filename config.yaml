@@ -226,5 +226,19 @@ audio:
     model: "gemini-1.5-flash"
   max_file_size_mb: 100
 
+# -----------------------------------------------------------------------------
+# 12. ПРОАКТИВНЫЕ TELEGRAM-УВЕДОМЛЕНИЯ (РАСПИСАНИЕ И ЗАДАЧИ)
+# -----------------------------------------------------------------------------
+notifications:
+  enabled: true
+  digest_hour_msk: 9
+  pre_meeting_window_minutes: 30
+  task_due_soon_hours: 24
+  task_urgent_hours: 2
+  save_notifications_to_session: true
+  include_empty_morning_digest: true
+  task_max_overdue_days: 30
+  max_task_alerts_per_run_per_employee: 5
+
 
 

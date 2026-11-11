@@ -30,6 +30,20 @@ public class FotoprintConfig
     public AgentConfig Agent { get; set; } = new();
     public ContextSwitchConfig ContextSwitch { get; set; } = new();
     public AudioConfig Audio { get; set; } = new();
+    public NotificationsConfig Notifications { get; set; } = new();
+}
+
+public class NotificationsConfig
+{
+    public bool Enabled { get; set; } = true;
+    public int DigestHourMsk { get; set; } = 9;
+    public int PreMeetingWindowMinutes { get; set; } = 30;
+    public int TaskDueSoonHours { get; set; } = 24;
+    public int TaskUrgentHours { get; set; } = 2;
+    public bool SaveNotificationsToSession { get; set; } = true;
+    public bool IncludeEmptyMorningDigest { get; set; } = true;
+    public int TaskMaxOverdueDays { get; set; } = 30;
+    public int MaxTaskAlertsPerRunPerEmployee { get; set; } = 5;
 }
 
 public class AudioConfig

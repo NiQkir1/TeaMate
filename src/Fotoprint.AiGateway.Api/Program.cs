@@ -135,6 +135,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 Fotoprint.AiGateway.Api.Telegram.TelegramEndpoints.AddTelegramIntegration(builder.Services, builder.Configuration);
+Fotoprint.AiGateway.Api.Notifications.NotificationEndpoints.AddNotificationIntegration(builder.Services);
 
 var app = builder.Build();
 
@@ -607,6 +608,7 @@ app.MapPost("/api/agent/chat", async (
 // 1. TELEGRAM WEBHOOK & CHAT INGESTION
 // ============================================================================
 Fotoprint.AiGateway.Api.Telegram.TelegramEndpoints.MapTelegramEndpoints(app);
+Fotoprint.AiGateway.Api.Notifications.NotificationEndpoints.MapNotificationEndpoints(app);
 
 // ============================================================================
 // 2. RAG ИНДЕКСАЦИЯ И ПОИСК ЗНАНИЙ

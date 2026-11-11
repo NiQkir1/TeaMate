@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS employees (
     department VARCHAR(100) NOT NULL, -- 'Производство', 'Продажи', 'Бухгалтерия', 'Руководство'
     position VARCHAR(100) NOT NULL,
     access_groups JSONB NOT NULL DEFAULT '["all"]'::jsonb, -- ['all', 'production', 'sales', 'accounting', 'c-level']
+    notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -202,4 +203,26 @@ CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status);
 CREATE INDEX IF NOT EXISTS idx_meeting_notes_meeting_id ON meeting_notes(meeting_id);
 CREATE INDEX IF NOT EXISTS idx_action_items_meeting_id ON action_items(meeting_id);
 CREATE INDEX IF NOT EXISTS idx_action_items_responsible ON action_items(responsible_id);
+
+-- ============================================================================
+-- 5. ДОСТАВКА И ДЕДУПЛИКАЦИЯ ПРОАКТИВНЫХ УВЕДОМЛЕНИЙ TELEGRAM
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    dedup_key VARCHAR(255) NOT NULL UNIQUE,
+    notification_type VARCHAR(100) NOT NULL, -- 'pre_meeting', 'morning_digest', 'task_deadline', 'manual'
+    recipient_employee_id INT REFERENCES employees(id) ON DELETE SET NULL,
+    recipient_telegram_id BIGINT NOT NULL,
+    entity_id UUID,
+    status VARCHAR(30) NOT NULL DEFAULT 'pending', -- 'pending', 'sent', 'failed', 'skipped'
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_deliveries_type_created
+    ON notification_deliveries(notification_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_deliveries_telegram_id
+    ON notification_deliveries(recipient_telegram_id);
 

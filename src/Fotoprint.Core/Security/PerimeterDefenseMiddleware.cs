@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Fotoprint.Core.Configuration;
+using Fotoprint.Core.Telegram;
 using Fotoprint.Core.Telemetry;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -99,6 +100,29 @@ public class InternalServiceAuthMiddleware
 
     public const string InternalHeaderName = "X-Internal-Service-Key";
 
+    public static string ResolveExpectedKey(FotoprintConfig config)
+    {
+        var envKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_KEY");
+        return !string.IsNullOrWhiteSpace(envKey) ? envKey : config.Security.InternalServiceSecretKey;
+    }
+
+    public static bool IsAuthorized(HttpRequest request, FotoprintConfig config)
+    {
+        if (!config.Security.EnforceInternalServiceAuth)
+        {
+            return true;
+        }
+
+        var expectedKey = ResolveExpectedKey(config);
+        if (string.IsNullOrWhiteSpace(expectedKey))
+        {
+            return false;
+        }
+
+        var providedKey = request.Headers[InternalHeaderName].FirstOrDefault();
+        return TelegramWebhookSecurity.IsSecretValid(expectedKey, providedKey);
+    }
+
     public InternalServiceAuthMiddleware(
         RequestDelegate next,
         FotoprintConfig config,
@@ -128,12 +152,12 @@ public class InternalServiceAuthMiddleware
             return;
         }
 
-        var expectedKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_KEY")
-            ?? secConfig.InternalServiceSecretKey;
+        // Ключ разрешается через ResolveExpectedKey (ENV INTERNAL_SERVICE_KEY или config.yaml)
+        // и проверяется в constant-time в IsAuthorized.
 
         // Проверяем наличие и валидность межсервисного секретного ключа
-        if (!context.Request.Headers.TryGetValue(InternalHeaderName, out var providedKey) ||
-            !string.Equals(providedKey, expectedKey, StringComparison.Ordinal))
+        // Проверка через единый IsAuthorized helper (constant-time SHA-256)
+        if (!IsAuthorized(context.Request, _config))
         {
             var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
             _logger.LogWarning("🚫 [InternalAuth] Попытка неавторизованного прямого вызова MCP-сервера по пути '{Path}' с IP {RemoteIp}. Доступ заблокирован.",
