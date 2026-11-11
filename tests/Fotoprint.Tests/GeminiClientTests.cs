@@ -290,6 +290,149 @@ public class GeminiClientTests
         Assert.Equal("get_user_tasks", res.FunctionCalls[1].Name);
     }
 
+    [Fact]
+    public async Task ChatTurnAsync_WithTools_UsesChatModel_And_NoThinking_UsesFastModel()
+    {
+        var prevEnvModel = Environment.GetEnvironmentVariable("LLM_MODEL");
+        Environment.SetEnvironmentVariable("LLM_MODEL", null);
+        try
+        {
+            var openAiHandler = new FakeOpenAiMessageHandler();
+            var httpClient = new HttpClient(openAiHandler);
+
+            var config = new FotoprintConfig();
+            config.Llm.Provider = "nvidia";
+            config.Llm.Proxy.BaseUrl = "https://integrate.api.nvidia.com/v1";
+            config.Llm.Proxy.ApiKeyEnvVar = "NVIDIA_TEST_KEY";
+            config.Llm.Models.ChatModel = "nvidia/nemotron-3-ultra-550b-a55b";
+            config.Llm.Models.FastModel = "nvidia/nemotron-3.5-bolt-e4b";
+            config.Llm.Models.FallbackModel = "nvidia/nemotron-3.5-bolt-e4b";
+            Environment.SetEnvironmentVariable("NVIDIA_TEST_KEY", "nvapi-test-token-123");
+
+            var lb = new LlmLoadBalancer(new LoadBalancerOptions { MaxRequestsPerMinute = 60, MinIntervalBetweenRequestsMs = 0 });
+            var client = new GeminiClient(httpClient, config, lb, new RollbackManager());
+
+            var tools = new[]
+            {
+                new
+                {
+                    type = "function",
+                    function = new { name = "get_order_status", description = "Order", parameters = new { type = "object" } }
+                }
+            };
+
+            var t1 = await client.ChatTurnAsync(new List<object> { new { role = "user", content = "Заказ 44102" } }, tools: tools);
+            var t2 = await client.ChatTurnNoThinkingAsync(new List<object> { new { role = "user", content = "Синтез" } }, tools: tools);
+
+            Assert.Equal(2, openAiHandler.CapturedRequestBodies.Count);
+            using var doc1 = JsonDocument.Parse(openAiHandler.CapturedRequestBodies[0]);
+            using var doc2 = JsonDocument.Parse(openAiHandler.CapturedRequestBodies[1]);
+
+            Assert.Equal("nvidia/nemotron-3-ultra-550b-a55b", doc1.RootElement.GetProperty("model").GetString());
+            Assert.True(doc1.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
+            Assert.Equal("nvidia/nemotron-3-ultra-550b-a55b", t1.Model);
+
+            Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", doc2.RootElement.GetProperty("model").GetString());
+            Assert.False(doc2.RootElement.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
+            Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", t2.Model);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LLM_MODEL", prevEnvModel);
+        }
+    }
+
+    [Fact]
+    public async Task ChatTurnAsync_OpensCircuitBreaker_And_FallsBack_To_Bolt_On_503()
+    {
+        var prevEnvModel = Environment.GetEnvironmentVariable("LLM_MODEL");
+        Environment.SetEnvironmentVariable("LLM_MODEL", null);
+        try
+        {
+            var openAiHandler = new FakeOpenAiMessageHandler();
+            openAiHandler.StatusCodesQueue.Enqueue(HttpStatusCode.ServiceUnavailable);
+            var httpClient = new HttpClient(openAiHandler);
+
+            var config = new FotoprintConfig();
+            config.Llm.Provider = "nvidia";
+            config.Llm.Proxy.BaseUrl = "https://integrate.api.nvidia.com/v1";
+            config.Llm.Proxy.ApiKeyEnvVar = "NVIDIA_TEST_KEY";
+            config.Llm.Models.ChatModel = "nvidia/nemotron-3-ultra-550b-a55b";
+            config.Llm.Models.FastModel = "nvidia/nemotron-3.5-bolt-e4b";
+            config.Llm.Models.FallbackModel = "nvidia/nemotron-3.5-bolt-e4b";
+            Environment.SetEnvironmentVariable("NVIDIA_TEST_KEY", "nvapi-test-token-123");
+
+            var lb = new LlmLoadBalancer(new LoadBalancerOptions { MaxRequestsPerMinute = 60, MinIntervalBetweenRequestsMs = 0 });
+            var client = new GeminiClient(httpClient, config, lb, new RollbackManager());
+
+            var firstTurn = await client.ChatTurnAsync(new List<object> { new { role = "user", content = "Запрос 1" } });
+            Assert.True(firstTurn.IsSuccess);
+            Assert.Equal(2, firstTurn.AttemptsMade);
+            Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", firstTurn.Model);
+
+            var secondTurn = await client.ChatTurnAsync(new List<object> { new { role = "user", content = "Запрос 2" } });
+            Assert.True(secondTurn.IsSuccess);
+            Assert.Equal(1, secondTurn.AttemptsMade);
+            Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", secondTurn.Model);
+
+            var requestedModels = openAiHandler.CapturedRequestBodies
+                .Select(b => JsonDocument.Parse(b).RootElement.GetProperty("model").GetString())
+                .ToList();
+
+            Assert.Equal(
+                new[]
+                {
+                    "nvidia/nemotron-3-ultra-550b-a55b",
+                    "nvidia/nemotron-3.5-bolt-e4b",
+                    "nvidia/nemotron-3.5-bolt-e4b"
+                },
+                requestedModels);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LLM_MODEL", prevEnvModel);
+        }
+    }
+
+    [Fact]
+    public async Task ChatTurnAsync_OpensCircuitBreaker_And_FallsBack_To_Bolt_On_HeaderTimeout()
+    {
+        var prevEnvModel = Environment.GetEnvironmentVariable("LLM_MODEL");
+        Environment.SetEnvironmentVariable("LLM_MODEL", null);
+        try
+        {
+            var openAiHandler = new FakeOpenAiMessageHandler();
+            openAiHandler.ExceptionsQueue.Enqueue(new TaskCanceledException("Simulated TTFT header timeout"));
+            var httpClient = new HttpClient(openAiHandler);
+
+            var config = new FotoprintConfig();
+            config.Llm.Provider = "nvidia";
+            config.Llm.Proxy.BaseUrl = "https://integrate.api.nvidia.com/v1";
+            config.Llm.Proxy.ApiKeyEnvVar = "NVIDIA_TEST_KEY";
+            config.Llm.Models.ChatModel = "nvidia/nemotron-3-ultra-550b-a55b";
+            config.Llm.Models.FastModel = "nvidia/nemotron-3.5-bolt-e4b";
+            config.Llm.Models.FallbackModel = "nvidia/nemotron-3.5-bolt-e4b";
+            Environment.SetEnvironmentVariable("NVIDIA_TEST_KEY", "nvapi-test-token-123");
+
+            var lb = new LlmLoadBalancer(new LoadBalancerOptions { MaxRequestsPerMinute = 60, MinIntervalBetweenRequestsMs = 0 });
+            var client = new GeminiClient(httpClient, config, lb, new RollbackManager());
+
+            var firstTurn = await client.ChatTurnAsync(new List<object> { new { role = "user", content = "Запрос с таймаутом заголовков" } });
+            Assert.True(firstTurn.IsSuccess);
+            Assert.Equal(2, firstTurn.AttemptsMade);
+            Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", firstTurn.Model);
+
+            var secondTurn = await client.ChatTurnAsync(new List<object> { new { role = "user", content = "Последующий запрос при открытом Circuit Breaker" } });
+            Assert.True(secondTurn.IsSuccess);
+            Assert.Equal(1, secondTurn.AttemptsMade);
+            Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", secondTurn.Model);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LLM_MODEL", prevEnvModel);
+        }
+    }
+
     private class FakeOpenAiMessageHandler : HttpMessageHandler
     {
         public string? CapturedAuthHeader { get; private set; }
@@ -297,6 +440,9 @@ public class GeminiClientTests
         public string? CapturedRequestBody { get; private set; }
         public object? CustomResponseJson { get; set; }
         public string? CustomSseBody { get; set; }
+        public List<string> CapturedRequestBodies { get; } = new();
+        public Queue<HttpStatusCode> StatusCodesQueue { get; } = new();
+        public Queue<Exception> ExceptionsQueue { get; } = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -305,6 +451,28 @@ public class GeminiClientTests
             if (request.Content != null)
             {
                 CapturedRequestBody = await request.Content.ReadAsStringAsync(cancellationToken);
+            }
+
+            if (CapturedRequestBody != null)
+            {
+                CapturedRequestBodies.Add(CapturedRequestBody);
+            }
+
+            if (ExceptionsQueue.Count > 0)
+            {
+                throw ExceptionsQueue.Dequeue();
+            }
+
+            if (StatusCodesQueue.Count > 0)
+            {
+                var status = StatusCodesQueue.Dequeue();
+                if (status != HttpStatusCode.OK)
+                {
+                    return new HttpResponseMessage(status)
+                    {
+                        Content = new StringContent("{\"error\":{\"message\":\"upstream unavailable\"}}", System.Text.Encoding.UTF8, "application/json")
+                    };
+                }
             }
 
             if (CustomSseBody != null)

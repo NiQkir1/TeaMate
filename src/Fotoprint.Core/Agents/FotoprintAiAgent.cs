@@ -192,7 +192,7 @@ public class FotoprintAiAgent : IFotoprintAgent
             5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, ПВТР и база знаний (RAG) -> вызови 'search_typography_regulations'
 
             Правило подтверждения (Human-in-the-Loop): для инструментов с атрибутом [RequireConfirmation(true)] ('create_task', 'schedule_meeting') без подтверждения пользователя (сейчас confirmed={isConfirmedByUser}) сначала выведи точный «📋 План действий (требуется подтверждение)» со всеми параметрами и попроси подтвердить выполнение («Да, подтверждаю» / «Выполняй»). Если confirmed=True — сразу вызови инструмент создания.
-            Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов.
+            Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов, не опускай важные детали ответа инструментов (наличие материалов/остатков, сроки, риски, время и участников встреч).
             """;
 
         // 2. Формируем список Function Tools для LLM (OpenAI / NVIDIA формат)
@@ -242,7 +242,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                 await _langfuse.CreateGenerationAsync(
                     traceId: traceId,
                     name: "Gen:Main_Agent",
-                    model: _config.Llm.Models.FastModel,
+                    model: turn.Model ?? (turnIdx > 1 ? _config.Llm.Models.FastModel : _config.Llm.Models.ChatModel),
                     startTime: startTurn,
                     endTime: endTurn,
                     promptTokens: turn.PromptTokens,

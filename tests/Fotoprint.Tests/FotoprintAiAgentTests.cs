@@ -347,6 +347,7 @@ public class FotoprintAiAgentTests
         Assert.DoesNotContain("mock_offline", serializedContents);
     }
 
+
     [Fact]
     public async Task Agent_Blocks_CreateTask_Without_Confirmation_And_Returns_ActionPlan()
     {
@@ -385,6 +386,26 @@ public class FotoprintAiAgentTests
         Assert.True(FotoprintAiAgent.IsMutatingActionConfirmed(history, "Выполняй"));
     }
 
+    [Fact]
+    public async Task Agent_Logs_Actual_Turn_Models_To_Langfuse()
+    {
+        var gemini = new HybridModelFakeGeminiClient();
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory();
+        var langfuse = new RecordingLangfuseClient();
+        var config = new FotoprintConfig();
+        config.Llm.Models.ChatModel = "nvidia/nemotron-3-ultra-550b-a55b";
+        config.Llm.Models.FastModel = "nvidia/nemotron-3.5-bolt-e4b";
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, langfuse, null, NullLogger<FotoprintAiAgent>.Instance);
+        var res = await agent.ProcessMessageAsync(100001, 55555, "Дай статус и материалы по производству");
+
+        Assert.True(res.IsSuccess);
+        Assert.Equal(2, langfuse.Generations.Count);
+        Assert.Equal("nvidia/nemotron-3-ultra-550b-a55b", langfuse.Generations[0].Model);
+        Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", langfuse.Generations[1].Model);
+    }
+
     private class CreateTaskFakeGeminiClient : IGeminiClient
     {
         public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
@@ -413,5 +434,60 @@ public class FotoprintAiAgentTests
 
         public GeminiCallStats GetStats() => new(1, 1, 60, 59, 1.0, DateTime.UtcNow, 0);
     }
-}
 
+    private class HybridModelFakeGeminiClient : IGeminiClient
+    {
+        public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => Task.FromResult(new GeminiGenerateResponse(true, "ok", "STOP", 1, 1, 2, 1, null, "nvidia/nemotron-3-ultra-550b-a55b"));
+
+        public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            var argsJson = JsonSerializer.SerializeToElement(new { department = "Офсетный цех" });
+            return Task.FromResult(new GeminiTurnResponse(
+                IsSuccess: true,
+                Text: null,
+                FunctionCall: new GeminiFunctionCall("get_production_kpis", argsJson, "c1"),
+                FinishReason: "tool_calls",
+                PromptTokens: 40,
+                CandidatesTokens: 15,
+                TotalTokens: 55,
+                AttemptsMade: 1,
+                ErrorMessage: null,
+                FunctionCalls: new[] { new GeminiFunctionCall("get_production_kpis", argsJson, "c1") },
+                Model: "nvidia/nemotron-3-ultra-550b-a55b"));
+        }
+
+        public Task<GeminiTurnResponse> ChatTurnNoThinkingAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => Task.FromResult(new GeminiTurnResponse(
+                IsSuccess: true,
+                Text: "Сводка готова.",
+                FunctionCall: null,
+                FinishReason: "stop",
+                PromptTokens: 80,
+                CandidatesTokens: 25,
+                TotalTokens: 105,
+                AttemptsMade: 1,
+                ErrorMessage: null,
+                Model: "nvidia/nemotron-3.5-bolt-e4b"));
+
+        public GeminiCallStats GetStats() => new(2, 2, 60, 58, 3.3, null, 0);
+    }
+
+    private class RecordingLangfuseClient : ILangfuseClient
+    {
+        public List<(string Name, string Model)> Generations { get; } = new();
+        public string GenerateTraceId() => Guid.NewGuid().ToString("N");
+        public string GenerateObservationId() => Guid.NewGuid().ToString("N");
+        public double CalculateCost(int promptTokens, int completionTokens, int cachedTokens = 0) => 0;
+        public Task CreateTraceAsync(string traceId, string name, string? userId = null, string? sessionId = null, object? metadata = null, string[]? tags = null, CancellationToken ct = default) => Task.CompletedTask;
+        public Task CreateSpanAsync(string traceId, string name, DateTime startTime, DateTime endTime, object? input = null, object? output = null, object? metadata = null, string? parentObservationId = null, string? spanId = null, CancellationToken ct = default) => Task.CompletedTask;
+        public Task CreateGenerationAsync(string traceId, string name, string model, DateTime startTime, DateTime endTime, int promptTokens, int completionTokens, int totalTokens, int cachedTokens = 0, object? input = null, object? output = null, object? metadata = null, double? calculatedCost = null, string? parentObservationId = null, string? generationId = null, CancellationToken ct = default)
+        {
+            Generations.Add((name, model));
+            return Task.CompletedTask;
+        }
+        public Task LogEventAsync(string traceId, string name, string level = "DEFAULT", string? message = null, object? metadata = null, CancellationToken ct = default) => Task.CompletedTask;
+        public Task LogSecurityAlertAsync(string traceId, long telegramId, string toolOrAction, string requiredPermission, string reason, CancellationToken ct = default) => Task.CompletedTask;
+        public Task LogScoreAsync(string traceId, string name, double value, string? comment = null, string? observationId = null, CancellationToken ct = default) => Task.CompletedTask;
+    }
+}

@@ -16,8 +16,10 @@ public class FotoprintConfigTests
 
         // 1. Проверка LLM параметров
         Assert.True(config.Llm.Provider is "nvidia" or "gemini");
-        Assert.NotNull(config.Llm.Models.ChatModel);
-        Assert.NotNull(config.Llm.Models.FastModel);
+        Assert.Equal("nvidia/nemotron-3-ultra-550b-a55b", config.Llm.Models.ChatModel);
+        Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", config.Llm.Models.FastModel);
+        Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", config.Llm.Models.FallbackModel);
+        Assert.NotEqual(config.Llm.Models.ChatModel, config.Llm.Models.FallbackModel);
         Assert.Equal("text-embedding-004", config.Llm.Models.EmbeddingModel);
 
         // 2. Проверка гиперпараметров (температура, токены)
