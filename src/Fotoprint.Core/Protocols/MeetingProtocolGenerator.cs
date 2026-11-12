@@ -13,7 +13,8 @@ public record ProtocolExportData(
     List<string> Participants,
     string Summary,
     List<string> Decisions,
-    List<ActionItemExportData> ActionItems
+    List<ActionItemExportData> ActionItems,
+    string? RawTranscript = null
 );
 
 public record ActionItemExportData(
@@ -126,6 +127,17 @@ public class MeetingProtocolGenerator : IMeetingProtocolGenerator
                 AddTableCell(row, item.Status, width: "1200");
             }
 
+            if (!string.IsNullOrWhiteSpace(data.RawTranscript))
+            {
+                AddEmptyParagraph(body);
+                AddHeading(body, "4. ПОЛНАЯ СТЕНОГРАММА СОЗВОНА");
+                foreach (var line in data.RawTranscript.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var tp = body.AppendChild(new Paragraph());
+                    tp.AppendChild(new Run(new Text(line.Trim())));
+                }
+            }
+
             mainPart.Document.Save();
         }
 
@@ -180,6 +192,15 @@ public class MeetingProtocolGenerator : IMeetingProtocolGenerator
             sb.AppendLine($"<tr><td>{i + 1}</td><td>{item.Title}</td><td>{responsibleText}</td><td>{deadlineText}</td><td><span class=\"badge\">{item.Status}</span></td></tr>");
         }
         sb.AppendLine("</tbody></table>");
+
+        if (!string.IsNullOrWhiteSpace(data.RawTranscript))
+        {
+            sb.AppendLine("<h2>4. Полная стенограмма созвона</h2>");
+            sb.AppendLine("<pre style=\"white-space: pre-wrap; font-family: inherit; background: #f7fafc; padding: 15px; border-radius: 6px;\">");
+            sb.AppendLine(System.Net.WebUtility.HtmlEncode(data.RawTranscript));
+            sb.AppendLine("</pre>");
+        }
+
         sb.AppendLine("</body></html>");
 
         return sb.ToString();

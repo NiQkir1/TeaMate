@@ -5,6 +5,7 @@
     <Project Path="src/Fotoprint.Mcp.Bitrix24/Fotoprint.Mcp.Bitrix24.csproj" />
     <Project Path="src/Fotoprint.Mcp.Calendar/Fotoprint.Mcp.Calendar.csproj" />
     <Project Path="src/Fotoprint.Mcp.EmployeeReader/Fotoprint.Mcp.EmployeeReader.csproj" />
+    <Project Path="src/Fotoprint.Mcp.KnowledgeBase/Fotoprint.Mcp.KnowledgeBase.csproj" />
     <Project Path="src/Fotoprint.Mcp.OneC/Fotoprint.Mcp.OneC.csproj" />
   </Folder>
   <Folder Name="/tests/">

@@ -63,7 +63,7 @@ public class LocalEngineAudioConfig
 
 public class GeminiAudioConfig
 {
-    public string Model { get; set; } = "gemini-1.5-flash";
+    public string Model { get; set; } = "gemini-2.5-flash";
 }
 
 public class ContextSwitchConfig
@@ -104,7 +104,7 @@ public class LlmModelsConfig
 {
     public string ChatModel { get; set; } = "gemini-1.5-flash";
     public string FastModel { get; set; } = "gemini-1.5-flash";
-    public string EmbeddingModel { get; set; } = "text-embedding-004";
+    public string EmbeddingModel { get; set; } = "gemini-embedding-2";
     public string FallbackModel { get; set; } = "gemini-1.5-flash";
 }
 

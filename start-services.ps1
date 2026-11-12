@@ -39,6 +39,7 @@ if (-not $env:McpUrls__EmployeeReader)    { $env:McpUrls__EmployeeReader    = "h
 if (-not $env:McpUrls__OneC)              { $env:McpUrls__OneC              = "http://localhost:8082" }
 if (-not $env:McpUrls__Bitrix24)          { $env:McpUrls__Bitrix24          = "http://localhost:8083" }
 if (-not $env:McpUrls__Calendar)          { $env:McpUrls__Calendar          = "http://localhost:8084" }
+if (-not $env:McpUrls__KnowledgeBase)     { $env:McpUrls__KnowledgeBase     = "http://localhost:8086" }
 if (-not $env:Security__EmployeeReaderUrl){ $env:Security__EmployeeReaderUrl= "http://localhost:8081" }
 
 # 3. Проверка модели Whisper
@@ -57,6 +58,7 @@ $projects = @(
     @{ Name = "Fotoprint.Mcp.OneC";           Port = 8082; Path = "src/Fotoprint.Mcp.OneC" },
     @{ Name = "Fotoprint.Mcp.Bitrix24";       Port = 8083; Path = "src/Fotoprint.Mcp.Bitrix24" },
     @{ Name = "Fotoprint.Mcp.Calendar";       Port = 8084; Path = "src/Fotoprint.Mcp.Calendar" },
+    @{ Name = "Fotoprint.Mcp.KnowledgeBase";  Port = 8086; Path = "src/Fotoprint.Mcp.KnowledgeBase" },
     @{ Name = "Fotoprint.AiGateway.Api";      Port = 8088; Path = "src/Fotoprint.AiGateway.Api" }
 )
 

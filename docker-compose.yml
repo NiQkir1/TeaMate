@@ -92,6 +92,7 @@ services:
       MCP_1C_URL: http://mcp-1c:8082
       MCP_BITRIX24_URL: http://mcp-bitrix24:8083
       MCP_CALENDAR_URL: http://mcp-calendar:8084
+      MCP_KNOWLEDGE_BASE_URL: http://mcp-knowledge-base:8086
     ports:
       - "${N8N_PORT:-5678}:5678"
     volumes:
@@ -262,7 +263,10 @@ services:
       LLM_MODEL: ${LLM_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      AUDIO_ENGINE_PATH: /usr/local/bin/whisper-cli
+      WHISPER_MODEL_PATH: /app/models/ggml-base.bin
       Langfuse__BaseUrl: http://langfuse-web:3000
       Langfuse__PublicKey: ${LANGFUSE_PUBLIC_KEY:-pk-lf-fotoprint-local}
       Langfuse__SecretKey: ${LANGFUSE_SECRET_KEY:-sk-lf-fotoprint-local}
@@ -270,12 +274,14 @@ services:
       McpUrls__OneC: http://mcp-1c:8082
       McpUrls__Bitrix24: http://mcp-bitrix24:8083
       McpUrls__Calendar: http://mcp-calendar:8084
+      McpUrls__KnowledgeBase: http://mcp-knowledge-base:8086
     ports:
       # Доступен только с localhost разработчика, публичный доступ идет строго через Nginx
       - "127.0.0.1:${GATEWAY_PORT:-8088}:8080"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./config/vocabulary.yaml:/app/config/vocabulary.yaml:ro
+      - ./models:/app/models:ro
     networks:
       - fotoprint-net
 
@@ -357,9 +363,39 @@ services:
       ASPNETCORE_URLS: http://+:8084
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-fotoprint};Username=${POSTGRES_USER:-fotoprint};Password=${POSTGRES_PASSWORD:-fotoprint_secret}
       Security__EmployeeReaderUrl: http://mcp-employee-reader:8081
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
       Langfuse__BaseUrl: http://langfuse-web:3000
       Langfuse__PublicKey: ${LANGFUSE_PUBLIC_KEY:-pk-lf-fotoprint-local}
       Langfuse__SecretKey: ${LANGFUSE_SECRET_KEY:-sk-lf-fotoprint-local}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    # Порты MCP закрыты от внешних сканеров, доступны только внутри fotoprint-net
+    networks:
+      - fotoprint-net
+
+  mcp-knowledge-base:
+    build:
+      context: .
+      dockerfile: src/Fotoprint.Mcp.KnowledgeBase/Dockerfile
+    container_name: fotoprint-mcp-knowledge-base
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-employee-reader:
+        condition: service_started
+    environment:
+      ASPNETCORE_URLS: http://+:8086
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-fotoprint};Username=${POSTGRES_USER:-fotoprint};Password=${POSTGRES_PASSWORD:-fotoprint_secret}
+      Security__EmployeeReaderUrl: http://mcp-employee-reader:8081
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
+      Langfuse__BaseUrl: http://langfuse-web:3000
+      Langfuse__PublicKey: ${LANGFUSE_PUBLIC_KEY:-pk-lf-fotoprint-local}
+      Langfuse__SecretKey: ${LANGFUSE_SECRET_KEY:-sk-lf-fotoprint-local}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
     # Порты MCP закрыты от внешних сканеров, доступны только внутри fotoprint-net
     networks:
       - fotoprint-net
