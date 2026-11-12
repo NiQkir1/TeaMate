@@ -328,51 +328,58 @@
         </div>
 
         <!-- Section 2: Employees / Кто занят -->
-        <div class="cal-filter-section">
+        <div class="cal-filter-section" id="cal-sidebar-emp-section">
           <div class="cal-section-header">Сотрудники (Кто занят)</div>
-
-          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '1', event)">
-            <div class="cal-filter-left">
-              <span class="cal-busy-dot dot-busy" title="Занят (планерки)"></span>
-              <span>Смирнов А.С.</span>
-            </div>
-            <label class="cal-checkbox-label">
-              <input type="checkbox" class="cal-checkbox" data-filter-employee="1" checked onchange="onCalendarFilterChange()">
-              <span class="cal-custom-check"></span>
-            </label>
+          <div class="cal-emp-search-box cal-sidebar-search-box">
+            <input type="text" id="sidebar-emp-search" placeholder="Поиск сотрудника..." autocomplete="off">
+            <button type="button" id="sidebar-emp-clear" class="cal-search-clear-btn" aria-label="Очистить поиск" title="Очистить" style="display: none;">
+              <i data-lucide="x"></i>
+            </button>
           </div>
-
-          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '2', event)">
-            <div class="cal-filter-left">
-              <span class="cal-busy-dot dot-busy" title="Занят (производство)"></span>
-              <span>Кузнецов И.П.</span>
+          <div id="cal-sidebar-emp-list" class="cal-sidebar-emp-list">
+            <div class="cal-filter-item" onclick="toggleFilterItem('employee', '1', event)">
+              <div class="cal-filter-left">
+                <span class="cal-busy-dot dot-busy" title="Занят (планерки)"></span>
+                <span class="cal-emp-sidebar-name">Смирнов А.С.</span>
+              </div>
+              <label class="cal-checkbox-label">
+                <input type="checkbox" class="cal-checkbox" data-filter-employee="1" checked onchange="onCalendarFilterChange()">
+                <span class="cal-custom-check"></span>
+              </label>
             </div>
-            <label class="cal-checkbox-label">
-              <input type="checkbox" class="cal-checkbox" data-filter-employee="2" checked onchange="onCalendarFilterChange()">
-              <span class="cal-custom-check"></span>
-            </label>
-          </div>
 
-          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '3', event)">
-            <div class="cal-filter-left">
-              <span class="cal-busy-dot dot-busy" title="Занята (клиенты)"></span>
-              <span>Морозова Е.А.</span>
+            <div class="cal-filter-item" onclick="toggleFilterItem('employee', '2', event)">
+              <div class="cal-filter-left">
+                <span class="cal-busy-dot dot-busy" title="Занят (производство)"></span>
+                <span class="cal-emp-sidebar-name">Кузнецов И.П.</span>
+              </div>
+              <label class="cal-checkbox-label">
+                <input type="checkbox" class="cal-checkbox" data-filter-employee="2" checked onchange="onCalendarFilterChange()">
+                <span class="cal-custom-check"></span>
+              </label>
             </div>
-            <label class="cal-checkbox-label">
-              <input type="checkbox" class="cal-checkbox" data-filter-employee="3" checked onchange="onCalendarFilterChange()">
-              <span class="cal-custom-check"></span>
-            </label>
-          </div>
 
-          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '4', event)">
-            <div class="cal-filter-left">
-              <span class="cal-busy-dot dot-free" title="Свободна"></span>
-              <span>Соколова О.В.</span>
+            <div class="cal-filter-item" onclick="toggleFilterItem('employee', '3', event)">
+              <div class="cal-filter-left">
+                <span class="cal-busy-dot dot-busy" title="Занята (клиенты)"></span>
+                <span class="cal-emp-sidebar-name">Морозова Е.А.</span>
+              </div>
+              <label class="cal-checkbox-label">
+                <input type="checkbox" class="cal-checkbox" data-filter-employee="3" checked onchange="onCalendarFilterChange()">
+                <span class="cal-custom-check"></span>
+              </label>
             </div>
-            <label class="cal-checkbox-label">
-              <input type="checkbox" class="cal-checkbox" data-filter-employee="4" checked onchange="onCalendarFilterChange()">
-              <span class="cal-custom-check"></span>
-            </label>
+
+            <div class="cal-filter-item" onclick="toggleFilterItem('employee', '4', event)">
+              <div class="cal-filter-left">
+                <span class="cal-busy-dot dot-free" title="Свободна"></span>
+                <span class="cal-emp-sidebar-name">Соколова О.В.</span>
+              </div>
+              <label class="cal-checkbox-label">
+                <input type="checkbox" class="cal-checkbox" data-filter-employee="4" checked onchange="onCalendarFilterChange()">
+                <span class="cal-custom-check"></span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -679,23 +686,15 @@
 
         <div class="cal-form-group">
           <label class="cal-form-label">Участники (Кто будет занят)</label>
-          <div class="cal-participants-checkboxes">
-            <label class="cal-participant-check">
-              <input type="checkbox" name="quick-emp" value="1" checked>
-              <span class="cal-emp-badge">Смирнов А.С. (CEO)</span>
-            </label>
-            <label class="cal-participant-check">
-              <input type="checkbox" name="quick-emp" value="2" checked>
-              <span class="cal-emp-badge">Кузнецов И.П. (Цех)</span>
-            </label>
-            <label class="cal-participant-check">
-              <input type="checkbox" name="quick-emp" value="3">
-              <span class="cal-emp-badge">Морозова Е.А. (Продажи)</span>
-            </label>
-            <label class="cal-participant-check">
-              <input type="checkbox" name="quick-emp" value="4">
-              <span class="cal-emp-badge">Соколова О.В. (Бухг.)</span>
-            </label>
+          <div id="quick-selected-chips" class="cal-selected-chips" aria-label="Выбранные участники"></div>
+          <div class="cal-emp-search-wrap">
+            <div class="cal-emp-search-box">
+              <input type="text" id="quick-emp-search" placeholder="Поиск по ФИО, должности или отделу..." autocomplete="off">
+              <button type="button" id="quick-emp-clear" class="cal-search-clear-btn" aria-label="Очистить поиск" title="Очистить" style="display: none;">
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+            <div id="quick-emp-dropdown" class="cal-emp-dropdown" style="display: none;" role="listbox"></div>
           </div>
         </div>
 
@@ -758,23 +757,15 @@
       <!-- Field 4: Участники (Participants - Bottom Section) -->
       <div class="cal-drag-form-group cal-drag-participants-group">
         <label class="cal-drag-label">Участники (Кто будет занят)</label>
-        <div class="cal-drag-participants-grid">
-          <label class="cal-drag-emp-check">
-            <input type="checkbox" name="drag-create-emp" value="1" checked>
-            <span class="cal-emp-badge">Смирнов А.С. (CEO)</span>
-          </label>
-          <label class="cal-drag-emp-check">
-            <input type="checkbox" name="drag-create-emp" value="2" checked>
-            <span class="cal-emp-badge">Кузнецов И.П. (Цех)</span>
-          </label>
-          <label class="cal-drag-emp-check">
-            <input type="checkbox" name="drag-create-emp" value="3">
-            <span class="cal-emp-badge">Морозова Е.А. (Продажи)</span>
-          </label>
-          <label class="cal-drag-emp-check">
-            <input type="checkbox" name="drag-create-emp" value="4">
-            <span class="cal-emp-badge">Соколова О.В. (Бухг.)</span>
-          </label>
+        <div id="drag-create-selected-chips" class="cal-selected-chips" aria-label="Выбранные участники"></div>
+        <div class="cal-emp-search-wrap">
+          <div class="cal-emp-search-box">
+            <input type="text" id="drag-create-emp-search" placeholder="Поиск по ФИО, должности или отделу..." autocomplete="off">
+            <button type="button" id="drag-create-emp-clear" class="cal-search-clear-btn" aria-label="Очистить поиск" title="Очистить" style="display: none;">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div id="drag-create-emp-dropdown" class="cal-emp-dropdown" style="display: none;" role="listbox"></div>
         </div>
       </div>
 
@@ -912,6 +903,8 @@
 
     function renderUsers(users) {
       availableUsers = [...users, GUEST_TEST_USER];
+      buildEmployeeSearchIndex(availableUsers);
+      renderSidebarEmployeeList();
       userSelect.innerHTML = '';
       for (const u of availableUsers) {
         const opt = document.createElement('option');
@@ -958,6 +951,816 @@
 
       refreshCalendarEvents();
     }
+
+    // ========================================================================
+    // SMART EMPLOYEE / CLIENT SEARCH ENGINE & AUTOCOMPLETE
+    // Contract: employee_search_contract.md
+    // ========================================================================
+    let employeeSearchIndex = [];
+    let selectedDragParticipantIds = new Set([1, 2]);
+    let activeDragDropdownIndex = -1;
+    let selectedQuickParticipantIds = new Set([1, 2]);
+    let activeQuickDropdownIndex = -1;
+
+    function normalizeSearchText(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .toLowerCase()
+        .replace(/ё/g, 'е')
+        .trim();
+    }
+
+    function tokenizeSearchText(str) {
+      const norm = normalizeSearchText(str);
+      if (!norm) return [];
+      return norm.split(/[\s,.;:!?\-+/\\]+/).filter(Boolean);
+    }
+
+    function damerauLevenshteinDistance(a, b) {
+      if (a === b) return 0;
+      const la = a.length;
+      const lb = b.length;
+      if (!la) return lb;
+      if (!lb) return la;
+
+      const d = [];
+      for (let i = 0; i <= la; i++) {
+        d[i] = [i];
+      }
+      for (let j = 0; j <= lb; j++) {
+        d[0][j] = j;
+      }
+
+      for (let i = 1; i <= la; i++) {
+        for (let j = 1; j <= lb; j++) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          d[i][j] = Math.min(
+            d[i - 1][j] + 1,
+            d[i][j - 1] + 1,
+            d[i - 1][j - 1] + cost
+          );
+          if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+            d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + cost);
+          }
+        }
+      }
+      return d[la][lb];
+    }
+
+    function getEmployeeShortName(u) {
+      if (!u) return 'Сотрудник #?';
+      if (u.short_name) return u.short_name;
+      if (!u.full_name) return `Сотрудник #${u.telegram_id || u.employee_id || u.id || '?'}`;
+      const parts = u.full_name.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 1) return parts[0];
+      const last = parts[0];
+      const initials = parts.slice(1).map(p => p[0].toUpperCase() + '.').join('');
+      return `${last} ${initials}`;
+    }
+
+    function getEmployeeDisplayName(id) {
+      const idStr = String(id);
+      const found = (employeeSearchIndex || []).find(e => String(e.id) === idStr);
+      if (found) return found.short_name || found.full_name;
+      const user = (availableUsers || []).find(u => String(u.telegram_id || u.employee_id || u.id) === idStr);
+      if (user) return getEmployeeShortName(user);
+      return `Сотрудник #${id}`;
+    }
+
+    function buildEmployeeSearchIndex(users) {
+      if (!users || !Array.isArray(users)) return;
+      employeeSearchIndex = users.map(u => {
+        const rawFullName = u.full_name || `${u.last_name || ''} ${u.first_name || ''} ${u.middle_name || ''}`.trim();
+        const rawPos = u.position || '';
+        const rawDept = u.department || '';
+
+        const fioParts = rawFullName.trim().split(/\s+/).filter(Boolean);
+        const lastName = u.last_name || fioParts[0] || '';
+        const firstName = u.first_name || fioParts[1] || '';
+        const middleName = u.middle_name || fioParts[2] || '';
+
+        const fioTokens = [lastName, firstName, middleName].map(normalizeSearchText).filter(Boolean);
+        const roleTokens = tokenizeSearchText(`${rawPos} ${rawDept}`);
+        const fullNameNorm = normalizeSearchText(rawFullName);
+        const positionNorm = normalizeSearchText(rawPos);
+        const departmentNorm = normalizeSearchText(rawDept);
+
+        const empId = u.employee_id !== undefined ? u.employee_id : (u.telegram_id !== undefined ? u.telegram_id : u.id);
+
+        return {
+          raw: u,
+          id: empId,
+          full_name: rawFullName,
+          short_name: getEmployeeShortName({ ...u, full_name: rawFullName }),
+          position: rawPos,
+          department: rawDept,
+          last_name: lastName,
+          first_name: firstName,
+          middle_name: middleName,
+          fioTokens,
+          roleTokens,
+          fullNameNorm,
+          positionNorm,
+          departmentNorm,
+          email: normalizeSearchText(u.email || ''),
+          telegram_id: String(u.telegram_id || '')
+        };
+      });
+    }
+
+    function scoreEmployeeToken(emp, q_i) {
+      let score = 0;
+
+      // 1 & 2: FIO tokens
+      for (let j = 0; j < emp.fioTokens.length; j++) {
+        const fToken = emp.fioTokens[j];
+        if (fToken === q_i) {
+          const s = 100 + (j === 0 ? 20 : 0);
+          if (s > score) score = s;
+        } else if (fToken.startsWith(q_i)) {
+          const s = 70 + (j === 0 ? 15 : 0);
+          if (s > score) score = s;
+        }
+      }
+
+      // 3: Role tokens (position / department)
+      for (let k = 0; k < emp.roleTokens.length; k++) {
+        const rToken = emp.roleTokens[k];
+        if (rToken === q_i || rToken.startsWith(q_i)) {
+          if (50 > score) score = 50;
+        }
+      }
+
+      // 4: Substring match inside fullNameNorm, positionNorm, departmentNorm, email, telegram_id
+      if (emp.fullNameNorm.includes(q_i) || emp.positionNorm.includes(q_i) || emp.departmentNorm.includes(q_i)) {
+        if (25 > score) score = 25;
+      }
+      if (emp.telegram_id === q_i || (emp.email && emp.email.includes(q_i))) {
+        if (25 > score) score = 25;
+      }
+
+      // 5: Bounded Fuzzy Match (Damerau-Levenshtein distance <= 1 for length >= 4, <= 2 for length >= 7)
+      if (score === 0 && q_i.length >= 4) {
+        const maxDist = q_i.length >= 7 ? 2 : 1;
+        const allTokens = [...emp.fioTokens, ...emp.roleTokens];
+        for (const t of allTokens) {
+          const minLen = Math.max(3, q_i.length - maxDist);
+          const maxLen = Math.min(t.length, q_i.length + maxDist);
+          for (let len = minLen; len <= maxLen; len++) {
+            const targetPrefix = t.slice(0, len);
+            if (damerauLevenshteinDistance(q_i, targetPrefix) <= maxDist) {
+              score = 12;
+              break;
+            }
+          }
+          if (score > 0) break;
+          if (Math.abs(t.length - q_i.length) <= maxDist) {
+            if (damerauLevenshteinDistance(q_i, t) <= maxDist) {
+              score = 12;
+              break;
+            }
+          }
+        }
+      }
+
+      return score;
+    }
+
+    function searchEmployees(query, limit = 5) {
+      if (!employeeSearchIndex || employeeSearchIndex.length === 0) {
+        buildEmployeeSearchIndex(availableUsers.length > 0 ? availableUsers : FALLBACK_USERS);
+      }
+
+      const queryTokens = tokenizeSearchText(query);
+
+      if (queryTokens.length === 0) {
+        const list = employeeSearchIndex.map(emp => ({
+          ...emp,
+          score: 0,
+          highlightedFullName: escapeHtml(emp.full_name),
+          highlightedPosition: escapeHtml(emp.position),
+          highlightedDepartment: escapeHtml(emp.department),
+          highlightedRole: escapeHtml(
+            emp.position && emp.department ? `${emp.position} (${emp.department})` : (emp.position || emp.department || '')
+          )
+        }));
+        return (typeof limit === 'number' && limit > 0) ? list.slice(0, limit) : list;
+      }
+
+      const matches = [];
+      for (const emp of employeeSearchIndex) {
+        let totalScore = 0;
+        let allMatched = true;
+
+        for (const q of queryTokens) {
+          const s = scoreEmployeeToken(emp, q);
+          if (s === 0) {
+            allMatched = false;
+            break;
+          }
+          totalScore += s;
+        }
+
+        if (allMatched && totalScore > 0) {
+          matches.push({
+            ...emp,
+            score: totalScore,
+            highlightedFullName: highlightMatches(emp.full_name, queryTokens),
+            highlightedPosition: highlightMatches(emp.position, queryTokens),
+            highlightedDepartment: highlightMatches(emp.department, queryTokens),
+            highlightedRole: highlightMatches(
+              emp.position && emp.department ? `${emp.position} (${emp.department})` : (emp.position || emp.department || ''),
+              queryTokens
+            )
+          });
+        }
+      }
+
+      matches.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.full_name.localeCompare(b.full_name, 'ru');
+      });
+
+      return (typeof limit === 'number' && limit > 0) ? matches.slice(0, limit) : matches;
+    }
+
+    function highlightMatches(text, queryTokens) {
+      if (!text) return '';
+      if (!queryTokens || queryTokens.length === 0) return escapeHtml(text);
+
+      const normText = text.toLowerCase().replace(/ё/g, 'е');
+      const ranges = [];
+
+      for (const rawToken of queryTokens) {
+        const q = normalizeSearchText(rawToken);
+        if (!q) continue;
+
+        let foundExact = false;
+        let idx = 0;
+        while ((idx = normText.indexOf(q, idx)) !== -1) {
+          ranges.push([idx, idx + q.length]);
+          idx += 1;
+          foundExact = true;
+        }
+
+        if (!foundExact && q.length >= 4) {
+          const maxDist = q.length >= 7 ? 2 : 1;
+          const wordRegex = /[a-zа-я0-9]+/gi;
+          let m;
+          while ((m = wordRegex.exec(normText)) !== null) {
+            const word = m[0];
+            const wordStart = m.index;
+            const minLen = Math.max(3, q.length - maxDist);
+            const maxLen = Math.min(word.length, q.length + maxDist);
+            for (let len = minLen; len <= maxLen; len++) {
+              const target = word.slice(0, len);
+              if (damerauLevenshteinDistance(q, target) <= maxDist) {
+                ranges.push([wordStart, wordStart + target.length]);
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (ranges.length === 0) {
+        return escapeHtml(text);
+      }
+
+      ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+      const merged = [];
+      for (const [start, end] of ranges) {
+        if (merged.length === 0) {
+          merged.push([start, end]);
+        } else {
+          const last = merged[merged.length - 1];
+          if (start <= last[1]) {
+            last[1] = Math.max(last[1], end);
+          } else {
+            merged.push([start, end]);
+          }
+        }
+      }
+
+      let result = '';
+      let lastPos = 0;
+      for (const [start, end] of merged) {
+        if (start > lastPos) {
+          result += escapeHtml(text.slice(lastPos, start));
+        }
+        result += '<mark class="cal-search-highlight">' + escapeHtml(text.slice(start, end)) + '</mark>';
+        lastPos = end;
+      }
+      if (lastPos < text.length) {
+        result += escapeHtml(text.slice(lastPos));
+      }
+
+      return result;
+    }
+
+    // --- Drag-to-Create Popover Participant Search Handlers ---
+    function renderDragSelectedChips() {
+      const container = document.getElementById('drag-create-selected-chips');
+      if (!container) return;
+
+      container.innerHTML = '';
+      selectedDragParticipantIds.forEach(id => {
+        const name = getEmployeeDisplayName(id);
+        const chip = document.createElement('span');
+        chip.className = 'cal-emp-chip';
+        chip.dataset.id = String(id);
+        chip.innerHTML = `
+          <input type="hidden" name="drag-create-emp" value="${id}">
+          <span class="cal-emp-chip-text">${escapeHtml(name)}</span>
+          <button type="button" class="cal-emp-chip-remove" title="Удалить" aria-label="Удалить">
+            <i data-lucide="x"></i>
+          </button>
+        `;
+        const btn = chip.querySelector('.cal-emp-chip-remove');
+        if (btn) {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            selectedDragParticipantIds.delete(id);
+            renderDragSelectedChips();
+            const inputEl = document.getElementById('drag-create-emp-search');
+            updateDragDropdownList(inputEl ? inputEl.value.trim() : '');
+            requestAnimationFrame(repositionDragCreatePopover);
+          });
+        }
+        container.appendChild(chip);
+      });
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function updateDragDropdownList(query = '') {
+      const dropdownEl = document.getElementById('drag-create-emp-dropdown');
+      if (!dropdownEl) return;
+
+      const results = searchEmployees(query, 5);
+      dropdownEl.innerHTML = '';
+
+      if (results.length === 0) {
+        dropdownEl.innerHTML = '<div class="cal-emp-dropdown-empty">Ничего не найдено</div>';
+        return;
+      }
+
+      results.forEach((emp, idx) => {
+        const isSelected = selectedDragParticipantIds.has(emp.id) || selectedDragParticipantIds.has(Number(emp.id));
+        const isBusy = (emp.id === 1 || emp.id === 2 || emp.id === 3 || String(emp.id) === '1' || String(emp.id) === '2' || String(emp.id) === '3');
+
+        const item = document.createElement('div');
+        item.className = `cal-emp-dropdown-item ${isSelected ? 'selected' : ''} ${idx === activeDragDropdownIndex ? 'active' : ''}`;
+        item.dataset.id = String(emp.id);
+        item.dataset.index = String(idx);
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+
+        item.innerHTML = `
+          <div class="cal-emp-item-main">
+            <div class="cal-emp-item-fio">
+              <span class="cal-busy-dot ${isBusy ? 'dot-busy' : 'dot-free'}" title="${isBusy ? 'Занят' : 'Свободен'}"></span>
+              <span class="cal-emp-name">${emp.highlightedFullName}</span>
+            </div>
+            <div class="cal-emp-item-role">${emp.highlightedRole}</div>
+          </div>
+          ${isSelected ? '<span class="cal-emp-check-icon"><i data-lucide="check"></i></span>' : ''}
+        `;
+
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+        });
+
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleDragParticipant(emp.id);
+        });
+
+        dropdownEl.appendChild(item);
+      });
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function toggleDragParticipant(id) {
+      const numId = Number(id);
+      const targetId = !isNaN(numId) ? numId : id;
+      if (selectedDragParticipantIds.has(targetId)) {
+        selectedDragParticipantIds.delete(targetId);
+      } else if (selectedDragParticipantIds.has(id)) {
+        selectedDragParticipantIds.delete(id);
+      } else {
+        selectedDragParticipantIds.add(targetId);
+      }
+
+      renderDragSelectedChips();
+      const inputEl = document.getElementById('drag-create-emp-search');
+      updateDragDropdownList(inputEl ? inputEl.value.trim() : '');
+      requestAnimationFrame(repositionDragCreatePopover);
+    }
+
+    function onDragSearchInput() {
+      const inputEl = document.getElementById('drag-create-emp-search');
+      const clearBtn = document.getElementById('drag-create-emp-clear');
+      const dropdownEl = document.getElementById('drag-create-emp-dropdown');
+      if (!inputEl || !dropdownEl) return;
+
+      const query = inputEl.value.trim();
+      if (clearBtn) {
+        clearBtn.style.display = inputEl.value.length > 0 ? 'flex' : 'none';
+      }
+
+      activeDragDropdownIndex = -1;
+      updateDragDropdownList(query);
+      dropdownEl.style.display = 'flex';
+      requestAnimationFrame(repositionDragCreatePopover);
+    }
+
+    function clearDragSearch() {
+      const inputEl = document.getElementById('drag-create-emp-search');
+      const clearBtn = document.getElementById('drag-create-emp-clear');
+      const dropdownEl = document.getElementById('drag-create-emp-dropdown');
+      if (inputEl) {
+        inputEl.value = '';
+        inputEl.focus();
+      }
+      if (clearBtn) clearBtn.style.display = 'none';
+      activeDragDropdownIndex = -1;
+      if (dropdownEl) {
+        dropdownEl.style.display = 'none';
+      }
+      requestAnimationFrame(repositionDragCreatePopover);
+    }
+
+    function onDragSearchKeydown(e) {
+      const dropdownEl = document.getElementById('drag-create-emp-dropdown');
+      const isOpen = dropdownEl && dropdownEl.style.display !== 'none';
+
+      if (e.key === 'ArrowDown') {
+        if (!isOpen) {
+          if (dropdownEl) {
+            dropdownEl.style.display = 'flex';
+            updateDragDropdownList(e.target.value.trim());
+            requestAnimationFrame(repositionDragCreatePopover);
+          }
+        }
+        e.preventDefault();
+        const items = dropdownEl ? dropdownEl.querySelectorAll('.cal-emp-dropdown-item') : [];
+        if (items.length > 0) {
+          activeDragDropdownIndex = (activeDragDropdownIndex + 1) % items.length;
+          items.forEach((it, i) => it.classList.toggle('active', i === activeDragDropdownIndex));
+          items[activeDragDropdownIndex].scrollIntoView({ block: 'nearest' });
+        }
+      } else if (e.key === 'ArrowUp') {
+        if (isOpen) {
+          e.preventDefault();
+          const items = dropdownEl ? dropdownEl.querySelectorAll('.cal-emp-dropdown-item') : [];
+          if (items.length > 0) {
+            activeDragDropdownIndex = (activeDragDropdownIndex - 1 + items.length) % items.length;
+            items.forEach((it, i) => it.classList.toggle('active', i === activeDragDropdownIndex));
+            items[activeDragDropdownIndex].scrollIntoView({ block: 'nearest' });
+          }
+        }
+      } else if (e.key === 'Enter') {
+        if (isOpen && activeDragDropdownIndex >= 0) {
+          e.preventDefault();
+          const items = dropdownEl.querySelectorAll('.cal-emp-dropdown-item');
+          if (items[activeDragDropdownIndex]) {
+            items[activeDragDropdownIndex].click();
+          }
+        }
+      } else if (e.key === 'Escape') {
+        if (isOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          dropdownEl.style.display = 'none';
+          requestAnimationFrame(repositionDragCreatePopover);
+        }
+      }
+    }
+
+    // --- Quick Modal Participant Search Handlers ---
+    function renderQuickSelectedChips() {
+      const container = document.getElementById('quick-selected-chips');
+      if (!container) return;
+
+      container.innerHTML = '';
+      selectedQuickParticipantIds.forEach(id => {
+        const name = getEmployeeDisplayName(id);
+        const chip = document.createElement('span');
+        chip.className = 'cal-emp-chip';
+        chip.dataset.id = String(id);
+        chip.innerHTML = `
+          <input type="hidden" name="quick-emp" value="${id}">
+          <span class="cal-emp-chip-text">${escapeHtml(name)}</span>
+          <button type="button" class="cal-emp-chip-remove" title="Удалить" aria-label="Удалить">
+            <i data-lucide="x"></i>
+          </button>
+        `;
+        const btn = chip.querySelector('.cal-emp-chip-remove');
+        if (btn) {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            selectedQuickParticipantIds.delete(id);
+            renderQuickSelectedChips();
+            const inputEl = document.getElementById('quick-emp-search');
+            updateQuickDropdownList(inputEl ? inputEl.value.trim() : '');
+          });
+        }
+        container.appendChild(chip);
+      });
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function updateQuickDropdownList(query = '') {
+      const dropdownEl = document.getElementById('quick-emp-dropdown');
+      if (!dropdownEl) return;
+
+      const results = searchEmployees(query, 5);
+      dropdownEl.innerHTML = '';
+
+      if (results.length === 0) {
+        dropdownEl.innerHTML = '<div class="cal-emp-dropdown-empty">Ничего не найдено</div>';
+        return;
+      }
+
+      results.forEach((emp, idx) => {
+        const isSelected = selectedQuickParticipantIds.has(emp.id) || selectedQuickParticipantIds.has(Number(emp.id));
+        const isBusy = (emp.id === 1 || emp.id === 2 || emp.id === 3 || String(emp.id) === '1' || String(emp.id) === '2' || String(emp.id) === '3');
+
+        const item = document.createElement('div');
+        item.className = `cal-emp-dropdown-item ${isSelected ? 'selected' : ''} ${idx === activeQuickDropdownIndex ? 'active' : ''}`;
+        item.dataset.id = String(emp.id);
+        item.dataset.index = String(idx);
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+
+        item.innerHTML = `
+          <div class="cal-emp-item-main">
+            <div class="cal-emp-item-fio">
+              <span class="cal-busy-dot ${isBusy ? 'dot-busy' : 'dot-free'}" title="${isBusy ? 'Занят' : 'Свободен'}"></span>
+              <span class="cal-emp-name">${emp.highlightedFullName}</span>
+            </div>
+            <div class="cal-emp-item-role">${emp.highlightedRole}</div>
+          </div>
+          ${isSelected ? '<span class="cal-emp-check-icon"><i data-lucide="check"></i></span>' : ''}
+        `;
+
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+        });
+
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleQuickParticipant(emp.id);
+        });
+
+        dropdownEl.appendChild(item);
+      });
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function toggleQuickParticipant(id) {
+      const numId = Number(id);
+      const targetId = !isNaN(numId) ? numId : id;
+      if (selectedQuickParticipantIds.has(targetId)) {
+        selectedQuickParticipantIds.delete(targetId);
+      } else if (selectedQuickParticipantIds.has(id)) {
+        selectedQuickParticipantIds.delete(id);
+      } else {
+        selectedQuickParticipantIds.add(targetId);
+      }
+
+      renderQuickSelectedChips();
+      const inputEl = document.getElementById('quick-emp-search');
+      updateQuickDropdownList(inputEl ? inputEl.value.trim() : '');
+    }
+
+    function onQuickSearchInput() {
+      const inputEl = document.getElementById('quick-emp-search');
+      const clearBtn = document.getElementById('quick-emp-clear');
+      const dropdownEl = document.getElementById('quick-emp-dropdown');
+      if (!inputEl || !dropdownEl) return;
+
+      const query = inputEl.value.trim();
+      if (clearBtn) {
+        clearBtn.style.display = inputEl.value.length > 0 ? 'flex' : 'none';
+      }
+
+      activeQuickDropdownIndex = -1;
+      updateQuickDropdownList(query);
+      dropdownEl.style.display = 'flex';
+    }
+
+    function clearQuickSearch() {
+      const inputEl = document.getElementById('quick-emp-search');
+      const clearBtn = document.getElementById('quick-emp-clear');
+      const dropdownEl = document.getElementById('quick-emp-dropdown');
+      if (inputEl) {
+        inputEl.value = '';
+        inputEl.focus();
+      }
+      if (clearBtn) clearBtn.style.display = 'none';
+      activeQuickDropdownIndex = -1;
+      if (dropdownEl) {
+        dropdownEl.style.display = 'none';
+      }
+    }
+
+    function onQuickSearchKeydown(e) {
+      const dropdownEl = document.getElementById('quick-emp-dropdown');
+      const isOpen = dropdownEl && dropdownEl.style.display !== 'none';
+
+      if (e.key === 'ArrowDown') {
+        if (!isOpen) {
+          if (dropdownEl) {
+            dropdownEl.style.display = 'flex';
+            updateQuickDropdownList(e.target.value.trim());
+          }
+        }
+        e.preventDefault();
+        const items = dropdownEl ? dropdownEl.querySelectorAll('.cal-emp-dropdown-item') : [];
+        if (items.length > 0) {
+          activeQuickDropdownIndex = (activeQuickDropdownIndex + 1) % items.length;
+          items.forEach((it, i) => it.classList.toggle('active', i === activeQuickDropdownIndex));
+          items[activeQuickDropdownIndex].scrollIntoView({ block: 'nearest' });
+        }
+      } else if (e.key === 'ArrowUp') {
+        if (isOpen) {
+          e.preventDefault();
+          const items = dropdownEl ? dropdownEl.querySelectorAll('.cal-emp-dropdown-item') : [];
+          if (items.length > 0) {
+            activeQuickDropdownIndex = (activeQuickDropdownIndex - 1 + items.length) % items.length;
+            items.forEach((it, i) => it.classList.toggle('active', i === activeQuickDropdownIndex));
+            items[activeQuickDropdownIndex].scrollIntoView({ block: 'nearest' });
+          }
+        }
+      } else if (e.key === 'Enter') {
+        if (isOpen && activeQuickDropdownIndex >= 0) {
+          e.preventDefault();
+          const items = dropdownEl.querySelectorAll('.cal-emp-dropdown-item');
+          if (items[activeQuickDropdownIndex]) {
+            items[activeQuickDropdownIndex].click();
+          }
+        }
+      } else if (e.key === 'Escape') {
+        if (isOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          dropdownEl.style.display = 'none';
+        }
+      }
+    }
+
+    // --- Sidebar Employee Search Handlers ---
+    function renderSidebarEmployeeList(query = '') {
+      const listEl = document.getElementById('cal-sidebar-emp-list');
+      if (!listEl) return;
+
+      if (!employeeSearchIndex || employeeSearchIndex.length === 0) {
+        buildEmployeeSearchIndex(availableUsers.length > 0 ? availableUsers : FALLBACK_USERS);
+      }
+
+      const results = searchEmployees(query, 50);
+      listEl.innerHTML = '';
+
+      if (results.length === 0) {
+        listEl.innerHTML = '<div class="cal-sidebar-empty">Сотрудник не найден</div>';
+        return;
+      }
+
+      results.forEach(emp => {
+        const idStr = String(emp.id);
+        const isChecked = calendarFilterState.employees[idStr] !== false;
+        calendarFilterState.employees[idStr] = isChecked;
+
+        const isBusy = (emp.id === 1 || emp.id === 2 || emp.id === 3 || idStr === '1' || idStr === '2' || idStr === '3');
+
+        const item = document.createElement('div');
+        item.className = 'cal-filter-item';
+        item.setAttribute('onclick', `toggleFilterItem('employee', '${emp.id}', event)`);
+
+        item.innerHTML = `
+          <div class="cal-filter-left">
+            <span class="cal-busy-dot ${isBusy ? 'dot-busy' : 'dot-free'}" title="${isBusy ? 'Занят' : 'Свободен'}"></span>
+            <span class="cal-emp-sidebar-name">${emp.highlightedFullName}</span>
+          </div>
+          <label class="cal-checkbox-label">
+            <input type="checkbox" class="cal-checkbox" data-filter-employee="${emp.id}" ${isChecked ? 'checked' : ''} onchange="onCalendarFilterChange()">
+            <span class="cal-custom-check"></span>
+          </label>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    function onSidebarSearchInput() {
+      const inputEl = document.getElementById('sidebar-emp-search');
+      const clearBtn = document.getElementById('sidebar-emp-clear');
+      if (!inputEl) return;
+
+      const query = inputEl.value.trim();
+      if (clearBtn) {
+        clearBtn.style.display = inputEl.value.length > 0 ? 'flex' : 'none';
+      }
+      renderSidebarEmployeeList(query);
+    }
+
+    function clearSidebarSearch() {
+      const inputEl = document.getElementById('sidebar-emp-search');
+      const clearBtn = document.getElementById('sidebar-emp-clear');
+      if (inputEl) {
+        inputEl.value = '';
+        inputEl.focus();
+      }
+      if (clearBtn) clearBtn.style.display = 'none';
+      renderSidebarEmployeeList('');
+    }
+
+    function initEmployeeSearchUI() {
+      buildEmployeeSearchIndex(availableUsers.length > 0 ? availableUsers : FALLBACK_USERS);
+
+      // Drag Popover listeners
+      const dragInput = document.getElementById('drag-create-emp-search');
+      const dragClear = document.getElementById('drag-create-emp-clear');
+      if (dragInput) {
+        dragInput.addEventListener('input', onDragSearchInput);
+        dragInput.addEventListener('keydown', onDragSearchKeydown);
+        dragInput.addEventListener('focus', () => {
+          activeDragDropdownIndex = -1;
+          updateDragDropdownList(dragInput.value.trim());
+          const dd = document.getElementById('drag-create-emp-dropdown');
+          if (dd) dd.style.display = 'flex';
+          requestAnimationFrame(repositionDragCreatePopover);
+        });
+      }
+      if (dragClear) {
+        dragClear.addEventListener('click', clearDragSearch);
+      }
+
+      // Quick Modal listeners
+      const quickInput = document.getElementById('quick-emp-search');
+      const quickClear = document.getElementById('quick-emp-clear');
+      if (quickInput) {
+        quickInput.addEventListener('input', onQuickSearchInput);
+        quickInput.addEventListener('keydown', onQuickSearchKeydown);
+        quickInput.addEventListener('focus', () => {
+          activeQuickDropdownIndex = -1;
+          updateQuickDropdownList(quickInput.value.trim());
+          const dd = document.getElementById('quick-emp-dropdown');
+          if (dd) dd.style.display = 'flex';
+        });
+      }
+      if (quickClear) {
+        quickClear.addEventListener('click', clearQuickSearch);
+      }
+
+      // Sidebar listeners
+      const sidebarInput = document.getElementById('sidebar-emp-search');
+      const sidebarClear = document.getElementById('sidebar-emp-clear');
+      if (sidebarInput) {
+        sidebarInput.addEventListener('input', onSidebarSearchInput);
+      }
+      if (sidebarClear) {
+        sidebarClear.addEventListener('click', clearSidebarSearch);
+      }
+
+      // Close dropdowns on outside click
+      document.addEventListener('click', (e) => {
+        const dragSearchWrap = document.querySelector('#cal-drag-create-popover .cal-emp-search-wrap');
+        const dragChips = document.getElementById('drag-create-selected-chips');
+        const dragDropdown = document.getElementById('drag-create-emp-dropdown');
+        if (dragDropdown && dragDropdown.style.display !== 'none') {
+          if ((!dragSearchWrap || !dragSearchWrap.contains(e.target)) && (!dragChips || !dragChips.contains(e.target))) {
+            dragDropdown.style.display = 'none';
+            requestAnimationFrame(repositionDragCreatePopover);
+          }
+        }
+
+        const quickSearchWrap = document.querySelector('#cal-quick-modal .cal-emp-search-wrap');
+        const quickChips = document.getElementById('quick-selected-chips');
+        const quickDropdown = document.getElementById('quick-emp-dropdown');
+        if (quickDropdown && quickDropdown.style.display !== 'none') {
+          if ((!quickSearchWrap || !quickSearchWrap.contains(e.target)) && (!quickChips || !quickChips.contains(e.target))) {
+            quickDropdown.style.display = 'none';
+          }
+        }
+      });
+
+      renderSidebarEmployeeList();
+      renderDragSelectedChips();
+      renderQuickSelectedChips();
+    }
+
+    // Expose search API on window for testability
+    window.searchEmployees = searchEmployees;
+    window.highlightMatches = highlightMatches;
+    window.buildEmployeeSearchIndex = buildEmployeeSearchIndex;
+    window.getEmployeeDisplayName = getEmployeeDisplayName;
 
     // ========================================================================
     // CALENDAR DRAWER, RBAC & RENDERING
@@ -1673,6 +2476,11 @@
       document.querySelectorAll('#cal-sidebar input[type="checkbox"]').forEach(cb => {
         cb.checked = checked;
       });
+      if (employeeSearchIndex) {
+        employeeSearchIndex.forEach(emp => {
+          calendarFilterState.employees[String(emp.id)] = checked;
+        });
+      }
       const masterAll = document.getElementById('filter-all');
       if (masterAll) {
         masterAll.checked = checked;
@@ -2346,6 +3154,15 @@
 
       setQuickDuration(30);
 
+      selectedQuickParticipantIds = new Set([1, 2]);
+      renderQuickSelectedChips();
+      const quickSearch = document.getElementById('quick-emp-search');
+      if (quickSearch) quickSearch.value = '';
+      const quickClear = document.getElementById('quick-emp-clear');
+      if (quickClear) quickClear.style.display = 'none';
+      const quickDropdown = document.getElementById('quick-emp-dropdown');
+      if (quickDropdown) quickDropdown.style.display = 'none';
+
       modal.style.display = 'flex';
       if (titleInput) titleInput.focus();
       if (window.lucide) lucide.createIcons();
@@ -2354,6 +3171,8 @@
     function closeQuickAddModal() {
       const modal = document.getElementById('cal-quick-modal');
       if (modal) modal.style.display = 'none';
+      const quickDropdown = document.getElementById('quick-emp-dropdown');
+      if (quickDropdown) quickDropdown.style.display = 'none';
       const submitBtn = document.getElementById('quick-submit-btn');
       if (submitBtn) {
         submitBtn.disabled = false;
@@ -2382,16 +3201,16 @@
       const tagsStr = document.getElementById('quick-tags').value.trim();
       const tags = tagsStr ? tagsStr.split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean) : [];
 
-      const empCheckboxes = document.querySelectorAll('input[name="quick-emp"]:checked');
-      const participantIds = Array.from(empCheckboxes).map(cb => parseInt(cb.value, 10));
+      let participantIds = Array.from(selectedQuickParticipantIds);
+      if (participantIds.length === 0) {
+        const empCheckboxes = document.querySelectorAll('input[name="quick-emp"]:checked, input[name="quick-emp"][type="hidden"]');
+        participantIds = Array.from(empCheckboxes).map(cb => parseInt(cb.value, 10)).filter(Boolean);
+      }
+      if (participantIds.length === 0) participantIds = [1];
 
-      const empNames = {
-        1: 'Смирнов А.С.',
-        2: 'Кузнецов И.П.',
-        3: 'Морозова Е.А.',
-        4: 'Соколова О.В.'
-      };
-      const participants = participantIds.map(id => empNames[id] || `Сотрудник #${id}`);
+      const participants = participantIds.map(id => getEmployeeDisplayName(id));
+      const organizerId = participantIds[0] || 1;
+      const organizerName = getEmployeeDisplayName(organizerId);
 
       const startIso = `${dateStr}T${timeStr}:00+03:00`;
       const [h, m] = timeStr.split(':').map(Number);
@@ -2412,8 +3231,8 @@
         is_all_day: false,
         is_recurring: itemType === 'routine',
         status: 'scheduled',
-        organizer_id: participantIds[0] || 1,
-        organizer_name: empNames[participantIds[0] || 1] || 'Смирнов А.С.',
+        organizer_id: organizerId,
+        organizer_name: organizerName,
         participant_ids: participantIds,
         participants: participants,
         tags: tags
@@ -2543,6 +3362,8 @@
       if (popover) {
         popover.style.display = 'none';
       }
+      const dragDropdown = document.getElementById('drag-create-emp-dropdown');
+      if (dragDropdown) dragDropdown.style.display = 'none';
       removeDragGhost();
     }
 
@@ -2569,9 +3390,14 @@
 
       updateDragPopoverDateBadge(dateStr);
 
-      document.querySelectorAll('input[name="drag-create-emp"]').forEach(cb => {
-        cb.checked = (cb.value === '1' || cb.value === '2');
-      });
+      selectedDragParticipantIds = new Set([1, 2]);
+      renderDragSelectedChips();
+      const dragSearch = document.getElementById('drag-create-emp-search');
+      if (dragSearch) dragSearch.value = '';
+      const dragClear = document.getElementById('drag-create-emp-clear');
+      if (dragClear) dragClear.style.display = 'none';
+      const dragDropdown = document.getElementById('drag-create-emp-dropdown');
+      if (dragDropdown) dragDropdown.style.display = 'none';
 
       popover.style.display = 'flex';
       repositionDragCreatePopover();
@@ -2730,17 +3556,16 @@
       const startStr = startInput ? startInput.value : '10:00';
       const endStr = endInput ? endInput.value : '11:00';
 
-      const empCheckboxes = document.querySelectorAll('input[name="drag-create-emp"]:checked');
-      let participantIds = Array.from(empCheckboxes).map(cb => parseInt(cb.value, 10));
+      let participantIds = Array.from(selectedDragParticipantIds);
+      if (participantIds.length === 0) {
+        const empCheckboxes = document.querySelectorAll('input[name="drag-create-emp"]:checked, input[name="drag-create-emp"][type="hidden"]');
+        participantIds = Array.from(empCheckboxes).map(cb => parseInt(cb.value, 10)).filter(Boolean);
+      }
       if (participantIds.length === 0) participantIds = [1];
 
-      const empNames = {
-        1: 'Смирнов А.С.',
-        2: 'Кузнецов И.П.',
-        3: 'Морозова Е.А.',
-        4: 'Соколова О.В.'
-      };
-      const participants = participantIds.map(id => empNames[id] || `Сотрудник #${id}`);
+      const participants = participantIds.map(id => getEmployeeDisplayName(id));
+      const organizerId = participantIds[0] || 1;
+      const organizerName = getEmployeeDisplayName(organizerId);
 
       const startIso = `${dateStr}T${startStr}:00+03:00`;
       const endIso = `${dateStr}T${endStr}:00+03:00`;
@@ -2757,8 +3582,8 @@
         is_all_day: false,
         is_recurring: false,
         status: 'scheduled',
-        organizer_id: participantIds[0] || 1,
-        organizer_name: empNames[participantIds[0] || 1] || 'Смирнов А.С.',
+        organizer_id: organizerId,
+        organizer_name: organizerName,
         participant_ids: participantIds,
         participants: participants,
         tags: ['календарь']
@@ -3976,12 +4801,17 @@
       const savedTheme = localStorage.getItem('fotoprint_theme') || 'liquid-glass';
       switchTheme(savedTheme);
       loadUsers();
+      initEmployeeSearchUI();
       renderCalendarGrid();
       refreshCalendarEvents();
       if (window.lucide) {
         lucide.createIcons();
       }
     });
+
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      initEmployeeSearchUI();
+    }
   </script>
 </body>
 </html>
