@@ -48,7 +48,12 @@ public interface IFotoprintRepository
     Task<List<CorporateDocumentChunk>> GetMeetingChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
     Task UpdateMeetingChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default) => Task.CompletedTask;
     Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+    Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, DateOnly? targetDate, int topK = 5, CancellationToken ct = default)
+        => SearchMeetingSimilarChunksAsync(queryEmbedding, meetingAccessGroups, topK, ct);
     Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+    Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, DateOnly? targetDate, int topK = 5, CancellationToken ct = default)
+        => SearchMeetingTextChunksAsync(queryText, meetingAccessGroups, topK, ct);
+    Task<List<CorporateDocumentChunk>> SearchMeetingsByFilterAsync(List<string> meetingAccessGroups, DateOnly? targetDate = null, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
 
     // Meetings, Notes, Protocols, Action Items & Calendar
     Task<Guid> CreateMeetingAsync(
@@ -845,7 +850,10 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         return chunks.ToList();
     }
 
-    public async Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+    public Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+        => SearchMeetingSimilarChunksAsync(queryEmbedding, meetingAccessGroups, null, topK, ct);
+
+    public async Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, DateOnly? targetDate, int topK = 5, CancellationToken ct = default)
     {
         if (meetingAccessGroups == null || meetingAccessGroups.Count == 0)
         {
@@ -856,6 +864,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         await EnsureMeetingChunksSchemaAsync(conn, ct);
         var vec = new Vector(queryEmbedding);
         var groupsJson = JsonSerializer.Serialize(meetingAccessGroups.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+        DateTime? targetDateDt = targetDate.HasValue ? targetDate.Value.ToDateTime(TimeOnly.MinValue) : null;
 
         // Строгая изоляция созвонов в отдельной таблице meeting_chunks: доступ только по master:<id> участника или c-level (Директор), без 'all'
         const string sql = """
@@ -866,6 +875,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
             JOIN meetings m ON m.id = mc.meeting_id
             WHERE mc.embedding IS NOT NULL
               AND mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (@TargetDate::date IS NULL OR (m.start_time AT TIME ZONE 'Europe/Moscow')::date = @TargetDate::date)
             ORDER BY mc.embedding <=> @QueryVec
             LIMIT @TopK;
         """;
@@ -874,6 +884,41 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         {
             QueryVec = vec,
             Groups = groupsJson,
+            TopK = topK,
+            TargetDate = targetDateDt
+        }, cancellationToken: ct));
+
+        return chunks.ToList();
+    }
+
+    public async Task<List<CorporateDocumentChunk>> SearchMeetingsByFilterAsync(List<string> meetingAccessGroups, DateOnly? targetDate = null, int topK = 5, CancellationToken ct = default)
+    {
+        if (meetingAccessGroups == null || meetingAccessGroups.Count == 0)
+        {
+            return new List<CorporateDocumentChunk>();
+        }
+
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var groupsJson = JsonSerializer.Serialize(meetingAccessGroups.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+        DateTime? targetDateDt = targetDate.HasValue ? targetDate.Value.ToDateTime(TimeOnly.MinValue) : null;
+
+        const string sql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText,
+                   mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            JOIN meetings m ON m.id = mc.meeting_id
+            WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (@TargetDate::date IS NULL OR (m.start_time AT TIME ZONE 'Europe/Moscow')::date = @TargetDate::date)
+            ORDER BY m.start_time DESC, mc.chunk_index ASC
+            LIMIT @TopK;
+        """;
+
+        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new
+        {
+            Groups = groupsJson,
+            TargetDate = targetDateDt,
             TopK = topK
         }, cancellationToken: ct));
 
@@ -975,7 +1020,10 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         return kwChunks.ToList();
     }
 
-    public async Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+    public Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+        => SearchMeetingTextChunksAsync(queryText, meetingAccessGroups, null, topK, ct);
+
+    public async Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, DateOnly? targetDate, int topK = 5, CancellationToken ct = default)
     {
         if (meetingAccessGroups == null || meetingAccessGroups.Count == 0)
         {
@@ -985,6 +1033,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         await using var conn = await CreateConnectionAsync(ct);
         await EnsureMeetingChunksSchemaAsync(conn, ct);
         var groupsJson = JsonSerializer.Serialize(meetingAccessGroups.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+        DateTime? targetDateDt = targetDate.HasValue ? targetDate.Value.ToDateTime(TimeOnly.MinValue) : null;
 
         if (IsGeneralCatalogQuery(queryText))
         {
@@ -995,6 +1044,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
                 FROM meeting_chunks mc
                 JOIN meetings m ON m.id = mc.meeting_id
                 WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+                  AND (@TargetDate::date IS NULL OR (m.start_time AT TIME ZONE 'Europe/Moscow')::date = @TargetDate::date)
                 ORDER BY m.start_time DESC, mc.chunk_index ASC
                 LIMIT @TopK;
             """;
@@ -1002,6 +1052,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
             var recent = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(allSql, new
             {
                 Groups = groupsJson,
+                TargetDate = targetDateDt,
                 TopK = Math.Max(topK, 10)
             }, cancellationToken: ct));
             return recent.ToList();
@@ -1014,6 +1065,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
             FROM meeting_chunks mc
             JOIN meetings m ON m.id = mc.meeting_id
             WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (@TargetDate::date IS NULL OR (m.start_time AT TIME ZONE 'Europe/Moscow')::date = @TargetDate::date)
               AND (mc.chunk_text ILIKE '%' || @QueryText || '%' OR m.title ILIKE '%' || @QueryText || '%')
             ORDER BY m.start_time DESC, mc.chunk_index ASC
             LIMIT @TopK;
@@ -1023,6 +1075,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         {
             QueryText = queryText,
             Groups = groupsJson,
+            TargetDate = targetDateDt,
             TopK = topK
         }, cancellationToken: ct))).ToList();
 
@@ -1044,6 +1097,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
             FROM meeting_chunks mc
             JOIN meetings m ON m.id = mc.meeting_id
             WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (@TargetDate::date IS NULL OR (m.start_time AT TIME ZONE 'Europe/Moscow')::date = @TargetDate::date)
               AND (mc.chunk_text ILIKE ANY(@Patterns) OR m.title ILIKE ANY(@Patterns))
             ORDER BY m.start_time DESC, mc.chunk_index ASC
             LIMIT @TopK;
@@ -1053,6 +1107,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         {
             Patterns = patterns,
             Groups = groupsJson,
+            TargetDate = targetDateDt,
             TopK = topK
         }, cancellationToken: ct));
 
