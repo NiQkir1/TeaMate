@@ -16,6 +16,67 @@ public record TimeSlot
     public string Label { get; init; } = string.Empty;
 }
 
+public class User : Employee
+{
+    public static User FromEmployee(Employee emp)
+    {
+        return new User
+        {
+            Id = emp.Id,
+            MasterId = emp.MasterId,
+            FirstName = emp.FirstName,
+            LastName = emp.LastName,
+            MiddleName = emp.MiddleName,
+            Email = emp.Email,
+            TelegramId = emp.TelegramId,
+            TelegramUsername = emp.TelegramUsername,
+            WhatsappId = emp.WhatsappId,
+            Department = emp.Department,
+            Position = emp.Position,
+            AccessGroups = emp.AccessGroups,
+            NotificationsEnabled = emp.NotificationsEnabled,
+            IsActive = emp.IsActive,
+            CreatedAt = emp.CreatedAt,
+            UpdatedAt = emp.UpdatedAt
+        };
+    }
+
+    public static string FormatShortName(string? lastName, string? firstName, string? middleName)
+    {
+        var l = (lastName ?? string.Empty).Trim();
+        var f = string.IsNullOrWhiteSpace(firstName) ? string.Empty : $"{char.ToUpper(firstName.Trim()[0])}.";
+        var m = string.IsNullOrWhiteSpace(middleName) ? string.Empty : $"{char.ToUpper(middleName.Trim()[0])}.";
+        var initials = $"{f}{m}".Trim();
+
+        if (string.IsNullOrWhiteSpace(l))
+        {
+            if (!string.IsNullOrWhiteSpace(firstName))
+            {
+                var fName = firstName.Trim();
+                return !string.IsNullOrWhiteSpace(m) ? $"{fName} {m}" : fName;
+            }
+            return !string.IsNullOrWhiteSpace(initials) ? initials : string.Empty;
+        }
+
+        return !string.IsNullOrWhiteSpace(initials) ? $"{l} {initials}" : l;
+    }
+
+    public static string NormalizeYo(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        return s
+            .Replace('ё', 'е')
+            .Replace('Ё', 'е')
+            .Replace('\u00eb', 'е')
+            .Replace('\u00cb', 'е')
+            .Replace("\u0308", string.Empty)
+            .Trim()
+            .ToLowerInvariant();
+    }
+
+    public string ShortName => FormatShortName(LastName, FirstName, MiddleName);
+}
+
 public interface IFotoprintRepository
 {
     // Employee & RBAC
@@ -24,6 +85,8 @@ public interface IFotoprintRepository
     Task<long?> ResolveMasterIdByMessengerAsync(string messengerType, string messengerUserId, CancellationToken ct = default);
     Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default);
     Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<User>> SearchEmployeesAsync(string query, int limit = 10, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<User>>(Array.Empty<User>());
 
     // Chat Sessions & Messages (MasterId & UUID SessionId)
     Task<ChatSession> GetOrCreateActiveSessionByMasterIdAsync(long masterId, long messengerChatId, string messengerType = "telegram", CancellationToken ct = default);
@@ -461,6 +524,246 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         """;
         var results = await conn.QueryAsync<Employee>(new CommandDefinition(sql, cancellationToken: ct));
         return results.ToList();
+    }
+
+    public static List<T> RankEmployees<T>(IEnumerable<T> candidates, string query, int limit = 10) where T : Employee
+    {
+        limit = Math.Clamp(limit, 1, 50);
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return candidates
+                .Where(e => e.IsActive)
+                .OrderBy(e => (e.LastName ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(e => (e.FirstName ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+                .Take(limit)
+                .ToList();
+        }
+
+        var normalizedQuery = User.NormalizeYo(query);
+        var rawTokens = normalizedQuery
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var tokens = new List<string>();
+        foreach (var rt in rawTokens)
+        {
+            var cleaned = rt.Trim(' ', '\t', ',', ';', ':', '!', '?');
+            if (!string.IsNullOrEmpty(cleaned) && !tokens.Contains(cleaned))
+            {
+                tokens.Add(cleaned);
+            }
+        }
+
+        if (tokens.Count == 0)
+        {
+            return candidates
+                .Where(e => e.IsActive)
+                .OrderBy(e => (e.LastName ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(e => (e.FirstName ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+                .Take(limit)
+                .ToList();
+        }
+
+        var scored = new List<(T Emp, int TotalScore)>();
+
+        foreach (var emp in candidates.Where(e => e.IsActive))
+        {
+            static string Norm(string? s) => User.NormalizeYo(s);
+
+            var lastNameNorm = Norm(emp.LastName);
+            var firstNameNorm = Norm(emp.FirstName);
+            var middleNameNorm = Norm(emp.MiddleName);
+            var positionNorm = Norm(emp.Position);
+            var departmentNorm = Norm(emp.Department);
+            var emailNorm = Norm(emp.Email);
+
+            var fioTokens = new[] { lastNameNorm, firstNameNorm, middleNameNorm }
+                .Where(s => !string.IsNullOrEmpty(s))
+                .ToArray();
+
+            var roleTokens = $"{positionNorm} {departmentNorm}"
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => s.Trim(' ', '\t', ',', ';', ':', '!', '?'))
+                .Where(s => !string.IsNullOrEmpty(s))
+                .Distinct()
+                .ToArray();
+
+            var fullNameNorm = $"{lastNameNorm} {firstNameNorm} {middleNameNorm}".Trim();
+
+            int totalScore = 0;
+            bool allMatched = true;
+
+            foreach (var q in tokens)
+            {
+                int tokenScore = 0;
+
+                // 1. Exact match on fioTokens[j] (+100, +20 bonus if j == 0)
+                bool matchedFioExact = false;
+                for (int j = 0; j < fioTokens.Length; j++)
+                {
+                    if (fioTokens[j].Equals(q, StringComparison.Ordinal))
+                    {
+                        tokenScore = Math.Max(tokenScore, 100 + (j == 0 ? 20 : 0));
+                        matchedFioExact = true;
+                    }
+                }
+
+                if (!matchedFioExact)
+                {
+                    // 2. Prefix match on fioTokens[j] (+70, +15 bonus if j == 0)
+                    for (int j = 0; j < fioTokens.Length; j++)
+                    {
+                        if (fioTokens[j].StartsWith(q, StringComparison.Ordinal))
+                        {
+                            tokenScore = Math.Max(tokenScore, 70 + (j == 0 ? 15 : 0));
+                        }
+                    }
+                }
+
+                // 3. Exact or prefix match on roleTokens (+50)
+                foreach (var rt in roleTokens)
+                {
+                    if (rt.Equals(q, StringComparison.Ordinal) || rt.StartsWith(q, StringComparison.Ordinal))
+                    {
+                        tokenScore = Math.Max(tokenScore, 50);
+                    }
+                }
+
+                // 4. Substring match inside fullNameNorm, positionNorm, departmentNorm, emailNorm (+25)
+                if (fullNameNorm.Contains(q, StringComparison.Ordinal) ||
+                    positionNorm.Contains(q, StringComparison.Ordinal) ||
+                    departmentNorm.Contains(q, StringComparison.Ordinal) ||
+                    emailNorm.Contains(q, StringComparison.Ordinal))
+                {
+                    tokenScore = Math.Max(tokenScore, 25);
+                }
+
+                if (tokenScore == 0)
+                {
+                    allMatched = false;
+                    break;
+                }
+
+                totalScore += tokenScore;
+            }
+
+            if (allMatched && totalScore > 0)
+            {
+                scored.Add((emp, totalScore));
+            }
+        }
+
+        return scored
+            .OrderByDescending(x => x.TotalScore)
+            .ThenBy(x => (x.Emp.FullName ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Emp)
+            .Take(limit)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<User>> SearchEmployeesAsync(string query, int limit = 10, CancellationToken ct = default)
+    {
+        limit = Math.Clamp(limit, 1, 50);
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                await using var conn = await CreateConnectionAsync(ct);
+                const string sql = """
+                    SELECT
+                        id AS Id,
+                        master_id AS MasterId,
+                        first_name AS FirstName,
+                        last_name AS LastName,
+                        middle_name AS MiddleName,
+                        email AS Email,
+                        telegram_id AS TelegramId,
+                        telegram_username AS TelegramUsername,
+                        whatsapp_id AS WhatsappId,
+                        department AS Department,
+                        position AS Position,
+                        notifications_enabled AS NotificationsEnabled,
+                        is_active AS IsActive,
+                        created_at AS CreatedAt,
+                        updated_at AS UpdatedAt
+                    FROM employees
+                    WHERE is_active = TRUE
+                    ORDER BY last_name, first_name
+                    LIMIT @Limit;
+                """;
+                var defaultUsers = await conn.QueryAsync<User>(new CommandDefinition(sql, new { Limit = limit }, cancellationToken: ct));
+                return defaultUsers.ToList();
+            }
+
+            var normalizedQuery = User.NormalizeYo(query);
+            var rawTokens = normalizedQuery
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var tokens = new List<string>();
+            foreach (var rt in rawTokens)
+            {
+                var cleaned = rt.Trim(' ', '\t', ',', ';', ':', '!', '?');
+                if (!string.IsNullOrEmpty(cleaned) && !tokens.Contains(cleaned))
+                {
+                    tokens.Add(cleaned);
+                }
+            }
+
+            if (tokens.Count == 0)
+            {
+                return await SearchEmployeesAsync(string.Empty, limit, ct);
+            }
+
+            await using var searchConn = await CreateConnectionAsync(ct);
+            var parameters = new DynamicParameters();
+            var tokenClauses = new List<string>();
+
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var paramName = $"p_{i}";
+                parameters.Add(paramName, $"%{tokens[i]}%");
+                tokenClauses.Add($"""
+                    (
+                        REPLACE(REPLACE(LOWER(last_name), 'ё', 'е'), 'ë', 'е') LIKE @{paramName} OR
+                        REPLACE(REPLACE(LOWER(first_name), 'ё', 'е'), 'ë', 'е') LIKE @{paramName} OR
+                        REPLACE(REPLACE(LOWER(COALESCE(middle_name, '')), 'ё', 'е'), 'ë', 'е') LIKE @{paramName} OR
+                        REPLACE(REPLACE(LOWER(COALESCE(position, '')), 'ё', 'е'), 'ë', 'е') LIKE @{paramName} OR
+                        REPLACE(REPLACE(LOWER(COALESCE(department, '')), 'ё', 'е'), 'ë', 'е') LIKE @{paramName} OR
+                        REPLACE(REPLACE(LOWER(COALESCE(email, '')), 'ё', 'е'), 'ë', 'е') LIKE @{paramName}
+                    )
+                """);
+            }
+
+            var whereSql = $"WHERE is_active = TRUE AND {string.Join(" AND ", tokenClauses)}";
+            var candidateSql = $"""
+                SELECT
+                    id AS Id,
+                    master_id AS MasterId,
+                    first_name AS FirstName,
+                    last_name AS LastName,
+                    middle_name AS MiddleName,
+                    email AS Email,
+                    telegram_id AS TelegramId,
+                    telegram_username AS TelegramUsername,
+                    whatsapp_id AS WhatsappId,
+                    department AS Department,
+                    position AS Position,
+                    notifications_enabled AS NotificationsEnabled,
+                    is_active AS IsActive,
+                    created_at AS CreatedAt,
+                    updated_at AS UpdatedAt
+                FROM employees
+                {whereSql}
+            """;
+
+            var candidates = (await searchConn.QueryAsync<User>(new CommandDefinition(candidateSql, parameters, cancellationToken: ct))).ToList();
+            return RankEmployees(candidates, query, limit);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
     }
 
     public async Task<ChatSession> GetOrCreateActiveSessionByMasterIdAsync(

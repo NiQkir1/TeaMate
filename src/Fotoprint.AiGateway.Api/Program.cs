@@ -439,6 +439,72 @@ app.MapGet("/api/agent/users", async (IFotoprintRepository repo, CancellationTok
     return Results.Ok(new { users });
 });
 
+// Масштабируемый умный поиск сотрудников по ФИО, должности и отделу для календаря и модалок
+app.MapGet("/api/employees/search", async (
+    [FromQuery] string? q,
+    [FromQuery] int? limit,
+    IFotoprintRepository repo,
+    ILoggerFactory loggerFactory,
+    CancellationToken ct) =>
+{
+    var logger = loggerFactory.CreateLogger("EmployeeSearchApi");
+    try
+    {
+        var effectiveLimit = Math.Clamp(limit ?? 10, 1, 50);
+        var matchedUsers = await repo.SearchEmployeesAsync(q ?? string.Empty, effectiveLimit, ct);
+
+        var employees = new List<object>(matchedUsers.Count);
+        foreach (var emp in matchedUsers)
+        {
+            EmployeeSecurityContext? secCtx = null;
+            try
+            {
+                if (emp.MasterId != 0)
+                {
+                    secCtx = await repo.GetEmployeeSecurityContextByMasterIdAsync(emp.MasterId, ct);
+                }
+                else if (emp.TelegramId.HasValue && emp.TelegramId.Value != 0)
+                {
+                    secCtx = await repo.GetEmployeeSecurityContextAsync(emp.TelegramId.Value, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to resolve security context for employee {EmployeeId}", emp.Id);
+            }
+
+            var shortName = User.FormatShortName(emp.LastName, emp.FirstName, emp.MiddleName);
+            var fullName = !string.IsNullOrWhiteSpace(emp.FullName)
+                ? emp.FullName
+                : (secCtx?.FullName ?? $"{emp.LastName} {emp.FirstName}".Trim());
+
+            employees.Add(new
+            {
+                employee_id = emp.Id,
+                telegram_id = emp.TelegramId,
+                full_name = fullName,
+                short_name = shortName,
+                department = emp.Department,
+                position = emp.Position,
+                roles = secCtx?.Roles ?? new List<string>()
+            });
+        }
+
+        return Results.Ok(new
+        {
+            employees,
+            total_matched = employees.Count
+        });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Error searching employees with query '{Query}'", q);
+        return Results.Problem(
+            detail: "Internal error searching employees",
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
 // Внутренний вызов AI-агента из оркестратора n8n (после проверки прав и роутинга в n8n)
 app.MapPost("/api/agent/execute", async (
     [FromBody] AgentChatRequest req,
