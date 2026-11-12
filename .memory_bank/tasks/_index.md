@@ -17,9 +17,9 @@
 | `020B` | Build 9-Slide Interactive HTML Presentation & 1920×1080 PDF (`frontend-slides`) | Frontend Presentation Developer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-020` | `[To Do — Depends on 020A, Parallel with 020C]` |
 | `020C` | Build 9-Slide Native Editable `.pptx` Deck (`pptx` + `ppt-design-skill`) | PowerPoint Deck Developer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-020` | `[To Do — Depends on 020A, Parallel with 020B]` |
 | `QA-020` | Visual, OOXML & ТЗ Content Audit of Startup Presentation | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `020A–020C` | `[To Do — Depends on 020B, 020C]` |
-| `021A` | Fix Time-Grid / Header Column Misalignment & Cumulative Drift | Frontend Layout Engineer (`coder-worker`) | `worktree: 4901a744` | `QA-021` | `[In Progress: Worktree 4901a744]` |
-| `021B` | Fix Drag-to-Create Popover Time Row Width & Overflow Defect | UI Theme & Styling Specialist (`coder-worker`) | `worktree: 13a01efd` | `QA-021` | `[In Progress: Worktree 13a01efd]` |
-| `QA-021` | QA Verification for Timegrid Column Alignment and Popover Overflow | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `021A–021B` | `[To Do — Depends on 021A, 021B]` |
+| `021A` | Fix Time-Grid / Header Column Misalignment & Cumulative Drift | Frontend Layout Engineer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-021` | `[Completed - Merged]` |
+| `021B` | Fix Drag-to-Create Popover Time Row Width & Overflow Defect | UI Theme & Styling Specialist (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-021` | `[Completed - Merged]` |
+| `QA-021` | QA Verification for Timegrid Column Alignment and Popover Overflow | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `021A–021B` | `[Completed - Verified]` |
 
 ---
 
