@@ -52,6 +52,15 @@
   --accent: var(--accent-sky);
   --nvidia-green: var(--accent-emerald);
 
+  /* Calendar Drag-to-Create & Anchored Popover Tokens (Task 017B) */
+  --cal-ghost-bg: rgba(56, 189, 248, 0.2);
+  --cal-ghost-border: rgba(56, 189, 248, 0.65);
+  --cal-ghost-text: #f0f9ff;
+  --cal-popover-bg: rgba(12, 18, 34, 0.75);
+  --cal-popover-border: rgba(255, 255, 255, 0.2);
+  --cal-popover-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), 0 0 20px rgba(56, 189, 248, 0.25);
+  --cal-popover-blur: blur(28px) saturate(190%);
+
   /* User / Bot Message Bubbles */
   --msg-user: rgba(56, 189, 248, 0.15);
   --msg-bot: rgba(255, 255, 255, 0.035);
@@ -191,7 +200,7 @@ body {
 /* ============================================================================
    HEADER & VISIONOS GLASS NAVIGATION
    ============================================================================ */
-header {
+header:not(.cal-toolbar) {
   position: relative;
   z-index: 10;
   background: var(--glass-bg);
@@ -472,7 +481,7 @@ header {
 /* ============================================================================
    MAIN CONTAINER & CHAT SCROLL AREA
    ============================================================================ */
-main {
+main:not(.cal-main-area) {
   position: relative;
   z-index: 5;
   flex: 1;
@@ -1790,7 +1799,7 @@ main {
    RESPONSIVE DESIGN & MEDIA QUERIES
    ============================================================================ */
 @media (max-width: 900px) {
-  header {
+  header:not(.cal-toolbar) {
     flex-wrap: wrap;
     padding: 10px 16px;
     gap: 10px;
@@ -1806,10 +1815,292 @@ main {
   .nav-links {
     display: none; /* Collapsed on mobile for clean space */
   }
-  main {
+  main:not(.cal-main-area) {
     padding: 12px 14px;
   }
   .calendar-drawer, #calendar-drawer {
     width: 100vw;
   }
 }
+
+/* ==========================================================================
+   Apple Liquid Glass Calendar Drag-to-Create Selection & Anchored Popover (Task 017B)
+   ========================================================================== */
+
+.cal-drag-ghost {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  background: var(--cal-ghost-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--cal-ghost-border);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+  color: var(--cal-ghost-text);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  box-sizing: border-box;
+  overflow: hidden;
+  z-index: 25;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cal-drag-ghost-time {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cal-drag-create-popover {
+  position: fixed;
+  z-index: 1050;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  background: var(--cal-popover-bg);
+  backdrop-filter: var(--cal-popover-blur);
+  -webkit-backdrop-filter: var(--cal-popover-blur);
+  border: 1px solid var(--cal-popover-border);
+  border-top: 1px solid rgba(255, 255, 255, 0.35); /* top specular bevel */
+  box-shadow: var(--cal-popover-shadow);
+  border-radius: 14px;
+  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-primary);
+  font-family: var(--font-system);
+}
+
+/* Directional placement indicators facing the drag ghost */
+#cal-drag-create-popover[data-placement="right"] {
+  border-left: 2px solid rgba(56, 189, 248, 0.7);
+  box-shadow: -4px 0 20px rgba(56, 189, 248, 0.25), var(--cal-popover-shadow);
+}
+
+#cal-drag-create-popover[data-placement="left"] {
+  border-right: 2px solid rgba(56, 189, 248, 0.7);
+  box-shadow: 4px 0 20px rgba(56, 189, 248, 0.25), var(--cal-popover-shadow);
+}
+
+/* Header with date badge and close button */
+#cal-drag-create-popover .drag-create-header,
+#cal-drag-create-popover .cal-drag-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+#cal-drag-create-popover .drag-create-date-badge,
+#cal-drag-create-popover #drag-create-badge,
+#cal-drag-create-popover .cal-drag-date-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #7dd3fc;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 3px 8px;
+  border-radius: 9999px;
+  font-family: var(--font-system);
+  letter-spacing: 0.02em;
+}
+
+#cal-drag-create-popover #drag-create-close,
+#cal-drag-create-popover .drag-create-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+#cal-drag-create-popover #drag-create-close:hover,
+#cal-drag-create-popover .drag-create-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+#cal-drag-create-popover #drag-create-close svg,
+#cal-drag-create-popover .drag-create-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Form Fields: Inputs, Textarea, Time Row */
+#cal-drag-create-popover input[type="text"],
+#cal-drag-create-popover input[type="date"],
+#cal-drag-create-popover input[type="time"],
+#cal-drag-create-popover textarea,
+#drag-create-title,
+#drag-create-desc,
+#drag-create-date,
+#drag-create-start,
+#drag-create-end {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  color: #f8fafc;
+  font-family: var(--font-system);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+#cal-drag-create-popover textarea,
+#drag-create-desc {
+  resize: vertical;
+  min-height: 48px;
+  line-height: 1.4;
+}
+
+#cal-drag-create-popover input:focus,
+#cal-drag-create-popover textarea:focus,
+#drag-create-title:focus,
+#drag-create-desc:focus,
+#drag-create-date:focus,
+#drag-create-start:focus,
+#drag-create-end:focus {
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#cal-drag-create-popover input::placeholder,
+#cal-drag-create-popover textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* Compact Time Row */
+#cal-drag-create-popover .drag-create-time-row,
+#cal-drag-create-popover .cal-drag-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#cal-drag-create-popover .drag-create-time-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+#cal-drag-create-popover .drag-create-sep {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Participants (Field 4 — Bottom Section) */
+#cal-drag-create-popover .drag-create-participants,
+#cal-drag-create-popover .cal-drag-participants {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#cal-drag-create-popover .drag-create-participants-label,
+#cal-drag-create-popover .cal-drag-participants-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+#cal-drag-create-popover .drag-create-emp-list,
+#cal-drag-create-popover .cal-drag-emp-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+#cal-drag-create-popover .drag-create-emp-item,
+#cal-drag-create-popover label.cal-participant-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+#cal-drag-create-popover input[name="drag-create-emp"] {
+  accent-color: #38bdf8;
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+/* Action Footer */
+#cal-drag-create-popover .drag-create-actions,
+#cal-drag-create-popover .cal-drag-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#drag-create-cancel-btn {
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+#drag-create-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+#drag-create-submit-btn {
+  background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(56, 189, 248, 0.35);
+  transition: all 0.2s ease;
+}
+
+#drag-create-submit-btn:hover {
+  box-shadow: 0 6px 20px rgba(56, 189, 248, 0.5);
+  transform: translateY(-1px);
+}
+
+#drag-create-submit-btn:active {
+  transform: translateY(0);
+}
+
