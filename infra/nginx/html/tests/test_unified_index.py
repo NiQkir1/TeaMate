@@ -63,5 +63,11 @@ class TestUnifiedIndex(unittest.TestCase):
         self.assertIn('value="obsidian"', self.html)
         self.assertIn('switchTheme', self.html)
 
+    def test_voice_input_non_destructive_append(self):
+        # Must not overwrite input.value with naked data.text.trim()
+        self.assertNotIn("input.value = data.text.trim();", self.html)
+        self.assertIn("selectionStart", self.html)
+        self.assertIn("recognizedText", self.html)
+
 if __name__ == '__main__':
     unittest.main()
