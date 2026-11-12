@@ -72,6 +72,17 @@
   --cal-dropdown-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 16px rgba(56, 189, 248, 0.2);
   --cal-dropdown-hover: rgba(56, 189, 248, 0.12);
 
+  /* Calendar Day, Month & Year Views Tokens (Task 019B) */
+  --cal-month-cell-bg: rgba(255, 255, 255, 0.02);
+  --cal-month-cell-other-bg: rgba(0, 0, 0, 0.22);
+  --cal-month-cell-hover: rgba(56, 189, 248, 0.08);
+  --cal-year-card-bg: rgba(15, 23, 42, 0.60);
+  --cal-year-card-border: rgba(255, 255, 255, 0.14);
+  --cal-year-card-hover: rgba(20, 32, 58, 0.72);
+  --cal-year-heat-1: rgba(56, 189, 248, 0.22);
+  --cal-year-heat-2: rgba(56, 189, 248, 0.50);
+  --cal-year-heat-3: rgba(56, 189, 248, 0.85);
+
   /* User / Bot Message Bubbles */
   --msg-user: rgba(56, 189, 248, 0.15);
   --msg-bot: rgba(255, 255, 255, 0.035);
@@ -2469,4 +2480,455 @@ mark.cal-search-highlight,
   font-size: 12px;
   color: #94a3b8;
 }
+
+/* ==========================================================================
+   FOTOPRINT AI COPILOT — CALENDAR DAY, MONTH & YEAR VIEWS (Task 019B)
+   Apple Liquid Glass & VisionOS: Translucent frosted glass surfaces, specular
+   highlights, sky-blue/cyan heatmap tiers, glowing Today badges & frosted pills.
+   ========================================================================== */
+
+/* View Dropdown (.cal-view-dropdown) */
+[data-theme="liquid-glass"] .cal-view-dropdown,
+.cal-view-dropdown {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 0 10px;
+  height: 32px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="liquid-glass"] .cal-view-dropdown:hover,
+.cal-view-dropdown:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+[data-theme="liquid-glass"] .cal-view-dropdown:focus,
+.cal-view-dropdown:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="liquid-glass"] .cal-view-dropdown option,
+.cal-view-dropdown option {
+  background: #0b1120;
+  color: #f8fafc;
+}
+
+/* --------------------------------------------------------------------------
+   MONTH VIEW (.cal-month-grid)
+   -------------------------------------------------------------------------- */
+
+[data-theme="liquid-glass"] .cal-month-grid,
+.cal-month-grid {
+  background: rgba(6, 8, 16, 0.85);
+  color: #f8fafc;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+[data-theme="liquid-glass"] .cal-month-weekdays,
+.cal-month-weekdays {
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="liquid-glass"] .cal-month-weekday,
+.cal-month-weekday {
+  color: #94a3b8;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 4px;
+}
+
+[data-theme="liquid-glass"] .cal-month-cells,
+.cal-month-cells {
+  background-color: rgba(255, 255, 255, 0.08); /* frosted hairline dividers via gap */
+  gap: 1px;
+}
+
+[data-theme="liquid-glass"] .cal-month-cell,
+.cal-month-cell {
+  background: var(--cal-month-cell-bg, rgba(255, 255, 255, 0.02));
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  color: #f8fafc;
+  min-height: 80px;
+  min-width: 0;
+  padding: 6px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-theme="liquid-glass"] .cal-month-cell:hover,
+.cal-month-cell:hover {
+  background: var(--cal-month-cell-hover, rgba(56, 189, 248, 0.08));
+  box-shadow: inset 0 0 16px rgba(56, 189, 248, 0.08);
+}
+
+[data-theme="liquid-glass"] .cal-month-cell.is-today,
+.cal-month-cell.is-today {
+  box-shadow: inset 0 2px 0 0 #38bdf8, inset 0 0 16px rgba(56, 189, 248, 0.1);
+}
+
+[data-theme="liquid-glass"] .cal-month-cell.other-month,
+.cal-month-cell.other-month {
+  background: var(--cal-month-cell-other-bg, rgba(0, 0, 0, 0.22));
+  opacity: 0.5;
+}
+
+[data-theme="liquid-glass"] .cal-month-cell.other-month .cal-month-day-num,
+.cal-month-cell.other-month .cal-month-day-num {
+  color: #64748b;
+}
+
+[data-theme="liquid-glass"] .cal-month-cell-header,
+.cal-month-cell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+[data-theme="liquid-glass"] .cal-month-day-num,
+.cal-month-day-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+[data-theme="liquid-glass"] .cal-month-day-num.is-today,
+[data-theme="liquid-glass"] .cal-month-cell.is-today .cal-month-day-num,
+.cal-month-day-num.is-today,
+.cal-month-cell.is-today .cal-month-day-num {
+  background: #38bdf8 !important;
+  color: #060810 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.65), 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="liquid-glass"] .cal-month-week-num,
+.cal-month-week-num {
+  font-size: 10.5px;
+  font-family: var(--font-system, sans-serif);
+  color: #64748b;
+  font-weight: 500;
+}
+
+/* Event Pills */
+[data-theme="liquid-glass"] .cal-month-events-list,
+.cal-month-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: hidden;
+  min-height: 0;
+  flex: 1;
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill,
+.cal-month-event-pill {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 2px 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: all 0.15s ease;
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill:hover,
+.cal-month-event-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.24);
+  transform: translateY(-0.5px);
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill.cal-event-routine,
+.cal-month-event-pill.cal-event-routine {
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-left: 3px solid #fbbf24;
+  color: #fef3c7;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.15);
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill.cal-event-task,
+.cal-month-event-pill.cal-event-task {
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-left: 3px solid #38bdf8;
+  color: #e0f2fe;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill.cal-event-meeting,
+.cal-month-event-pill.cal-event-meeting {
+  background: rgba(129, 140, 248, 0.14);
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  border-left: 3px solid #818cf8;
+  color: #e0e7ff;
+  box-shadow: 0 0 10px rgba(129, 140, 248, 0.15);
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill svg,
+[data-theme="liquid-glass"] .cal-month-event-pill i,
+[data-theme="liquid-glass"] .cal-month-event-pill .cal-month-event-icon,
+.cal-month-event-pill svg,
+.cal-month-event-pill i,
+.cal-month-event-pill .cal-month-event-icon {
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill .cal-month-event-title,
+.cal-month-event-pill .cal-month-event-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+[data-theme="liquid-glass"] .cal-month-event-pill .cal-month-event-time,
+.cal-month-event-pill .cal-month-event-time {
+  font-size: 10px;
+  color: #7dd3fc;
+  flex-shrink: 0;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+[data-theme="liquid-glass"] .cal-month-cell.other-month .cal-month-event-pill,
+.cal-month-cell.other-month .cal-month-event-pill {
+  opacity: 0.5;
+}
+
+/* More Badge */
+[data-theme="liquid-glass"] .cal-month-more-badge,
+.cal-month-more-badge {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #7dd3fc;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  align-self: flex-start;
+  margin-top: 2px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+[data-theme="liquid-glass"] .cal-month-more-badge:hover,
+.cal-month-more-badge:hover {
+  background: rgba(56, 189, 248, 0.25);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   YEAR VIEW (.cal-year-grid)
+   -------------------------------------------------------------------------- */
+
+[data-theme="liquid-glass"] .cal-year-grid,
+.cal-year-grid {
+  background: rgba(6, 8, 16, 0.85);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+[data-theme="liquid-glass"] .cal-year-month-card,
+.cal-year-month-card {
+  background: var(--cal-year-card-bg, rgba(15, 23, 42, 0.60));
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--cal-year-card-border, rgba(255, 255, 255, 0.14));
+  border-top: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="liquid-glass"] .cal-year-month-card:hover,
+.cal-year-month-card:hover {
+  background: var(--cal-year-card-hover, rgba(20, 32, 58, 0.72));
+  border-color: rgba(56, 189, 248, 0.4);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 20px rgba(56, 189, 248, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="liquid-glass"] .cal-year-month-title,
+.cal-year-month-title {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: color 0.15s ease, text-shadow 0.15s ease;
+}
+
+[data-theme="liquid-glass"] .cal-year-month-title:hover,
+.cal-year-month-title:hover {
+  color: #38bdf8;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+}
+
+[data-theme="liquid-glass"] .cal-year-weekdays,
+.cal-year-weekdays {
+  color: #94a3b8;
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+[data-theme="liquid-glass"] .cal-year-weekday,
+.cal-year-weekday {
+  color: #94a3b8;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
+}
+
+[data-theme="liquid-glass"] .cal-year-week-row,
+.cal-year-week-row {
+  align-items: center;
+}
+
+[data-theme="liquid-glass"] .cal-year-week-num,
+.cal-year-week-num {
+  color: #64748b;
+  font-family: var(--font-system, sans-serif);
+  font-size: 9.5px;
+  text-align: right;
+  padding-right: 4px;
+}
+
+[data-theme="liquid-glass"] .cal-year-day-cell,
+.cal-year-day-cell {
+  color: #e2e8f0;
+  font-weight: 500;
+  font-size: 10.5px;
+  border-radius: 4px;
+  aspect-ratio: 1 / 1;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+[data-theme="liquid-glass"] .cal-year-day-cell[data-density="0"],
+.cal-year-day-cell[data-density="0"] {
+  background: transparent;
+}
+
+[data-theme="liquid-glass"] .cal-year-day-cell.other-month,
+.cal-year-day-cell.other-month {
+  opacity: 0.15;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Progressive Heatmap Shading (Apple Liquid Sky Cyan) */
+[data-theme="liquid-glass"] .cal-year-day-cell[data-density="1"],
+.cal-year-day-cell[data-density="1"] {
+  background: var(--cal-year-heat-1, rgba(56, 189, 248, 0.22));
+  color: #bae6fd;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.2);
+}
+
+[data-theme="liquid-glass"] .cal-year-day-cell[data-density="2"],
+.cal-year-day-cell[data-density="2"] {
+  background: var(--cal-year-heat-2, rgba(56, 189, 248, 0.50));
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+}
+
+[data-theme="liquid-glass"] .cal-year-day-cell[data-density="3"],
+.cal-year-day-cell[data-density="3"] {
+  background: var(--cal-year-heat-3, rgba(56, 189, 248, 0.85));
+  color: #060810;
+  font-weight: 700;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.7);
+}
+
+/* Today Badge in Year View */
+[data-theme="liquid-glass"] .cal-year-day-cell.is-today,
+.cal-year-day-cell.is-today {
+  background: #38bdf8 !important;
+  color: #060810 !important;
+  font-weight: 700 !important;
+  border-radius: 50% !important;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.8), 0 2px 4px rgba(0, 0, 0, 0.5) !important;
+}
+
+[data-theme="liquid-glass"] .cal-year-day-cell:hover:not(.other-month),
+.cal-year-day-cell:hover:not(.other-month) {
+  outline: 1.5px solid #38bdf8;
+  transform: scale(1.2);
+  z-index: 2;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   DAY VIEW (.cal-timegrid-col in 1-column mode)
+   -------------------------------------------------------------------------- */
+[data-theme="liquid-glass"] .cal-main-area[style*="--cal-grid-cols: 1"] .cal-week-col-header,
+[data-theme="liquid-glass"] .cal-main-area[style*="--cal-grid-cols:1"] .cal-week-col-header {
+  border-right: none;
+}
+
 
