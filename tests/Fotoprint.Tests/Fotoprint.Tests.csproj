@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Fotoprint.Core\Fotoprint.Core.csproj" />
+    <ProjectReference Include="..\..\src\Fotoprint.Mcp.Calendar\Fotoprint.Mcp.Calendar.csproj" />
   </ItemGroup>
 
 </Project>

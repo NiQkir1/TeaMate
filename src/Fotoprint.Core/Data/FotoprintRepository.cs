@@ -87,6 +87,9 @@ public interface IFotoprintRepository
     Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<User>> SearchEmployeesAsync(string query, int limit = 10, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<User>>(Array.Empty<User>());
+    /// <summary>Пакетная загрузка ролей для набора сотрудников одним запросом (без N+1).</summary>
+    Task<IReadOnlyDictionary<int, List<string>>> GetRolesByEmployeeIdsAsync(IReadOnlyCollection<int> employeeIds, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<int, List<string>>>(new Dictionary<int, List<string>>());
 
     // Chat Sessions & Messages (MasterId & UUID SessionId)
     Task<ChatSession> GetOrCreateActiveSessionByMasterIdAsync(long masterId, long messengerChatId, string messengerType = "telegram", CancellationToken ct = default);
@@ -281,6 +284,32 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
 
     private ValueTask<NpgsqlConnection> CreateConnectionAsync(CancellationToken ct = default) =>
         _dataSource.OpenConnectionAsync(ct);
+
+    public async Task<IReadOnlyDictionary<int, List<string>>> GetRolesByEmployeeIdsAsync(IReadOnlyCollection<int> employeeIds, CancellationToken ct = default)
+    {
+        var result = new Dictionary<int, List<string>>();
+        if (employeeIds == null || employeeIds.Count == 0) return result;
+
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT er.employee_id AS EmployeeId, r.name AS RoleName
+            FROM employee_roles er
+            JOIN roles r ON er.role_id = r.id
+            WHERE er.employee_id = ANY(@Ids)
+            ORDER BY er.employee_id, r.id;
+            """;
+        var rows = await conn.QueryAsync<(int EmployeeId, string RoleName)>(
+            new CommandDefinition(sql, new { Ids = employeeIds.Distinct().ToArray() }, cancellationToken: ct));
+        foreach (var (employeeId, roleName) in rows)
+        {
+            if (!result.TryGetValue(employeeId, out var list))
+            {
+                result[employeeId] = list = new List<string>();
+            }
+            list.Add(roleName);
+        }
+        return result;
+    }
 
     public async Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default)
     {
@@ -722,7 +751,7 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
             for (int i = 0; i < tokens.Count; i++)
             {
                 var paramName = $"p_{i}";
-                parameters.Add(paramName, $"%{tokens[i]}%");
+                parameters.Add(paramName, $"%{tokens[i].Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_")}%");
                 tokenClauses.Add($"""
                     (
                         REPLACE(REPLACE(LOWER(last_name), 'ё', 'е'), 'ë', 'е') LIKE @{paramName} OR

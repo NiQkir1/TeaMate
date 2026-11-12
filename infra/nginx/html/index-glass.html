@@ -67,7 +67,7 @@
         <i data-lucide="activity"></i>
         <span>Langfuse</span>
       </a>
-      <a href="/api/system/stats" target="_blank" rel="noopener noreferrer" class="nav-btn" title="Метрики системы">
+      <a href="/api/system/stats" onclick="openMetricsDashboard(event)" target="_blank" rel="noopener noreferrer" class="nav-btn" title="Управленческий дашборд и метрики системы">
         <i data-lucide="gauge"></i>
         <span>Метрики</span>
       </a>
@@ -284,6 +284,17 @@
       } else if (theme === 'liquid-glass') {
         window.location.href = 'index-glass.html';
       }
+    }
+
+    function openMetricsDashboard(event) {
+      if (event) event.preventDefault();
+      const user = getCurrentUser();
+      const role = (user.roles && user.roles[0]) ? user.roles[0] : 'Director';
+      localStorage.setItem('picpac.role', role);
+      localStorage.setItem('picpac.session', `${role.toLowerCase()}@fotoprint.by`);
+      localStorage.setItem('fotoprint_telegram_id', String(currentTelegramId));
+      const targetUrl = `/dashboard/?telegram_id=${encodeURIComponent(currentTelegramId)}&role=${encodeURIComponent(role)}`;
+      window.open(targetUrl, '_blank', 'noopener');
     }
 
     // ========================================================================

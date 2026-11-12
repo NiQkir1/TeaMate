@@ -62,47 +62,6 @@ public static class TelegramEndpoints
             return await processor.HandleUpdateAsync(httpContext, rawUpdate);
         });
 
-        endpoints.MapGet("/api/telegram/info", async (
-            ITelegramBotClient telegramBot,
-            TelegramBotOptions options,
-            CloudflareWebhookState state,
-            CloudflareWebhookRegistrarService registrar,
-            CancellationToken ct) =>
-        {
-            var (tunnelUrl, lastSyncUtc, lastError) = state.Snapshot();
-            if (!string.IsNullOrWhiteSpace(options.CloudflaredMetricsUrl))
-            {
-                try
-                {
-                    var liveUrl = await registrar.TryFetchTunnelWebhookUrlAsync(ct);
-                    if (!string.IsNullOrWhiteSpace(liveUrl))
-                    {
-                        tunnelUrl = liveUrl;
-                    }
-                }
-                catch
-                {
-                    // Fall back to cached snapshot if cloudflared is still starting
-                }
-            }
-
-            var webhookInfo = options.IsConfigured
-                ? await telegramBot.GetWebhookInfoAsync(ct)
-                : new TelegramApiResponse(false, 401, "Telegram bot token is not configured.");
-
-            return Results.Ok(new
-            {
-                bot_configured = options.IsConfigured,
-                webhook_secret_configured = !string.IsNullOrWhiteSpace(options.WebhookSecret),
-                tunnel_webhook_url = tunnelUrl,
-                last_sync_utc = lastSyncUtc,
-                last_error = lastError,
-                telegram_webhook_ok = webhookInfo.Ok,
-                telegram_webhook_error = webhookInfo.Ok ? null : webhookInfo.Description,
-                telegram_webhook_info = ExtractSafeWebhookInfo(webhookInfo.Result)
-            });
-        });
-
         endpoints.MapPost("/api/telegram/set-webhook", async (
             HttpContext httpContext,
             ITelegramBotClient telegramBot,
@@ -179,24 +138,5 @@ public static class TelegramEndpoints
         });
 
         return endpoints;
-    }
-
-    private static object? ExtractSafeWebhookInfo(JsonElement? result)
-    {
-        if (!result.HasValue || result.Value.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var r = result.Value;
-        return new
-        {
-            url = r.TryGetProperty("url", out var u) ? u.GetString() : null,
-            has_custom_certificate = r.TryGetProperty("has_custom_certificate", out var c) && c.GetBoolean(),
-            pending_update_count = r.TryGetProperty("pending_update_count", out var p) && p.TryGetInt32(out var pv) ? pv : 0,
-            last_error_date = r.TryGetProperty("last_error_date", out var d) && d.TryGetInt64(out var dv) ? (long?)dv : null,
-            last_error_message = r.TryGetProperty("last_error_message", out var m) ? m.GetString() : null,
-            max_connections = r.TryGetProperty("max_connections", out var mc) && mc.TryGetInt32(out var mcv) ? (int?)mcv : null
-        };
     }
 }

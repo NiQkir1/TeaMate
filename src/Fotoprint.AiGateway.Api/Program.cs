@@ -364,35 +364,6 @@ app.MapPost("/api/llm/generate", async (
     });
 });
 
-// Прямой вызов Gemini / NVIDIA (обратная совместимость)
-app.MapPost("/api/gemini/generate", async (
-    [FromBody] GeminiPromptRequest req,
-    IGeminiClient gemini,
-    ILangfuseClient langfuse,
-    FotoprintConfig config) =>
-{
-    var traceId = langfuse.GenerateTraceId();
-    await langfuse.CreateTraceAsync(
-        traceId: traceId,
-        name: "api-gemini-generate",
-        metadata: new { prompt_length = req.Prompt?.Length ?? 0, model = config.Llm.Models.ChatModel },
-        tags: new[] { "channel:api", $"provider:{config.Llm.Provider}" });
-
-    var response = await gemini.GenerateContentAsync(
-        prompt: req.Prompt,
-        systemInstruction: req.SystemInstruction,
-        temperature: req.Temperature,
-        maxOutputTokens: req.MaxOutputTokens,
-        traceId: traceId);
-
-    return Results.Ok(new
-    {
-        response,
-        gemini_call_stats = gemini.GetStats(),
-        trace_id = traceId
-    });
-});
-
 // Список доступных пользователей и их RBAC-ролей для переключателя в Web UI
 app.MapGet("/api/agent/users", async (IFotoprintRepository repo, CancellationToken ct) =>
 {
@@ -418,9 +389,12 @@ app.MapGet("/api/agent/users", async (IFotoprintRepository repo, CancellationTok
 });
 
 // Масштабируемый умный поиск сотрудников по ФИО, должности и отделу для календаря и модалок
+// Доступ: внутренний ключ сервиса или активный сотрудник (X-Telegram-Id / X-Master-Id) — справочник не отдаётся анонимно.
 app.MapGet("/api/employees/search", async (
     [FromQuery] string? q,
     [FromQuery] int? limit,
+    HttpContext httpContext,
+    FotoprintConfig config,
     IFotoprintRepository repo,
     ILoggerFactory loggerFactory,
     CancellationToken ct) =>
@@ -428,33 +402,39 @@ app.MapGet("/api/employees/search", async (
     var logger = loggerFactory.CreateLogger("EmployeeSearchApi");
     try
     {
+        if (!HasValidInternalServiceKey(httpContext, config))
+        {
+            var caller = await ResolveCallerSecurityContextAsync(httpContext, repo, null, null, ct);
+            if (caller == null)
+            {
+                return Results.Json(
+                    new { status = "error", message = "Требуется авторизация активного сотрудника (X-Telegram-Id)." },
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+        }
+
         var effectiveLimit = Math.Clamp(limit ?? 10, 1, 50);
         var matchedUsers = await repo.SearchEmployeesAsync(q ?? string.Empty, effectiveLimit, ct);
+
+        // Роли всех найденных сотрудников — одним запросом (без N+1)
+        IReadOnlyDictionary<int, List<string>> rolesByEmployee;
+        try
+        {
+            rolesByEmployee = await repo.GetRolesByEmployeeIdsAsync(matchedUsers.Select(u => u.Id).ToList(), ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to batch-load roles for employee search");
+            rolesByEmployee = new Dictionary<int, List<string>>();
+        }
 
         var employees = new List<object>(matchedUsers.Count);
         foreach (var emp in matchedUsers)
         {
-            EmployeeSecurityContext? secCtx = null;
-            try
-            {
-                if (emp.MasterId != 0)
-                {
-                    secCtx = await repo.GetEmployeeSecurityContextByMasterIdAsync(emp.MasterId, ct);
-                }
-                else if (emp.TelegramId.HasValue && emp.TelegramId.Value != 0)
-                {
-                    secCtx = await repo.GetEmployeeSecurityContextAsync(emp.TelegramId.Value, ct);
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to resolve security context for employee {EmployeeId}", emp.Id);
-            }
-
             var shortName = User.FormatShortName(emp.LastName, emp.FirstName, emp.MiddleName);
             var fullName = !string.IsNullOrWhiteSpace(emp.FullName)
                 ? emp.FullName
-                : (secCtx?.FullName ?? $"{emp.LastName} {emp.FirstName}".Trim());
+                : $"{emp.LastName} {emp.FirstName}".Trim();
 
             employees.Add(new
             {
@@ -464,7 +444,7 @@ app.MapGet("/api/employees/search", async (
                 short_name = shortName,
                 department = emp.Department,
                 position = emp.Position,
-                roles = secCtx?.Roles ?? new List<string>()
+                roles = rolesByEmployee.TryGetValue(emp.Id, out var r) ? r : new List<string>()
             });
         }
 
@@ -2186,48 +2166,6 @@ app.MapGet("/api/meetings/{id:guid}/export-full", async (
     return Results.File(exportBytes, contentType, fileName);
 });
 
-// Прямой вызов детектора смены контекста через LLM (2-й этап)
-app.MapPost("/api/context/detect-switch", async (
-    [FromBody] ContextSwitchRequest req,
-    IContextSwitchDetector detector,
-    ILangfuseClient langfuse) =>
-{
-    var traceId = langfuse.GenerateTraceId();
-    var messages = (req.History ?? new List<ContextMessageDto>())
-        .Select(m => new ChatMessage { Role = m.Role, Content = m.Content })
-        .ToList();
-
-    var result = await detector.DetectSwitchAsync(messages, req.CurrentMessage, traceId);
-    return Results.Ok(new
-    {
-        is_context_switched = result.IsSwitched,
-        suggested_branch = result.SuggestedBranch,
-        reason = result.Reason,
-        trace_id = traceId
-    });
-});
-
-// Эндпоинты запуска LLM-as-a-Judge оценок (Epic 6.4)
-app.MapPost("/api/telemetry/evaluate-faithfulness", async (
-    [FromBody] EvaluateFaithfulnessRequest req,
-    ILlmJudgeService judgeService,
-    ILangfuseClient langfuse) =>
-{
-    var traceId = req.TraceId ?? langfuse.GenerateTraceId();
-    var score = await judgeService.EvaluateFaithfulnessAsync(traceId, req.UserQuestion, req.RawContextData, req.AgentAnswer);
-    return Results.Ok(new { trace_id = traceId, metric = "faithfulness", score });
-});
-
-app.MapPost("/api/telemetry/evaluate-formatting-policy", async (
-    [FromBody] EvaluatePolicyRequest req,
-    ILlmJudgeService judgeService,
-    ILangfuseClient langfuse) =>
-{
-    var traceId = req.TraceId ?? langfuse.GenerateTraceId();
-    var score = await judgeService.EvaluateFormattingAndPolicyAsync(traceId, req.OutputText, req.IsProtocol);
-    return Results.Ok(new { trace_id = traceId, metric = "formatting_and_policy", score });
-});
-
 _ = Task.Run(async () =>
 {
     try
@@ -2285,30 +2223,6 @@ app.MapPost("/api/calendar/confirm", async (
 {
     var client = httpFactory.CreateClient("CalendarMcpClient");
     var req = new HttpRequestMessage(HttpMethod.Post, "tools/create_meeting");
-    req.Headers.TryAddWithoutValidation("X-Internal-Service-Key", config.Security?.InternalServiceSecretKey ?? "fotoprint-internal-service-secret-token-2026");
-    if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
-        req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
-    if (httpContext.Request.Headers.TryGetValue("X-Trace-Id", out var trId))
-        req.Headers.TryAddWithoutValidation("X-Trace-Id", trId.ToString());
-
-    using var stream = new StreamReader(httpContext.Request.Body);
-    var body = await stream.ReadToEndAsync(ct);
-    req.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-
-    var resp = await client.SendAsync(req, ct);
-    var content = await resp.Content.ReadAsStringAsync(ct);
-    return Results.Content(content, "application/json", statusCode: (int)resp.StatusCode);
-});
-
-// 3. Подбор свободных слотов
-app.MapPost("/api/calendar/slots", async (
-    HttpContext httpContext,
-    IHttpClientFactory httpFactory,
-    FotoprintConfig config,
-    CancellationToken ct) =>
-{
-    var client = httpFactory.CreateClient("CalendarMcpClient");
-    var req = new HttpRequestMessage(HttpMethod.Post, "tools/find_free_slots");
     req.Headers.TryAddWithoutValidation("X-Internal-Service-Key", config.Security?.InternalServiceSecretKey ?? "fotoprint-internal-service-secret-token-2026");
     if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
         req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
@@ -2447,10 +2361,6 @@ public record SaveAndIndexMeetingRequest(
     List<MeetingActionItemInput>? ActionItems = null);
 public record MeetingActionItemInput(string Title, string? Description = null, string? Responsible = null, DateTime? Deadline = null);
 public record MeetingRagSearchRequest(long MasterId, string Query, int TopK = 5);
-public record EvaluateFaithfulnessRequest(string? TraceId, string UserQuestion, string RawContextData, string AgentAnswer);
-public record EvaluatePolicyRequest(string? TraceId, string OutputText, bool IsProtocol = false);
-public record ContextSwitchRequest(List<ContextMessageDto>? History, string CurrentMessage);
-public record ContextMessageDto(string Role, string Content);
 public record RagSearchRequest(string Query, List<string> UserAccessGroups, int TopK = 5, long? MasterId = null, long? TelegramId = null);
 public record GeminiPromptRequest(string Prompt, string? SystemInstruction = null, double? Temperature = null, int? MaxOutputTokens = null, string? TraceName = null, string? TraceId = null, string? SessionId = null, string? UserId = null);
 public record AgentChatRequest(long TelegramId, long ChatId, string Message, string? TraceId = null);

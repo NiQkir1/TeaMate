@@ -951,6 +951,16 @@ public class FotoprintAiAgent : IFotoprintAgent
         var startTime = TryGetStringArg(arguments, "start_time");
         var durationMinutes = TryGetIntArg(arguments, "duration_minutes") ?? 30;
         var participants = TryGetStringArg(arguments, "participants");
+        List<int>? participantIds = null;
+        if (arguments.ValueKind == JsonValueKind.Object
+            && arguments.TryGetProperty("participant_ids", out var pidsEl)
+            && pidsEl.ValueKind == JsonValueKind.Array)
+        {
+            participantIds = pidsEl.EnumerateArray()
+                .Where(e => e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out _))
+                .Select(e => e.GetInt32())
+                .ToList();
+        }
 
         var client = _httpClientFactory.CreateClient();
         using var req = CreateMcpRequest(HttpMethod.Post, $"{CalendarMcpBaseUrl}/tools/schedule_meeting", telegramId, traceId, isConfirmed);
@@ -960,7 +970,8 @@ public class FotoprintAiAgent : IFotoprintAgent
             description,
             startTime,
             durationMinutes,
-            participants
+            participants,
+            participantIds
         });
         using var res = await client.SendAsync(req, ct);
         if (res.IsSuccessStatusCode)
@@ -1350,9 +1361,10 @@ public class FotoprintAiAgent : IFotoprintAgent
                             description = new { type = "string", description = "Повестка и описание встречи" },
                             start_time = new { type = "string", description = "Дата и время начала (ГГГГ-ММ-ДД ЧЧ:ММ)" },
                             duration_minutes = new { type = "integer", description = "Длительность в минутах (по умолчанию 30)" },
-                            participants = new { type = "string", description = "Участники встречи через запятую" }
+                            participants = new { type = "string", description = "ФИО участников встречи через запятую" },
+                            participant_ids = new { type = "array", items = new { type = "integer" }, description = "ID участников (если известны)" }
                         },
-                        required = new[] { "title" }
+                        required = new[] { "title", "start_time" }
                     }
                 }
             },
