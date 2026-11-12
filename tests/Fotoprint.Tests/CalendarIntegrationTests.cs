@@ -325,6 +325,48 @@ public class CalendarIntegrationTests
         Assert.DoesNotContain(slots, s => s.Label == "14:30 - 15:00");
     }
 
+    [Fact]
+    public void CalendarEventItem_DomainVocabulary_And_CategoryMatching()
+    {
+        // 1. Reference week demo items must have exact professional typography title
+        var demoItems = CalendarHelper.GetReferenceWeekDemoItems(MskZone, id => $"Сотрудник {id}");
+        Assert.NotEmpty(demoItems);
+        
+        var routineMorningItems = demoItems.Where(i => i.Id.StartsWith("b0000001-")).ToList();
+        Assert.Equal(7, routineMorningItems.Count);
+        foreach (var item in routineMorningItems)
+        {
+            Assert.Equal("Утренняя сводка выработки цеха", item.Title);
+            Assert.Equal("routine", item.Category);
+            Assert.Equal("routine", item.ItemType);
+            Assert.True(item.IsAllDay);
+        }
+
+        // Domain invariant: Zero domestic chore stems across all demo items
+        string[] forbiddenStems = ["поощрен", "уборк", "упражнен", "выпить вод"];
+        foreach (var item in demoItems)
+        {
+            var combinedText = $"{item.Title} {item.Description} {string.Join(" ", item.Tags)}".ToLowerInvariant();
+            foreach (var stem in forbiddenStems)
+            {
+                Assert.DoesNotContain(stem, combinedText);
+            }
+        }
+
+        // 2. Keyword category matching: "выработка" and "сводка" map to "routine"
+        var meeting = new Meeting
+        {
+            Id = Guid.NewGuid(),
+            Title = "Ежедневная выработка цеха офсетной печати",
+            Description = "Анализ тиражей и брака за смену",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            Status = "scheduled"
+        };
+        var eventItem = CalendarHelper.MapMeetingToCalendarItem(meeting, MskZone, id => $"Сотрудник {id}");
+        Assert.Equal("routine", eventItem.Category);
+    }
+
     private class FakeCalendarRepo : IFotoprintRepository
     {
         public Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default)
