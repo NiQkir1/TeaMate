@@ -171,6 +171,44 @@ var app = builder.Build();
 // Защита периметра от сканеров портов, ботов и поиска уязвимых файлов
 app.UseMiddleware<PerimeterDefenseMiddleware>();
 
+// Раздача статических файлов фронтенда из infra/nginx/html
+string? htmlStaticDir = null;
+var probeDir = new DirectoryInfo(AppContext.BaseDirectory);
+while (probeDir != null)
+{
+    var candidate = Path.Combine(probeDir.FullName, "infra", "nginx", "html");
+    if (Directory.Exists(candidate))
+    {
+        htmlStaticDir = candidate;
+        break;
+    }
+    probeDir = probeDir.Parent;
+}
+
+if (htmlStaticDir == null)
+{
+    probeDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+    while (probeDir != null)
+    {
+        var candidate = Path.Combine(probeDir.FullName, "infra", "nginx", "html");
+        if (Directory.Exists(candidate))
+        {
+            htmlStaticDir = candidate;
+            break;
+        }
+        probeDir = probeDir.Parent;
+    }
+}
+
+if (htmlStaticDir != null && Directory.Exists(htmlStaticDir))
+{
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(htmlStaticDir),
+        RequestPath = ""
+    });
+}
+
 // Health
 app.MapGet("/health", () => Results.Ok(new
 {

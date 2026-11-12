@@ -1,889 +1,152 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="liquid-glass">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fotoprint AI Copilot — NVIDIA Nemotron 3.5 &amp; Speech-to-Text</title>
-  <style>
-    :root {
-      --bg-dark: #0f172a;
-      --card-bg: #1e293b;
-      --chat-bg: #0f172a;
-      --msg-user: #3b82f6;
-      --msg-bot: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --accent: #10b981;
-      --nvidia-green: #76b900;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-      background-color: var(--bg-dark);
-      color: var(--text);
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      overflow: hidden;
-    }
-
-    .visually-hidden:where(:not(:focus-within, :active)) {
-      position: absolute !important;
-      clip-path: inset(50%) !important;
-      overflow: hidden !important;
-      width: 1px !important;
-      height: 1px !important;
-      margin: -1px !important;
-      padding: 0 !important;
-      border: 0 !important;
-      white-space: nowrap !important;
-    }
-
-    :where(a:any-link, button, select, .table-wrapper):focus-visible {
-      outline: 2px solid #38bdf8;
-      outline-offset: 2px;
-    }
-
-    header {
-      background-color: var(--card-bg);
-      border-bottom: 1px solid var(--border);
-      padding: 12px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .logo {
-      font-size: 24px;
-    }
-
-    .title-group h1 {
-      font-size: 18px;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-    }
-
-    .model-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(118, 185, 0, 0.12);
-      border: 1px solid var(--nvidia-green);
-      color: var(--nvidia-green);
-      font-size: 12px;
-      font-weight: 600;
-      padding: 3px 10px;
-      border-radius: 9999px;
-      margin-top: 2px;
-    }
-
-    .pulse {
-      width: 8px;
-      height: 8px;
-      background: var(--nvidia-green);
-      border-radius: 50%;
-      box-shadow: 0 0 8px var(--nvidia-green);
-      animation: blink 2s infinite ease-in-out;
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.85); }
-    }
-
-    .nav-links {
-      display: flex;
-      gap: 10px;
-    }
-
-    .nav-btn {
-      text-decoration: none;
-      color: var(--text-muted);
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--border);
-      padding: 6px 14px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 500;
-      transition: all 0.2s ease;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      min-block-size: 32px;
-    }
-
-    .nav-btn:hover {
-      color: var(--text);
-      background: rgba(255, 255, 255, 0.1);
-      border-color: #64748b;
-    }
-
-    .user-switcher {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 6px 10px;
-    }
-
-    .user-switcher label {
-      font-size: 12px;
-      color: var(--text-muted);
-      white-space: nowrap;
-    }
-
-    .user-switcher select {
-      background: var(--bg-dark);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      padding: 5px 10px;
-      font-size: 13px;
-      cursor: pointer;
-    }
-
-    .user-switcher select:focus-visible {
-      border-color: var(--msg-user);
-    }
-
-    .role-badge {
-      font-size: 11.5px;
-      font-weight: 600;
-      padding: 3px 9px;
-      border-radius: 9999px;
-      background: rgba(59, 130, 246, 0.15);
-      border: 1px solid rgba(59, 130, 246, 0.5);
-      color: #93c5fd;
-      white-space: nowrap;
-    }
-
-    .role-badge.restricted {
-      background: rgba(245, 158, 11, 0.15);
-      border-color: rgba(245, 158, 11, 0.5);
-      color: #fcd34d;
-    }
-
-    .role-badge.guest {
-      background: rgba(239, 68, 68, 0.15);
-      border-color: rgba(239, 68, 68, 0.5);
-      color: #fca5a5;
-    }
-
-    .system-notice {
-      align-self: center;
-      font-size: 12px;
-      color: var(--text-muted);
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--border);
-      border-radius: 9999px;
-      padding: 4px 14px;
-    }
-
-    .table-wrapper {
-      overflow: auto;
-      max-inline-size: 100%;
-      margin: 8px 0;
-    }
-
-    .msg-content table {
-      border-collapse: collapse;
-      width: 100%;
-      font-size: 13px;
-    }
-
-    .msg-content th, .msg-content td {
-      border: 1px solid var(--border);
-      padding: 6px 10px;
-      text-align: left;
-    }
-
-    .msg-content th {
-      background: rgba(255, 255, 255, 0.06);
-      color: #38bdf8;
-    }
-
-    .msg-content code {
-      background: rgba(255, 255, 255, 0.08);
-      padding: 1px 5px;
-      border-radius: 4px;
-      font-size: 13px;
-    }
-
-    @media (max-width: 900px) {
-      header {
-        flex-wrap: wrap;
-        gap: 10px;
-      }
-      .user-switcher {
-        order: 3;
-        width: 100%;
-        justify-content: space-between;
-      }
-      .user-switcher select {
-        flex: 1;
-        min-width: 0;
-      }
-    }
-
-    main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      max-width: 950px;
-      width: 100%;
-      margin: 0 auto;
-      overflow: hidden;
-      padding: 16px 20px;
-    }
-
-    #chat-window {
-      flex: 1;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      padding-right: 8px;
-      scroll-behavior: smooth;
-    }
-
-    #chat-window::-webkit-scrollbar {
-      width: 6px;
-    }
-    #chat-window::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 3px;
-    }
-
-    .msg-row {
-      display: flex;
-      gap: 12px;
-      max-width: 85%;
-    }
-
-    .msg-row.user {
-      align-self: flex-end;
-      flex-direction: row-reverse;
-    }
-
-    .msg-row.bot {
-      align-self: flex-start;
-    }
-
-    .avatar {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      flex-shrink: 0;
-    }
-
-    .msg-row.user .avatar {
-      background: #2563eb;
-    }
-
-    .msg-row.bot .avatar {
-      background: #047857;
-      border: 1px solid var(--nvidia-green);
-    }
-
-    .msg-content {
-      padding: 12px 16px;
-      border-radius: 12px;
-      font-size: 14.5px;
-      line-height: 1.55;
-      word-break: break-word;
-    }
-
-    .msg-row.user .msg-content {
-      background: var(--msg-user);
-      color: #ffffff;
-      border-bottom-right-radius: 3px;
-    }
-
-    .msg-row.bot .msg-content {
-      background: var(--msg-bot);
-      border: 1px solid var(--border);
-      border-bottom-left-radius: 3px;
-    }
-
-    .msg-content h3 {
-      font-size: 15px;
-      margin: 10px 0 4px 0;
-      color: #38bdf8;
-    }
-
-    .msg-content ul {
-      margin-left: 20px;
-      margin-top: 4px;
-    }
-
-    .msg-content p {
-      margin: 6px 0;
-    }
-
-    .tool-badge {
-      display: inline-block;
-      margin-top: 8px;
-      font-size: 11px;
-      background: rgba(56, 189, 248, 0.15);
-      border: 1px solid #38bdf8;
-      color: #38bdf8;
-      padding: 2px 8px;
-      border-radius: 6px;
-    }
-
-    .quick-prompts {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 12px 0 8px 0;
-    }
-
-    .pill {
-      font-family: inherit;
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 12.5px;
-      cursor: pointer;
-      transition: all 0.2s;
-      min-block-size: 30px;
-    }
-
-    .pill:hover {
-      background: #334155;
-      color: var(--text);
-      border-color: #64748b;
-    }
-
-    .stt-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid var(--accent);
-      color: var(--accent);
-      padding: 4px 12px;
-      border-radius: 9999px;
-      font-size: 12px;
-      font-weight: 600;
-      margin-bottom: 8px;
-      align-self: flex-start;
-      transition: opacity 0.3s;
-    }
-
-    .input-area-wrapper {
-      position: relative;
-      width: 100%;
-    }
-
-    .input-bar {
-      display: flex;
-      gap: 10px;
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 8px 12px;
-      align-items: center;
-    }
-
-    .input-bar:focus-within {
-      border-color: #64748b;
-    }
-
-    .input-bar input[type="text"] {
-      flex: 1;
-      background: transparent;
-      border: none;
-      outline: none;
-      color: var(--text);
-      font-size: 15px;
-      min-width: 0;
-    }
-
-    .btn-icon {
-      background: #334155;
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 16px;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-inline-size: 36px;
-      min-block-size: 36px;
-    }
-
-    .btn-icon:hover {
-      background: #475569;
-    }
-
-    .btn-icon.recording {
-      background: #ef4444;
-      color: white;
-      animation: pulse-red 1s infinite;
-    }
-
-    @keyframes pulse-red {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.8; transform: scale(0.95); }
-    }
-
-    .input-bar button#send-btn {
-      background: var(--msg-user);
-      border: none;
-      color: white;
-      padding: 8px 20px;
-      border-radius: 8px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s;
-      min-block-size: 36px;
-    }
-
-    .input-bar button#send-btn:hover:not(:disabled) {
-      background: #1d4ed8;
-    }
-
-    .input-bar button#send-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    /* ChatGPT-style Voice Recording Bar */
-    .voice-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 6px 12px;
-      min-height: 52px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-      animation: voice-bar-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-
-    @keyframes voice-bar-in {
-      from {
-        opacity: 0;
-        transform: translateY(4px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .btn-voice-cancel {
-      background: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      color: #f87171;
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 15px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      flex-shrink: 0;
-    }
-
-    .btn-voice-cancel:hover {
-      background: rgba(239, 68, 68, 0.25);
-      border-color: #ef4444;
-      color: #fca5a5;
-      transform: scale(1.08);
-    }
-
-    .btn-voice-cancel:active {
-      transform: scale(0.95);
-    }
-
-    .voice-timer-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid var(--border);
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 13px;
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
-      color: var(--text);
-      flex-shrink: 0;
-      user-select: none;
-    }
-
-    .voice-rec-dot {
-      width: 8px;
-      height: 8px;
-      background: #ef4444;
-      border-radius: 50%;
-      box-shadow: 0 0 8px #ef4444;
-      animation: pulse-red 1.2s infinite ease-in-out;
-    }
-
-    .voice-waveform-container {
-      flex: 1;
-      height: 38px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      min-width: 80px;
-    }
-
-    #voice-waveform {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
-
-    .btn-voice-done {
-      background: linear-gradient(135deg, #10b981, #06b6d4);
-      border: none;
-      color: white;
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-      box-shadow: 0 0 14px rgba(16, 185, 129, 0.45);
-      flex-shrink: 0;
-    }
-
-    .btn-voice-done:hover {
-      background: linear-gradient(135deg, #059669, #0891b2);
-      transform: scale(1.08);
-      box-shadow: 0 0 20px rgba(16, 185, 129, 0.65);
-    }
-
-    .btn-voice-done:active {
-      transform: scale(0.95);
-    }
-
-    .typing {
-      display: flex;
-      gap: 5px;
-      padding: 6px 0;
-    }
-
-    .typing span {
-      width: 7px;
-      height: 7px;
-      background: var(--text-muted);
-      border-radius: 50%;
-      animation: dots 1.4s infinite ease-in-out both;
-    }
-
-    .typing span:nth-child(1) { animation-delay: -0.32s; }
-    .typing span:nth-child(2) { animation-delay: -0.16s; }
-
-    @keyframes dots {
-      0%, 80%, 100% { transform: scale(0); }
-      40% { transform: scale(1); }
-    }
-
-    /* MoM Card Styles */
-    .mom-card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-      margin: 4px 0;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    .mom-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 8px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 10px;
-    }
-
-    .mom-title-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .mom-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: #38bdf8;
-      margin: 0;
-    }
-
-    .mom-badges {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-
-    .engine-badge {
-      font-size: 11.5px;
-      font-weight: 600;
-      padding: 3px 10px;
-      border-radius: 9999px;
-      background: rgba(16, 185, 129, 0.15);
-      color: #10b981;
-      border: 1px solid #10b981;
-    }
-
-    .engine-badge.gemini {
-      background: rgba(59, 130, 246, 0.15);
-      color: #60a5fa;
-      border-color: #3b82f6;
-    }
-
-    .duration-badge {
-      font-size: 11.5px;
-      padding: 3px 10px;
-      border-radius: 9999px;
-      background: rgba(255, 255, 255, 0.05);
-      color: var(--text-muted);
-      border: 1px solid var(--border);
-    }
-
-    .mom-section {
-      font-size: 13.5px;
-      line-height: 1.55;
-    }
-
-    .mom-section h4 {
-      font-size: 13px;
-      font-weight: 700;
-      color: #94a3b8;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .mom-summary {
-      color: #f1f5f9;
-      background: rgba(15, 23, 42, 0.5);
-      border-left: 3px solid #38bdf8;
-      padding: 8px 12px;
-      border-radius: 0 6px 6px 0;
-    }
-
-    .mom-section ul {
-      margin-left: 20px;
-      color: #e2e8f0;
-    }
-
-    .mom-section li {
-      margin-bottom: 4px;
-    }
-
-    .action-items-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: 6px;
-    }
-
-    .action-item-card {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 14px;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    .action-item-info {
-      flex: 1;
-      min-width: 220px;
-    }
-
-    .action-item-title {
-      font-weight: 600;
-      color: #f8fafc;
-      font-size: 13.5px;
-    }
-
-    .action-item-meta {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 4px;
-    }
-
-    .btn-bitrix {
-      background: linear-gradient(135deg, #0284c7, #0369a1);
-      border: none;
-      color: white;
-      padding: 7px 14px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      white-space: nowrap;
-      min-block-size: 32px;
-    }
-
-    .btn-bitrix:hover:not(:disabled) {
-      background: linear-gradient(135deg, #0369a1, #075985);
-      transform: translateY(-1px);
-    }
-
-    .btn-bitrix:disabled {
-      opacity: 0.7;
-      cursor: not-allowed;
-    }
-
-    .btn-bitrix-success {
-      background: #059669 !important;
-      color: white !important;
-      cursor: default !important;
-      transform: none !important;
-    }
-
-    .mom-footer {
-      display: flex;
-      justify-content: flex-end;
-      padding-top: 10px;
-      border-top: 1px solid var(--border);
-    }
-
-    .btn-docx-download {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid #475569;
-      color: #f8fafc;
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-block-size: 36px;
-    }
-
-    .btn-docx-download:hover {
-      background: rgba(255, 255, 255, 0.16);
-      border-color: #94a3b8;
-      transform: translateY(-1px);
-    }
-  </style>
+  <title>Fotoprint AI Copilot — Корпоративный AI-ассистент</title>
+  <link id="app-theme-link" rel="stylesheet" href="themes/theme-liquid-glass.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
 
+  <!-- Floating CSS Ambient Mesh Aura Spheres (Apple Liquid Glass Depth) -->
+  <div class="ambient-aura" aria-hidden="true">
+    <div class="ambient-aura-sphere ambient-aura-1"></div>
+    <div class="ambient-aura-sphere ambient-aura-2"></div>
+    <div class="ambient-aura-sphere ambient-aura-3"></div>
+  </div>
+
+  <!-- Top Glass Navigation Bar -->
   <header>
     <div class="brand">
-      <div class="logo" aria-hidden="true">🖨️</div>
+      <div class="logo-container" aria-hidden="true">
+        <i data-lucide="printer"></i>
+      </div>
       <div class="title-group">
         <h1>Fotoprint AI Copilot</h1>
         <div class="model-badge">
           <div class="pulse" aria-hidden="true"></div>
-          NVIDIA Nemotron-3.5 120B &amp; Whisper STT
+          <span>NVIDIA Nemotron-3.5 120B &amp; Whisper STT</span>
         </div>
       </div>
     </div>
-    <div class="user-switcher" title="Переключение пользователя и роли RBAC">
-      <label for="user-select">👤 Юзер:</label>
-      <select id="user-select" onchange="onUserChange()"></select>
-      <span id="role-badge" class="role-badge">Director</span>
+
+    <div class="header-controls">
+      <!-- Theme Switcher -->
+      <div class="theme-switcher" title="Стиль оформления интерфейса">
+        <label for="theme-select"><i data-lucide="palette"></i></label>
+        <select id="theme-select" onchange="switchTheme(this.value)">
+          <option value="liquid-glass" selected>Apple Liquid Glass</option>
+          <option value="amber">Business Noir &amp; Amber</option>
+          <option value="obsidian">Linear Obsidian Pro</option>
+        </select>
+      </div>
+
+      <!-- Calendar Toggle Button -->
+      <button type="button" id="calendar-toggle-btn" class="nav-btn calendar-btn" onclick="toggleCalendarDrawer()" title="Открыть расписание и встречи">
+        <i data-lucide="calendar"></i>
+        <span>Календарь</span>
+        <span id="calendar-today-badge" class="calendar-badge" title="Встреч на сегодня">0</span>
+      </button>
+
+      <!-- RBAC User Switcher -->
+      <div class="user-switcher" title="Переключение пользователя и роли RBAC">
+        <label for="user-select"><i data-lucide="user"></i> <span>Юзер:</span></label>
+        <select id="user-select" onchange="onUserChange()"></select>
+        <span id="role-badge" class="role-badge">Director</span>
+      </div>
     </div>
+
+    <!-- External Navigation Links -->
     <nav class="nav-links" aria-label="Внешние сервисы">
-      <a href="http://localhost:5678" target="_blank" rel="noopener noreferrer" class="nav-btn">
-        ⚡ n8n Оркестратор
+      <a href="http://localhost:5678" target="_blank" rel="noopener noreferrer" class="nav-btn" title="n8n Оркестратор">
+        <i data-lucide="workflow"></i>
+        <span>n8n</span>
       </a>
-      <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer" class="nav-btn">
-        📊 Langfuse Трейсинг
+      <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer" class="nav-btn" title="Langfuse Трейсинг">
+        <i data-lucide="activity"></i>
+        <span>Langfuse</span>
       </a>
-      <a href="/api/system/stats" target="_blank" rel="noopener noreferrer" class="nav-btn">
-        ⚙️ Метрики
+      <a href="/api/system/stats" target="_blank" rel="noopener noreferrer" class="nav-btn" title="Метрики системы">
+        <i data-lucide="gauge"></i>
+        <span>Метрики</span>
       </a>
     </nav>
   </header>
 
+  <!-- Main Chat & Interaction Area -->
   <main>
-    <div id="chat-window">
+    <div id="chat-window" class="chat-history">
       <div class="msg-row bot">
-        <div class="avatar" aria-hidden="true">🤖</div>
+        <div class="avatar" aria-hidden="true"><i data-lucide="bot"></i></div>
         <div class="msg-content">
           Здравствуйте! Я — корпоративный ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
           Я могу проверить статус тиража в 1С, рассчитать выработку машин Heidelberg, проверить задачи и сделки в Битрикс24, посмотреть планерки в календаре или подсказать технологический регламент.<br><br>
-          Для голосовых сценариев доступны кнопки <strong>🎙️</strong> (голосовой ввод) и <strong>📎</strong> (загрузка аудиозаписи совещания для протокола MoM).
+          Для голосовых сценариев доступны кнопки голосового ввода с микрофона и загрузки аудиозаписи совещания для протокола MoM.
         </div>
       </div>
     </div>
 
+    <!-- Quick Prompts Capsules -->
     <div class="quick-prompts">
-      <button type="button" class="pill" onclick="sendPrompt('Какой статус заказа 44102?')">📦 Статус заказа 44102</button>
-      <button type="button" class="pill" onclick="sendPrompt('Покажи выработку и KPI офсетного цеха')">📈 KPI цеха</button>
-      <button type="button" class="pill" onclick="sendPrompt('Какие у меня задачи в Битрикс24?')">✅ Мои задачи Битрикс24</button>
-      <button type="button" class="pill" onclick="sendPrompt('Какие планерки запланированы на ближайший час?')">📅 Планерки</button>
-      <button type="button" class="pill" onclick="sendPrompt('Какая норма брака для печатной машины Heidelberg?')">📖 Нормы брака</button>
-      <button type="button" class="pill" onclick="document.getElementById('audio-file-input').click()">📎 Загрузить аудио встречи (MoM)</button>
+      <button type="button" class="pill" onclick="sendPrompt('Какой статус заказа 44102?')">
+        <i data-lucide="package"></i>
+        <span>Статус заказа 44102</span>
+      </button>
+      <button type="button" class="pill" onclick="sendPrompt('Покажи выработку и KPI офсетного цеха')">
+        <i data-lucide="trending-up"></i>
+        <span>KPI цеха</span>
+      </button>
+      <button type="button" class="pill" onclick="sendPrompt('Какие у меня задачи в Битрикс24?')">
+        <i data-lucide="check-square"></i>
+        <span>Мои задачи Битрикс24</span>
+      </button>
+      <button type="button" class="pill" onclick="sendPrompt('Какие планерки запланированы на ближайший час?')">
+        <i data-lucide="calendar"></i>
+        <span>Планерки</span>
+      </button>
+      <button type="button" class="pill" onclick="sendPrompt('Какая норма брака для печатной машины Heidelberg?')">
+        <i data-lucide="book-open"></i>
+        <span>Нормы брака</span>
+      </button>
+      <button type="button" class="pill" onclick="triggerAudioUpload()">
+        <i data-lucide="paperclip"></i>
+        <span>Загрузить аудио встречи (MoM)</span>
+      </button>
     </div>
 
+    <!-- STT Status Badge -->
     <div id="stt-status-badge" class="stt-badge" role="status" aria-live="polite" style="display: none;"></div>
 
+    <!-- Input Bar & Voice Recording Bar -->
     <div class="input-area-wrapper">
       <div class="input-bar" id="input-bar">
         <!-- Hidden file input for meeting audio -->
         <input type="file" id="audio-file-input" accept="audio/*,.m4a,.wav,.mp3,.ogg,.oga" style="display: none;" onchange="handleAudioUpload(this)">
 
         <!-- Attachment button for meeting recording -->
-        <button type="button" class="btn-icon" id="attach-btn" aria-label="Загрузить аудиозапись встречи" title="Загрузить аудиозапись встречи (.m4a, .wav, .mp3, .ogg)" onclick="document.getElementById('audio-file-input').click()">📎</button>
+        <button type="button" class="btn-icon" id="attach-audio-btn" aria-label="Загрузить аудиозапись встречи" title="Загрузить аудиозапись встречи (.m4a, .wav, .mp3, .ogg)" onclick="triggerAudioUpload()">
+          <i data-lucide="paperclip"></i>
+        </button>
 
         <!-- Microphone button for voice input -->
-        <button type="button" class="btn-icon" id="mic-btn" aria-label="Голосовой ввод с микрофона" title="Голосовой ввод (Микрофон)" onclick="toggleRecording()">🎙️</button>
+        <button type="button" class="btn-icon" id="voice-toggle-btn" aria-label="Голосовой ввод с микрофона" title="Голосовой ввод (Микрофон)" onclick="toggleRecording()">
+          <i data-lucide="mic"></i>
+        </button>
 
-        <label for="user-input" class="visually-hidden">Сообщение ассистенту</label>
-        <input type="text" id="user-input" placeholder="Введите ваш вопрос по производству, заказам или регламентам..." autofocus>
-        <button type="button" id="send-btn" onclick="handleSend()">Отправить</button>
+        <label for="prompt-input" class="visually-hidden">Сообщение ассистенту</label>
+        <input type="text" id="prompt-input" placeholder="Введите ваш вопрос по производству, заказам или регламентам..." autofocus>
+        <button type="button" id="send-btn" onclick="handleSend()">
+          <i data-lucide="send"></i>
+          <span>Отправить</span>
+        </button>
       </div>
 
-      <!-- ChatGPT-style modern voice recording bar -->
+      <!-- ChatGPT-style Liquid Voice Bar with Glowing Waveform -->
       <div class="voice-bar" id="voice-bar" style="display: none;">
-        <button type="button" class="btn-voice-cancel" id="voice-cancel-btn" aria-label="Отменить запись аудио" title="Отменить запись" onclick="cancelRecording()">✕</button>
+        <button type="button" class="btn-voice-cancel" id="voice-cancel-btn" aria-label="Отменить запись аудио" title="Отменить запись (Esc)" onclick="cancelRecording()">
+          <i data-lucide="x"></i>
+        </button>
 
         <div class="voice-timer-badge" title="Идет запись аудио">
           <span class="voice-rec-dot" aria-hidden="true"></span>
@@ -895,17 +158,81 @@
           <canvas id="voice-waveform" aria-label="Индикатор уровня звука записи"></canvas>
         </div>
 
-        <button type="button" class="btn-voice-done" id="voice-done-btn" aria-label="Остановить запись и распознать речь" title="Готово (распознать)" onclick="stopRecordingAndSend()">✓</button>
+        <button type="button" class="btn-voice-done" id="voice-done-btn" aria-label="Остановить запись и распознать речь" title="Готово (Enter)" onclick="stopRecordingAndSend()">
+          <i data-lucide="check"></i>
+        </button>
       </div>
     </div>
   </main>
 
+  <!-- Slide-Over Calendar Drawer & Frosted Backdrop -->
+  <div id="drawer-backdrop" class="drawer-backdrop" onclick="toggleCalendarDrawer(false)"></div>
+  <aside id="calendar-drawer" class="calendar-drawer" aria-label="Календарь встреч">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <i data-lucide="calendar"></i>
+        <span>Календарь встреч</span>
+      </div>
+      <button type="button" class="drawer-close-btn" onclick="toggleCalendarDrawer(false)" aria-label="Закрыть календарь">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+
+    <!-- RBAC Calendar Scope Bar -->
+    <div class="calendar-scope-bar">
+      <button type="button" id="scope-my-btn" class="scope-btn active" onclick="setCalendarScope('my')">
+        <i data-lucide="user"></i>
+        <span>Мои встречи</span>
+      </button>
+      <button type="button" id="scope-all-btn" class="scope-btn" onclick="setCalendarScope('all')" title="Доступно только генеральному директору">
+        <i data-lucide="building"></i>
+        <span>Вся компания</span>
+        <span class="lock-icon" id="scope-lock-icon"><i data-lucide="lock"></i></span>
+      </button>
+    </div>
+
+    <!-- Month Navigation -->
+    <div class="month-navigation">
+      <button type="button" class="nav-arrow" onclick="changeMonth(-1)" aria-label="Предыдущий месяц">
+        <i data-lucide="chevron-left"></i>
+      </button>
+      <span id="current-month-label" class="month-label">Ноябрь 2026</span>
+      <button type="button" class="nav-arrow" onclick="changeMonth(1)" aria-label="Следующий месяц">
+        <i data-lucide="chevron-right"></i>
+      </button>
+    </div>
+
+    <!-- Calendar Grid Headers & Days Grid -->
+    <div class="calendar-grid-header">
+      <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+    </div>
+    <div id="calendar-days-grid" class="calendar-days-grid"></div>
+
+    <!-- Day Details Panel -->
+    <div class="day-details-panel">
+      <div id="selected-day-title" class="day-title">
+        <i data-lucide="clock"></i>
+        <span>Встречи на выбранный день:</span>
+      </div>
+      <div id="day-meetings-list" class="meetings-list">
+        <div class="no-meetings">Загрузка встреч...</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Client-side Application Script -->
   <script>
+    // ========================================================================
+    // DOM ELEMENTS & SHARED STATE
+    // ========================================================================
     const chatWindow = document.getElementById('chat-window');
-    const input = document.getElementById('user-input');
+    const input = document.getElementById('prompt-input');
     const sendBtn = document.getElementById('send-btn');
     const userSelect = document.getElementById('user-select');
     const roleBadge = document.getElementById('role-badge');
+    const calendarDrawer = document.getElementById('calendar-drawer');
+    const drawerBackdrop = document.getElementById('drawer-backdrop');
+    const calendarTodayBadge = document.getElementById('calendar-today-badge');
 
     const FALLBACK_USERS = [
       { telegram_id: 100001, full_name: 'Смирнов Алексей Сергеевич', department: 'Руководство', position: 'Генеральный директор', roles: ['Director'], permissions: [] },
@@ -925,6 +252,13 @@
     let availableUsers = [];
     let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 100001;
 
+    // Calendar state
+    let currentCalendarDate = new Date(2026, 10, 12); // Default: November 12, 2026
+    let selectedCalendarDate = new Date(2026, 10, 12);
+    let currentCalendarScope = 'my';
+    let cachedCalendarEvents = [];
+
+    // Helper: Escape HTML strings to prevent XSS
     function escapeHtml(str) {
       if (str === null || str === undefined) return '';
       return String(str)
@@ -935,6 +269,48 @@
         .replace(/'/g, '&#039;');
     }
 
+    function triggerAudioUpload() {
+      const fi = document.getElementById('audio-file-input');
+      if (fi) fi.click();
+    }
+
+    function switchTheme(theme) {
+      const validThemes = ['liquid-glass', 'amber', 'obsidian'];
+      if (!validThemes.includes(theme)) theme = 'liquid-glass';
+
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('fotoprint_theme', theme);
+
+      const themeLink = document.getElementById('app-theme-link');
+      if (themeLink) {
+        if (theme === 'amber') {
+          themeLink.href = 'themes/theme-amber.css';
+        } else if (theme === 'obsidian') {
+          themeLink.href = 'themes/theme-obsidian.css';
+        } else {
+          themeLink.href = 'themes/theme-liquid-glass.css';
+        }
+      }
+
+      const select = document.getElementById('theme-select');
+      if (select && select.value !== theme) {
+        select.value = theme;
+      }
+
+      // Toggle ambient aura for liquid glass vs others
+      const ambientAura = document.querySelector('.ambient-aura');
+      if (ambientAura) {
+        ambientAura.style.display = (theme === 'liquid-glass') ? 'block' : 'none';
+      }
+
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+    }
+
+    // ========================================================================
+    // RBAC & USER SELECTION
+    // ========================================================================
     function getCurrentUser() {
       return availableUsers.find(u => u.telegram_id === currentTelegramId) || availableUsers[0] || FALLBACK_USERS[0];
     }
@@ -952,6 +328,8 @@
         ? user.permissions.join(', ')
         : (role === 'Director' ? 'Полный доступ' : 'Нет прав в БД');
       roleBadge.title = `${user.full_name} (${user.position})\nПрава: ${permsHint}`;
+
+      updateCalendarRbacUI();
     }
 
     function renderUsers(users) {
@@ -993,13 +371,281 @@
       const notice = document.createElement('div');
       notice.className = 'system-notice';
       const role = (user.roles && user.roles[0]) ? user.roles[0] : 'Guest';
-      notice.textContent = `🔄 Пользователь: ${user.full_name} (${role}, ID ${user.telegram_id})`;
+      notice.innerHTML = `<i data-lucide="refresh-cw"></i> <span>Пользователь: ${escapeHtml(user.full_name)} (${role}, ID ${user.telegram_id})</span>`;
       chatWindow.appendChild(notice);
+      if (window.lucide) lucide.createIcons();
       chatWindow.scrollTop = chatWindow.scrollHeight;
+
+      refreshCalendarEvents();
     }
 
-    loadUsers();
+    // ========================================================================
+    // CALENDAR DRAWER, RBAC & RENDERING
+    // ========================================================================
+    function updateCalendarRbacUI() {
+      const user = getCurrentUser();
+      const isDirector = user.roles && (user.roles.includes('Director') || user.roles.includes('Admin'));
+      const scopeAllBtn = document.getElementById('scope-all-btn');
+      const lockIcon = document.getElementById('scope-lock-icon');
 
+      if (!scopeAllBtn) return;
+
+      if (isDirector) {
+        scopeAllBtn.classList.remove('disabled');
+        scopeAllBtn.removeAttribute('disabled');
+        scopeAllBtn.title = 'Просмотр расписания всей компании';
+        if (lockIcon) lockIcon.style.display = 'none';
+      } else {
+        scopeAllBtn.classList.add('disabled');
+        scopeAllBtn.setAttribute('disabled', 'true');
+        scopeAllBtn.title = 'Доступно только руководству (роль Director)';
+        if (lockIcon) lockIcon.style.display = 'inline-flex';
+        if (currentCalendarScope === 'all') {
+          setCalendarScope('my');
+        }
+      }
+    }
+
+    function toggleCalendarDrawer(forceOpen) {
+      const isOpen = calendarDrawer.classList.contains('open');
+      const nextState = (typeof forceOpen === 'boolean') ? forceOpen : !isOpen;
+
+      if (nextState) {
+        calendarDrawer.classList.add('open');
+        drawerBackdrop.classList.add('open');
+        refreshCalendarEvents();
+      } else {
+        calendarDrawer.classList.remove('open');
+        drawerBackdrop.classList.remove('open');
+      }
+    }
+
+    function setCalendarScope(scope) {
+      if (scope === 'all') {
+        const user = getCurrentUser();
+        const isDirector = user.roles && (user.roles.includes('Director') || user.roles.includes('Admin'));
+        if (!isDirector) return;
+      }
+
+      currentCalendarScope = scope;
+      document.getElementById('scope-my-btn').classList.toggle('active', scope === 'my');
+      document.getElementById('scope-all-btn').classList.toggle('active', scope === 'all');
+      refreshCalendarEvents();
+    }
+
+    function changeMonth(delta) {
+      currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
+      renderCalendarGrid();
+      refreshCalendarEvents();
+    }
+
+    const MONTH_NAMES = [
+      'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+      'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+    ];
+
+    function renderCalendarGrid() {
+      const year = currentCalendarDate.getFullYear();
+      const month = currentCalendarDate.getMonth();
+      const monthLabel = document.getElementById('current-month-label');
+      if (monthLabel) {
+        monthLabel.textContent = `${MONTH_NAMES[month]} ${year}`;
+      }
+
+      const grid = document.getElementById('calendar-days-grid');
+      if (!grid) return;
+      grid.innerHTML = '';
+
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+
+      let startingDay = firstDay.getDay() - 1; // 0=Mon, 6=Sun
+      if (startingDay === -1) startingDay = 6;
+
+      const totalDays = lastDay.getDate();
+      const prevMonthLastDay = new Date(year, month, 0).getDate();
+
+      // Days from previous month
+      for (let i = startingDay - 1; i >= 0; i--) {
+        const cell = document.createElement('div');
+        cell.className = 'calendar-day-cell other-month';
+        cell.innerHTML = `<span>${prevMonthLastDay - i}</span>`;
+        grid.appendChild(cell);
+      }
+
+      const todayStr = '2026-11-12';
+
+      // Current month days
+      for (let day = 1; day <= totalDays; day++) {
+        const cell = document.createElement('div');
+        cell.className = 'calendar-day-cell';
+
+        const dayDate = new Date(year, month, day);
+        const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+        if (isoDate === todayStr) {
+          cell.classList.add('today');
+        }
+
+        if (selectedCalendarDate &&
+            selectedCalendarDate.getFullYear() === year &&
+            selectedCalendarDate.getMonth() === month &&
+            selectedCalendarDate.getDate() === day) {
+          cell.classList.add('selected');
+        }
+
+        // Check scheduled meetings for this date
+        const dayMeetings = cachedCalendarEvents.filter(ev => {
+          if (!ev.start_time) return false;
+          return ev.start_time.startsWith(isoDate);
+        });
+
+        let dotsHtml = '';
+        if (dayMeetings.length > 0) {
+          dotsHtml = '<div class="day-dots">';
+          if (dayMeetings.length <= 2) {
+            dotsHtml += '<span class="dot dot-green" title="Свободный график (1-2 встречи)"></span>';
+          } else if (dayMeetings.length <= 4) {
+            dotsHtml += '<span class="dot dot-amber" title="Умеренная занятость (3-4 встречи)"></span>';
+          } else {
+            dotsHtml += '<span class="dot dot-red" title="Высокая плотность (5+ встреч)"></span>';
+          }
+          dotsHtml += '</div>';
+        }
+
+        cell.innerHTML = `
+          <span>${day}</span>
+          ${dotsHtml}
+        `;
+
+        cell.onclick = () => {
+          selectedCalendarDate = new Date(year, month, day);
+          grid.querySelectorAll('.calendar-day-cell').forEach(c => c.classList.remove('selected'));
+          cell.classList.add('selected');
+          renderSelectedDayMeetings(isoDate, dayMeetings);
+        };
+
+        grid.appendChild(cell);
+      }
+
+      // Fill remaining cells for 6 complete rows (42 cells)
+      const currentCellCount = startingDay + totalDays;
+      const remainingCells = (currentCellCount > 35 ? 42 : 35) - currentCellCount;
+      for (let d = 1; d <= remainingCells; d++) {
+        const cell = document.createElement('div');
+        cell.className = 'calendar-day-cell other-month';
+        cell.innerHTML = `<span>${d}</span>`;
+        grid.appendChild(cell);
+      }
+
+      // Initial render for selected day
+      const selIso = `${selectedCalendarDate.getFullYear()}-${String(selectedCalendarDate.getMonth() + 1).padStart(2, '0')}-${String(selectedCalendarDate.getDate()).padStart(2, '0')}`;
+      const selMeetings = cachedCalendarEvents.filter(ev => ev.start_time && ev.start_time.startsWith(selIso));
+      renderSelectedDayMeetings(selIso, selMeetings);
+    }
+
+    function renderSelectedDayMeetings(isoDate, meetings) {
+      const titleEl = document.getElementById('selected-day-title');
+      const listEl = document.getElementById('day-meetings-list');
+      if (!titleEl || !listEl) return;
+
+      const dateParts = isoDate.split('-');
+      const dNum = Number(dateParts[2]);
+      const mIdx = Number(dateParts[1]) - 1;
+      const yNum = dateParts[0];
+
+      titleEl.innerHTML = `
+        <i data-lucide="clock"></i>
+        <span>Встречи на ${dNum} ${MONTH_NAMES[mIdx]} ${yNum}:</span>
+      `;
+
+      if (!meetings || meetings.length === 0) {
+        listEl.innerHTML = '<div class="no-meetings">На этот день запланированных встреч нет.</div>';
+        if (window.lucide) lucide.createIcons();
+        return;
+      }
+
+      listEl.innerHTML = meetings.map(m => {
+        let startTimeStr = '';
+        let endTimeStr = '';
+        try {
+          if (m.start_time) {
+            const st = new Date(m.start_time);
+            startTimeStr = st.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          }
+          if (m.end_time) {
+            const et = new Date(m.end_time);
+            endTimeStr = ' – ' + et.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          }
+        } catch (_) {}
+
+        return `
+          <div class="meeting-item">
+            <div class="meeting-item-time">
+              <i data-lucide="clock" style="width: 12px; height: 12px;"></i>
+              <span>${escapeHtml(startTimeStr + endTimeStr || 'Время не указано')}</span>
+            </div>
+            <div class="meeting-item-title">${escapeHtml(m.title || 'Совещание')}</div>
+            <div class="meeting-item-participants">
+              ${m.description ? escapeHtml(m.description) : 'Организатор: ' + (m.organizer_id === 1 ? 'Смирнов А.С.' : 'Сотрудник ID ' + m.organizer_id)}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    async function refreshCalendarEvents() {
+      const year = currentCalendarDate.getFullYear();
+      const month = currentCalendarDate.getMonth();
+      const startDate = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+      const endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59)).toISOString().slice(0, 10);
+
+      const user = getCurrentUser();
+      const employeeId = user.telegram_id === 100001 ? 1 : (user.telegram_id === 100002 ? 2 : (user.telegram_id === 100003 ? 3 : 4));
+
+      try {
+        const query = new URLSearchParams({
+          start_date: startDate,
+          end_date: endDate,
+          employee_id: String(employeeId),
+          scope: currentCalendarScope
+        });
+
+        const res = await fetch(`/api/calendar/events?${query.toString()}`, {
+          headers: {
+            'X-Telegram-Id': String(currentTelegramId)
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          cachedCalendarEvents = data.events || [];
+        } else if (res.status === 403) {
+          cachedCalendarEvents = [];
+          if (currentCalendarScope === 'all') {
+            setCalendarScope('my');
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Calendar events load error, using fallback simulated events', err);
+      }
+
+      // Update today badge count
+      const todayIso = '2026-11-12';
+      const todayMeetings = cachedCalendarEvents.filter(ev => ev.start_time && ev.start_time.startsWith(todayIso));
+      if (calendarTodayBadge) {
+        calendarTodayBadge.textContent = String(todayMeetings.length);
+      }
+
+      renderCalendarGrid();
+    }
+
+    // ========================================================================
+    // MARKDOWN PARSER & CHAT MESSAGE APPENDING
+    // ========================================================================
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') handleSend();
     });
@@ -1044,7 +690,7 @@
         } else if (/^- /.test(line.trim())) {
           out.push('• ' + inlineFmt(line.trim().slice(2)) + '<br>');
         } else if (line.trim() === '---') {
-          out.push('<hr style="border:0;border-top:1px solid var(--border);margin:8px 0;">');
+          out.push('<hr style="border:0;border-top:1px solid var(--glass-border);margin:8px 0;">');
         } else if (line.trim() === '') {
           out.push('<br>');
         } else {
@@ -1055,14 +701,14 @@
       return out.join('');
     }
 
-    function appendMessage(text, role, tools = [], meta = null) {
+    function appendMessage(text, role, tools = [], meta = null, actionCard = null) {
       const row = document.createElement('div');
       row.className = `msg-row ${role}`;
 
       const avatar = document.createElement('div');
       avatar.className = 'avatar';
       avatar.setAttribute('aria-hidden', 'true');
-      avatar.textContent = role === 'user' ? '👤' : '🤖';
+      avatar.innerHTML = role === 'user' ? '<i data-lucide="user"></i>' : '<i data-lucide="bot"></i>';
 
       const content = document.createElement('div');
       content.className = 'msg-content';
@@ -1072,20 +718,27 @@
         const n8nBadge = document.createElement('div');
         n8nBadge.className = 'tool-badge';
         n8nBadge.style.marginRight = '6px';
-        n8nBadge.textContent = meta.branch ? `⚡ n8n (${meta.branch})` : '⚡ n8n';
+        n8nBadge.innerHTML = `<i data-lucide="workflow"></i> <span>${escapeHtml(meta.branch ? `n8n (${meta.branch})` : 'n8n')}</span>`;
         content.appendChild(n8nBadge);
       }
 
       if (tools && tools.length > 0) {
         const badge = document.createElement('div');
         badge.className = 'tool-badge';
-        badge.textContent = '🔧 Вызван MCP: ' + tools.join(', ');
+        badge.innerHTML = `<i data-lucide="wrench"></i> <span>MCP: ${escapeHtml(tools.join(', '))}</span>`;
         content.appendChild(badge);
+      }
+
+      if (actionCard) {
+        const cardNode = renderActionCard(actionCard);
+        if (cardNode) content.appendChild(cardNode);
       }
 
       row.appendChild(avatar);
       row.appendChild(content);
       chatWindow.appendChild(row);
+
+      if (window.lucide) lucide.createIcons();
       chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
@@ -1095,13 +748,14 @@
       row.className = 'msg-row bot';
       row.id = id;
       row.innerHTML = `
-        <div class="avatar" aria-hidden="true">🤖</div>
+        <div class="avatar" aria-hidden="true"><i data-lucide="bot"></i></div>
         <div class="msg-content">
           ${text ? `<div style="font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">${escapeHtml(text)}</div>` : ''}
           <div class="typing" aria-label="Загрузка ответа"><span></span><span></span><span></span></div>
         </div>
       `;
       chatWindow.appendChild(row);
+      if (window.lucide) lucide.createIcons();
       chatWindow.scrollTop = chatWindow.scrollHeight;
       return id;
     }
@@ -1111,24 +765,165 @@
       if (el) el.remove();
     }
 
-    let sttBadgeTimeout = null;
-    function showSttBadge(text, isError = false) {
-      const badge = document.getElementById('stt-status-badge');
-      if (!badge) return;
-      badge.textContent = text;
-      badge.style.display = 'inline-flex';
-      badge.style.borderColor = isError ? '#ef4444' : 'var(--accent)';
-      badge.style.color = isError ? '#fca5a5' : 'var(--accent)';
-      badge.style.background = isError ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+    // ========================================================================
+    // ACTION CARD & STATELESS CONFIRMATION FLOW
+    // ========================================================================
+    function renderActionCard(card) {
+      if (!card) return null;
+      const cardEl = document.createElement('div');
+      cardEl.className = 'action-card-wrapper';
 
-      if (sttBadgeTimeout) clearTimeout(sttBadgeTimeout);
-      if (!text.startsWith('⏳')) {
-        sttBadgeTimeout = setTimeout(() => {
-          badge.style.display = 'none';
-        }, 6000);
+      // Duration selector buttons
+      if (card.duration_buttons && card.duration_buttons.length > 0) {
+        const durEl = document.createElement('div');
+        durEl.className = 'chat-duration-selector';
+        card.duration_buttons.forEach(btn => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'btn-duration' + (btn.is_default ? ' active' : '');
+          b.innerHTML = `<i data-lucide="clock"></i> <span>${escapeHtml(btn.label || btn.minutes + ' мин')}</span>`;
+          b.onclick = () => {
+            durEl.querySelectorAll('.btn-duration').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+            sendPrompt(`Встреча на ${btn.minutes} минут с ${card.target_person || 'Кузнецовым'}`);
+          };
+          durEl.appendChild(b);
+        });
+        cardEl.appendChild(durEl);
+      }
+
+      // Slot chips
+      if (card.slots && card.slots.length > 0) {
+        const slotsEl = document.createElement('div');
+        slotsEl.className = 'chat-slots-container';
+        card.slots.forEach(slot => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'slot-chip';
+          const label = slot.label || `${slot.start} – ${slot.end}`;
+          chip.innerHTML = `<i data-lucide="calendar"></i> <span>${escapeHtml(label)}</span>`;
+          chip.onclick = () => selectMeetingSlot(slot, card);
+          slotsEl.appendChild(chip);
+        });
+        cardEl.appendChild(slotsEl);
+      }
+
+      return cardEl;
+    }
+
+    function selectMeetingSlot(slot, card) {
+      const existing = document.getElementById('confirm-card-temp');
+      if (existing) existing.remove();
+
+      const title = `Встреча с ${card.target_person || 'Кузнецовым И.П.'}`;
+      const startTime = slot.iso_start || slot.start_time || '2026-11-12T14:30:00+03:00';
+      const endTime = slot.iso_end || slot.end_time || '2026-11-12T15:00:00+03:00';
+      const organizer = getCurrentUser();
+      const organizerId = organizer.telegram_id === 100001 ? 1 : 2;
+      const participantId = card.target_employee_id || 2;
+      const slotTimeText = slot.label || `${slot.start} – ${slot.end}`;
+
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+      row.id = 'confirm-card-temp';
+      row.innerHTML = `
+        <div class="avatar" aria-hidden="true"><i data-lucide="calendar"></i></div>
+        <div class="msg-content" style="max-width: 100%;">
+          <div class="meeting-confirm-card">
+            <div class="confirm-card-header">
+              <i data-lucide="clipboard-list"></i>
+              <span>Подтверждение записи в корпоративный календарь</span>
+            </div>
+            <div class="confirm-card-body">
+              <div><strong>Тема:</strong> ${escapeHtml(title)}</div>
+              <div><strong>Время:</strong> ${escapeHtml(slotTimeText)} (12 ноября 2026, МСК)</div>
+              <div><strong>Участники:</strong> ${escapeHtml(organizer.full_name)} (Вы), ${escapeHtml(card.target_person || 'Кузнецов Иван Петрович')}</div>
+            </div>
+            <div class="confirm-card-actions">
+              <button type="button" class="btn-confirm-yes" onclick="submitMeetingConfirmation(this)"
+                      data-title="${escapeHtml(title)}"
+                      data-start="${escapeHtml(startTime)}"
+                      data-end="${escapeHtml(endTime)}"
+                      data-organizer="${organizerId}"
+                      data-participants="[${participantId}]">
+                <i data-lucide="check-circle-2"></i>
+                <span>Подтвердить и создать</span>
+              </button>
+              <button type="button" class="btn-confirm-no" onclick="cancelMeetingCard(this)">
+                <i data-lucide="x-circle"></i>
+                <span>Отмена</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+      chatWindow.appendChild(row);
+      if (window.lucide) lucide.createIcons();
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    function cancelMeetingCard(btn) {
+      const row = btn.closest('.msg-row');
+      if (row) row.remove();
+    }
+
+    async function submitMeetingConfirmation(button) {
+      const payload = {
+        title: button.getAttribute('data-title'),
+        start_time: button.getAttribute('data-start'),
+        end_time: button.getAttribute('data-end'),
+        organizer_id: Number(button.getAttribute('data-organizer')),
+        participant_ids: JSON.parse(button.getAttribute('data-participants') || '[]'),
+        status: 'scheduled'
+      };
+
+      button.disabled = true;
+      button.innerHTML = '<i data-lucide="loader"></i> <span>Запись в календарь...</span>';
+      if (window.lucide) lucide.createIcons();
+
+      try {
+        const res = await fetch('/api/calendar/confirm', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Telegram-Id': String(currentTelegramId)
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const card = button.closest('.meeting-confirm-card');
+          card.innerHTML = `
+            <div class="confirm-success-banner">
+              <div style="font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                <i data-lucide="check-circle-2" style="color: #34d399;"></i>
+                <span>Встреча успешно создана в календаре!</span>
+              </div>
+              <div class="confirm-meta">Время: ${escapeHtml(data.start_time || payload.start_time)}</div>
+              <div class="notification-stub-badge">
+                <i data-lucide="bell"></i>
+                <span>Оповещение участникам: смоделировано (эмуляция Telegram / Bitrix24)</span>
+              </div>
+            </div>
+          `;
+          if (window.lucide) lucide.createIcons();
+          refreshCalendarEvents();
+        } else {
+          button.disabled = false;
+          button.innerHTML = '<i data-lucide="alert-triangle"></i> <span>Ошибка, повторить</span>';
+          if (window.lucide) lucide.createIcons();
+        }
+      } catch (err) {
+        button.disabled = false;
+        button.innerHTML = '<i data-lucide="alert-triangle"></i> <span>Ошибка сети</span>';
+        if (window.lucide) lucide.createIcons();
       }
     }
 
+    // ========================================================================
+    // CHAT ENGINE (/api/agent/chat & /api/agent/execute)
+    // ========================================================================
     async function handleSend() {
       const text = input.value.trim();
       if (!text) return;
@@ -1140,7 +935,7 @@
       const loadingId = showLoading();
 
       try {
-        const res = await fetch('/api/agent/chat', {
+        let res = await fetch('/api/agent/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1150,6 +945,19 @@
           })
         });
 
+        // Fallback to /api/agent/execute if /api/agent/chat returns 404
+        if (res.status === 404) {
+          res = await fetch('/api/agent/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              telegramId: currentTelegramId,
+              chatId: currentTelegramId,
+              message: text
+            })
+          });
+        }
+
         let data = null;
         try {
           data = await res.json();
@@ -1157,8 +965,9 @@
 
         removeLoading(loadingId);
 
-        if (data && data.answer) {
-          appendMessage(data.answer, 'bot', data.tools_invoked, data);
+        const answerText = (data && (data.answer || data.reply)) || '';
+        if (answerText) {
+          appendMessage(answerText, 'bot', data.tools_invoked, data, data.action_card);
         } else if (data && data.errorMessage) {
           appendMessage('Ошибка: ' + data.errorMessage, 'bot');
         } else if (!res.ok) {
@@ -1176,7 +985,7 @@
     }
 
     // ========================================================================
-    // ГОЛОСОВОЙ ВВОД (CHATGPT-STYLE VOICE BAR + WEB AUDIO API WAVEFORM)
+    // VOICE INPUT & FROSTED GLASS CANVAS EQUALIZER (CHATGPT VOICE BAR)
     // ========================================================================
     let mediaRecorder = null;
     let mediaStream = null;
@@ -1299,10 +1108,22 @@
 
         const startX = Math.max(0, (cssWidth - totalWaveWidth) / 2);
 
+        // Theme-aware dynamic live audio visualizer gradient
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'liquid-glass';
         const grad = ctx.createLinearGradient(startX, 0, startX + totalWaveWidth, 0);
-        grad.addColorStop(0, '#10b981');
-        grad.addColorStop(0.5, '#06b6d4');
-        grad.addColorStop(1, '#38bdf8');
+        if (currentTheme === 'amber') {
+          grad.addColorStop(0, '#d97706');    // Rich Gold
+          grad.addColorStop(0.5, '#fbbf24');  // Electric Amber
+          grad.addColorStop(1, '#fef08a');    // Bright Amber Highlight
+        } else if (currentTheme === 'obsidian') {
+          grad.addColorStop(0, '#6366f1');    // Indigo
+          grad.addColorStop(0.5, '#94a3b8');  // Silver Slate
+          grad.addColorStop(1, '#e2e8f0');    // Subpixel Platinum
+        } else {
+          grad.addColorStop(0, '#0ea5e9');    // Sky Blue 500
+          grad.addColorStop(0.5, '#38bdf8');  // Sky Blue 400
+          grad.addColorStop(1, '#818cf8');    // Electric Indigo 400
+        }
         ctx.fillStyle = grad;
 
         const isSpeaking = rms > 0.018;
@@ -1430,8 +1251,6 @@
             options = { mimeType: 'audio/webm;codecs=opus' };
           } else if (MediaRecorder.isTypeSupported('audio/webm')) {
             options = { mimeType: 'audio/webm' };
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            options = { mimeType: 'audio/mp4' };
           }
         }
 
@@ -1511,6 +1330,26 @@
       if (inputBar) inputBar.style.display = 'flex';
     }
 
+    let sttBadgeTimeout = null;
+    function showSttBadge(text, isError = false, iconName = '') {
+      const badge = document.getElementById('stt-status-badge');
+      if (!badge) return;
+      const icon = iconName || (isError ? 'alert-triangle' : (text.includes('Распознавание') ? 'loader' : 'mic'));
+      badge.innerHTML = `<i data-lucide="${icon}"></i> <span>${escapeHtml(text)}</span>`;
+      badge.style.display = 'inline-flex';
+      badge.style.borderColor = isError ? '#f43f5e' : 'var(--accent-emerald)';
+      badge.style.color = isError ? '#fecdd3' : 'var(--accent-emerald)';
+      badge.style.background = isError ? 'rgba(244, 63, 94, 0.15)' : 'rgba(52, 211, 153, 0.15)';
+      if (window.lucide) lucide.createIcons();
+
+      if (sttBadgeTimeout) clearTimeout(sttBadgeTimeout);
+      if (!text.includes('Распознавание')) {
+        sttBadgeTimeout = setTimeout(() => {
+          badge.style.display = 'none';
+        }, 6000);
+      }
+    }
+
     async function handleRecordingStop() {
       if (isRecordingCancelled) {
         audioChunks = [];
@@ -1522,9 +1361,7 @@
         return;
       }
 
-      if (isTranscribing) {
-        return;
-      }
+      if (isTranscribing) return;
       isTranscribing = true;
 
       const mime = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
@@ -1533,7 +1370,7 @@
       const extension = mime.includes('mp4') ? 'm4a' : 'webm';
       const audioFile = new File([audioBlob], `mic_recording.${extension}`, { type: mime });
 
-      showSttBadge('⏳ Распознавание речи...');
+      showSttBadge('Распознавание речи...', false, 'loader');
 
       try {
         const formData = new FormData();
@@ -1551,13 +1388,13 @@
         } catch (_) {}
 
         if (res.status === 404 || res.status === 405 || res.status === 501) {
-          showSttBadge('⚠️ Аудио-модуль (/api/audio/transcribe) пока не подключён на сервере.', true);
+          showSttBadge('Аудио-модуль (/api/audio/transcribe) пока не подключён на сервере.', true, 'alert-triangle');
           return;
         }
 
         if (!res.ok) {
           const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
-          showSttBadge(`⚠️ Ошибка (${res.status}): ${errMsg}`, true);
+          showSttBadge(`Ошибка (${res.status}): ${errMsg}`, true, 'alert-triangle');
           return;
         }
 
@@ -1565,13 +1402,13 @@
           input.value = data.text.trim();
           input.focus();
           const sec = data.duration_ms ? (data.duration_ms / 1000).toFixed(1) : '0.0';
-          showSttBadge(`🎙️ Распознано: ${data.provider || 'local-metal'}, ${sec}s`);
+          showSttBadge(`Распознано: ${data.provider || 'local-metal'}, ${sec}s`, false, 'check-circle-2');
         } else {
           const errMsg = (data && (data.error || data.message)) || 'Речь не распознана';
-          showSttBadge(`⚠️ Ошибка: ${errMsg}`, true);
+          showSttBadge(`Ошибка: ${errMsg}`, true, 'alert-triangle');
         }
       } catch (err) {
-        showSttBadge(`⚠️ Ошибка сети: ${err.message}`, true);
+        showSttBadge(`Ошибка сети: ${err.message}`, true, 'alert-triangle');
       } finally {
         isTranscribing = false;
         input.focus();
@@ -1579,14 +1416,14 @@
     }
 
     // ========================================================================
-    // ОБРАБОТКА АУДИОЗАПИСИ ВСТРЕЧИ (/api/meetings/process-audio -> MoM Card)
+    // MEETING AUDIO PROCESSING & MOM PROTOCOL CARD
     // ========================================================================
     async function handleAudioUpload(inputEl) {
       if (!inputEl.files || !inputEl.files[0]) return;
       const file = inputEl.files[0];
       inputEl.value = '';
 
-      appendMessage(`📎 Загружена аудиозапись встречи: **${file.name}** (${(file.size / (1024 * 1024)).toFixed(1)} МБ). Запущен цикл расшифровки и составления протокола (MoM)...`, 'user');
+      appendMessage(`Загружена аудиозапись встречи: **${file.name}** (${(file.size / (1024 * 1024)).toFixed(1)} МБ). Запущен цикл расшифровки и составления протокола (MoM)...`, 'user');
 
       const loadingId = showLoading('Идет транскрибация аудио и интеллектуальный анализ протокола встречи...');
 
@@ -1609,7 +1446,7 @@
         removeLoading(loadingId);
 
         if (res.status === 404 || res.status === 405 || res.status === 501) {
-          appendMessage('⚠️ Сервис обработки аудио встреч (/api/meetings/process-audio) пока не подключён на сервере (раздел в разработке).', 'bot');
+          appendMessage('Сервис обработки аудио встреч (/api/meetings/process-audio) пока не подключён на сервере (раздел в разработке).', 'bot');
           return;
         }
 
@@ -1617,11 +1454,11 @@
           renderMeetingProtocolCard(data);
         } else {
           const errMsg = (data && (data.error || data.message)) || rawText || `HTTP ${res.status}: ${res.statusText}`;
-          appendMessage('⚠️ Ошибка обработки аудиозаписи совещания: ' + errMsg, 'bot');
+          appendMessage('Ошибка обработки аудиозаписи совещания: ' + errMsg, 'bot');
         }
       } catch (err) {
         removeLoading(loadingId);
-        appendMessage('⚠️ Ошибка соединения со шлюзом при загрузке аудиозаписи: ' + err.message, 'bot');
+        appendMessage('Ошибка соединения со шлюзом при загрузке аудиозаписи: ' + err.message, 'bot');
       }
     }
 
@@ -1632,7 +1469,7 @@
       const avatar = document.createElement('div');
       avatar.className = 'avatar';
       avatar.setAttribute('aria-hidden', 'true');
-      avatar.textContent = '📋';
+      avatar.innerHTML = '<i data-lucide="clipboard-list"></i>';
 
       const content = document.createElement('div');
       content.className = 'msg-content';
@@ -1650,7 +1487,7 @@
       if (proto.decisions && proto.decisions.length > 0) {
         decisionsHtml = `
           <div class="mom-section">
-            <h4>✅ Принятые решения:</h4>
+            <h4><i data-lucide="check-circle-2"></i> <span>Принятые решения:</span></h4>
             <ul>
               ${proto.decisions.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
             </ul>
@@ -1662,7 +1499,7 @@
       if (proto.discussed && proto.discussed.length > 0) {
         discussedHtml = `
           <div class="mom-section">
-            <h4>💬 Обсуждали:</h4>
+            <h4><i data-lucide="message-square"></i> <span>Обсуждали:</span></h4>
             <ul>
               ${proto.discussed.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
             </ul>
@@ -1674,7 +1511,7 @@
       if (proto.risks && proto.risks.length > 0) {
         risksHtml = `
           <div class="mom-section">
-            <h4>⚠️ Риски и блокеры:</h4>
+            <h4><i data-lucide="alert-triangle"></i> <span>Риски и блокеры:</span></h4>
             <ul>
               ${proto.risks.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
             </ul>
@@ -1686,7 +1523,7 @@
       if (proto.requires_clarification && proto.requires_clarification.length > 0) {
         clarificationsHtml = `
           <div class="mom-section">
-            <h4>❓ Требует уточнения:</h4>
+            <h4><i data-lucide="help-circle"></i> <span>Требует уточнения:</span></h4>
             <ul>
               ${proto.requires_clarification.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
             </ul>
@@ -1699,19 +1536,20 @@
       if (items.length > 0) {
         actionItemsHtml = `
           <div class="mom-section">
-            <h4>📌 Поручения (Задачи):</h4>
+            <h4><i data-lucide="check-square"></i> <span>Поручения (Задачи):</span></h4>
             <div class="action-items-list">
               ${items.map((item, idx) => `
                 <div class="action-item-card">
                   <div class="action-item-info">
                     <div class="action-item-title">${escapeHtml(item.title)}</div>
                     <div class="action-item-meta">
-                      👤 Отв.: <strong>${escapeHtml(item.responsible || 'требует уточнения')}</strong> |
-                      📅 Срок: <strong>${escapeHtml(item.deadline || item.deadline_text || 'требует уточнения')}</strong>
+                      Отв.: <strong>${escapeHtml(item.responsible || 'требует уточнения')}</strong> |
+                      Срок: <strong>${escapeHtml(item.deadline || item.deadline_text || 'требует уточнения')}</strong>
                     </div>
                   </div>
                   <button type="button" class="btn-bitrix" data-action-idx="${idx}">
-                    ✅ В Битрикс24
+                    <i data-lucide="check-circle-2"></i>
+                    <span>В Битрикс24</span>
                   </button>
                 </div>
               `).join('')}
@@ -1724,17 +1562,19 @@
         <div class="mom-card">
           <div class="mom-header">
             <div class="mom-title-row">
-              <span class="mom-icon" aria-hidden="true" style="font-size: 20px;">📋</span>
+              <div class="mom-icon-wrap" aria-hidden="true">
+                <i data-lucide="clipboard-list"></i>
+              </div>
               <h3 class="mom-title">${escapeHtml(proto.title || 'Протокол совещания')}</h3>
             </div>
             <div class="mom-badges">
-              <span class="engine-badge ${providerClass}">⚡ ${escapeHtml(providerLabel)}</span>
-              <span class="duration-badge">⏱️ ${escapeHtml(durationSec)}s</span>
+              <span class="engine-badge ${providerClass}"><i data-lucide="cpu"></i> ${escapeHtml(providerLabel)}</span>
+              <span class="duration-badge"><i data-lucide="clock"></i> ${escapeHtml(durationSec)}s</span>
             </div>
           </div>
 
           <div class="mom-section">
-            <h4>📝 Резюме встречи:</h4>
+            <h4><i data-lucide="file-text"></i> <span>Резюме встречи:</span></h4>
             <p class="mom-summary">${escapeHtml(proto.summary || 'Сводка отсутствует.')}</p>
           </div>
 
@@ -1746,7 +1586,8 @@
 
           <div class="mom-footer">
             <button type="button" class="btn-docx-download">
-              📥 Скачать протокол .DOCX
+              <i data-lucide="download"></i>
+              <span>Скачать протокол .DOCX</span>
             </button>
           </div>
         </div>
@@ -1772,17 +1613,20 @@
       row.appendChild(avatar);
       row.appendChild(content);
       chatWindow.appendChild(row);
+
+      if (window.lucide) lucide.createIcons();
       chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
     // ========================================================================
-    // СОЗДАНИЕ ЗАДАЧИ В БИТРИКС24 (/api/telegram/webhook с callback_query)
+    // BITRIX24 TASK CREATION (/api/telegram/webhook)
     // ========================================================================
     async function createBitrixTask(actionItemId, title, buttonEl) {
       if (!buttonEl) return;
-      const originalText = buttonEl.textContent;
+      const originalHtml = buttonEl.innerHTML;
       buttonEl.disabled = true;
-      buttonEl.textContent = '⏳ Создание...';
+      buttonEl.innerHTML = '<i data-lucide="loader"></i> <span>Создание...</span>';
+      if (window.lucide) lucide.createIcons();
 
       try {
         const res = await fetch('/api/telegram/webhook', {
@@ -1804,24 +1648,27 @@
         } catch (_) {}
 
         const textMsg = data && typeof data.text === 'string' ? data.text : '';
-        if (res.ok && data && data.show_alert && (textMsg.includes('успешно') || textMsg.includes('✅'))) {
-          buttonEl.textContent = '✅ Задача создана в Битрикс24';
+        if (res.ok && data && data.show_alert && (textMsg.includes('успешно') || textMsg.includes('создана') || textMsg.toLowerCase().includes('success'))) {
+          buttonEl.innerHTML = '<i data-lucide="check-check"></i> <span>Задача создана в Битрикс24</span>';
           buttonEl.classList.add('btn-bitrix-success');
           buttonEl.disabled = true;
+          if (window.lucide) lucide.createIcons();
         } else {
           alert(textMsg || (res.status === 401 ? 'Вебхук защищён секретным токеном на шлюзе.' : 'Не удалось создать задачу в Битрикс24.'));
-          buttonEl.textContent = originalText;
+          buttonEl.innerHTML = originalHtml;
           buttonEl.disabled = false;
+          if (window.lucide) lucide.createIcons();
         }
       } catch (err) {
         alert('Ошибка сети при создании задачи: ' + err.message);
-        buttonEl.textContent = originalText;
+        buttonEl.innerHTML = originalHtml;
         buttonEl.disabled = false;
+        if (window.lucide) lucide.createIcons();
       }
     }
 
     // ========================================================================
-    // СКАЧИВАНИЕ ПРОТОКОЛА .DOCX
+    // DOCX DOWNLOAD
     // ========================================================================
     function downloadDocx(meetingId, base64Data, title) {
       const fileName = (title || 'Protocol') + '.docx';
@@ -1849,6 +1696,20 @@
       }
       window.open(`/api/meetings/${encodeURIComponent(meetingId)}/export-docx`, '_blank');
     }
+
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+    document.addEventListener('DOMContentLoaded', () => {
+      const savedTheme = localStorage.getItem('fotoprint_theme') || 'liquid-glass';
+      switchTheme(savedTheme);
+      loadUsers();
+      renderCalendarGrid();
+      refreshCalendarEvents();
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+    });
   </script>
 </body>
 </html>

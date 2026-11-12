@@ -577,8 +577,8 @@
     async function refreshCalendarEvents() {
       const year = currentCalendarDate.getFullYear();
       const month = currentCalendarDate.getMonth();
-      const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-      const endDate = `${year}-${String(month + 1).padStart(2, '0')}-31`;
+      const startDate = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+      const endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59)).toISOString().slice(0, 10);
 
       const user = getCurrentUser();
       const employeeId = user.telegram_id === 100001 ? 1 : (user.telegram_id === 100002 ? 2 : (user.telegram_id === 100003 ? 3 : 4));
