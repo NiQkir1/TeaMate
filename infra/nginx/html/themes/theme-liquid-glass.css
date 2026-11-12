@@ -1883,7 +1883,7 @@ main:not(.cal-main-area) {
 #cal-drag-create-popover {
   position: fixed;
   z-index: 1050;
-  width: 340px;
+  width: 384px;
   max-width: calc(100vw - 24px);
   background: var(--cal-popover-bg);
   backdrop-filter: var(--cal-popover-blur);
@@ -2009,12 +2009,55 @@ main:not(.cal-main-area) {
   color: var(--text-muted);
 }
 
-/* Compact Time Row */
+/* Compact Time Row (Task 021B) */
+.cal-drag-time-row,
 #cal-drag-create-popover .drag-create-time-row,
 #cal-drag-create-popover .cal-drag-time-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cal-drag-time-row input[type="date"],
+#cal-drag-create-popover .cal-drag-time-row input[type="date"],
+#cal-drag-create-popover input#drag-create-date {
+  flex: 1.35;
+  width: auto;
+  min-width: 0;
+  padding: 7px 6px;
+  font-size: 12.5px;
+  box-sizing: border-box;
+}
+
+.cal-drag-time-row input[type="time"],
+#cal-drag-create-popover .cal-drag-time-row input[type="time"],
+#cal-drag-create-popover input#drag-create-start,
+#cal-drag-create-popover input#drag-create-end {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding: 7px 6px;
+  font-size: 12.5px;
+  box-sizing: border-box;
+}
+
+.cal-drag-time-sep,
+#cal-drag-create-popover .cal-drag-time-sep,
+#cal-drag-create-popover .drag-create-sep {
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.cal-drag-time-row input[type="date"]::-webkit-calendar-picker-indicator,
+.cal-drag-time-row input[type="time"]::-webkit-calendar-picker-indicator,
+#cal-drag-create-popover .cal-drag-time-row input[type="date"]::-webkit-calendar-picker-indicator,
+#cal-drag-create-popover .cal-drag-time-row input[type="time"]::-webkit-calendar-picker-indicator {
+  margin: 0;
+  cursor: pointer;
 }
 
 #cal-drag-create-popover .drag-create-time-range {
@@ -2022,11 +2065,7 @@ main:not(.cal-main-area) {
   align-items: center;
   gap: 6px;
   flex: 1;
-}
-
-#cal-drag-create-popover .drag-create-sep {
-  color: var(--text-muted);
-  font-weight: 500;
+  min-width: 0;
 }
 
 /* Participants (Field 4 — Bottom Section) */
