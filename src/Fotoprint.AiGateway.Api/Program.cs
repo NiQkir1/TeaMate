@@ -1682,8 +1682,14 @@ app.MapPost("/api/meetings/save-and-index", async (
             ct: ct);
     }
 
+    var moscowStart = startTime.Kind == DateTimeKind.Utc ? startTime.AddHours(3) : startTime;
     var ragContent = new StringBuilder();
-    ragContent.AppendLine($"Созвон: {effectiveTitle} ({startTime:yyyy-MM-dd HH:mm})");
+    ragContent.AppendLine($"Созвон: {effectiveTitle} ({moscowStart:dd.MM.yyyy HH:mm} MSK)");
+    ragContent.AppendLine($"Дата созвона: {moscowStart:yyyy-MM-dd}");
+    if (participantEmployees.Count > 0)
+    {
+        ragContent.AppendLine("Участники: " + string.Join(", ", participantEmployees.Select(e => e.FullName)));
+    }
     ragContent.AppendLine($"Саммари: {req.Summary}");
     if (decisions.Count > 0)
     {
@@ -1831,8 +1837,42 @@ app.MapPost("/api/meetings/rag-search", async (
     var startSpan = DateTime.UtcNow;
     var searchMode = "text_fallback";
     List<CorporateDocumentChunk> matchedChunks = new();
+    var parsedQuery = MeetingSearchQueryParser.Parse(req.Query);
 
-    if (embeddingClient.IsConfigured && !FotoprintRepository.IsGeneralCatalogQuery(req.Query))
+    if (parsedQuery.TargetDate.HasValue)
+    {
+        if (parsedQuery.HasTopicTokens && embeddingClient.IsConfigured && !FotoprintRepository.IsGeneralCatalogQuery(req.Query))
+        {
+            var queryVector = await embeddingClient.EmbedTextAsync(req.Query, "RETRIEVAL_QUERY", ct);
+            if (queryVector != null)
+            {
+                matchedChunks = await repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, parsedQuery.TargetDate, req.TopK, ct);
+                if (matchedChunks.Count > 0)
+                {
+                    searchMode = "vector_date";
+                }
+            }
+        }
+
+        if (matchedChunks.Count == 0)
+        {
+            matchedChunks = await repo.SearchMeetingsByFilterAsync(meetingAccessGroups, parsedQuery.TargetDate, req.TopK, ct);
+            if (matchedChunks.Count > 0)
+            {
+                searchMode = "date_filter";
+            }
+        }
+    }
+    else if (parsedQuery.PreferLatest && !parsedQuery.HasTopicTokens)
+    {
+        matchedChunks = await repo.SearchMeetingsByFilterAsync(meetingAccessGroups, null, req.TopK, ct);
+        if (matchedChunks.Count > 0)
+        {
+            searchMode = "latest_meeting";
+        }
+    }
+
+    if (matchedChunks.Count == 0 && embeddingClient.IsConfigured && !FotoprintRepository.IsGeneralCatalogQuery(req.Query))
     {
         var queryVector = await embeddingClient.EmbedTextAsync(req.Query, "RETRIEVAL_QUERY", ct);
         if (queryVector != null)
@@ -1847,8 +1887,11 @@ app.MapPost("/api/meetings/rag-search", async (
 
     if (matchedChunks.Count == 0)
     {
-        matchedChunks = await repo.SearchMeetingTextChunksAsync(req.Query, meetingAccessGroups, req.TopK, ct);
-        searchMode = "text_fallback";
+        matchedChunks = await repo.SearchMeetingTextChunksAsync(req.Query, meetingAccessGroups, parsedQuery.TargetDate, req.TopK, ct);
+        if (matchedChunks.Count > 0)
+        {
+            searchMode = "text_fallback";
+        }
     }
     var endSpan = DateTime.UtcNow;
 
