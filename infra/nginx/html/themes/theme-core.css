@@ -888,6 +888,7 @@
   border-bottom: 1px solid var(--cal-border);
   display: flex;
   background: var(--cal-bg-toolbar);
+  padding-right: var(--cal-scrollbar-width, 0px);
   box-sizing: border-box;
 }
 
@@ -901,12 +902,14 @@
   font-size: 11px;
   font-weight: 600;
   color: var(--cal-text-dim);
+  box-sizing: border-box;
 }
 
 .cal-week-columns-header {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(var(--cal-grid-cols, 7), minmax(0, 1fr));
+  box-sizing: border-box;
 }
 
 .cal-day-header-col {
@@ -918,10 +921,11 @@
   padding: 4px 0;
   cursor: pointer;
   transition: background 0.12s ease;
+  box-sizing: border-box;
 }
 
 .cal-day-header-col:last-child {
-  border-right: none;
+  border-right: none !important;
 }
 
 .cal-day-header-col:hover {
@@ -959,6 +963,8 @@
   border-bottom: 1px solid var(--cal-border);
   display: flex;
   background: var(--cal-bg-sidebar);
+  padding-right: var(--cal-scrollbar-width, 0px);
+  box-sizing: border-box;
 }
 
 .cal-allday-gutter {
@@ -973,12 +979,14 @@
   justify-content: center;
   text-align: center;
   padding: 4px;
+  box-sizing: border-box;
 }
 
 .cal-allday-cells-container {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(var(--cal-grid-cols, 7), minmax(0, 1fr));
+  box-sizing: border-box;
 }
 
 .cal-allday-cell {
@@ -987,10 +995,11 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  box-sizing: border-box;
 }
 
 .cal-allday-cell:last-child {
-  border-right: none;
+  border-right: none !important;
 }
 
 /* Scrollable 24-Hour Vertical Time-Grid (.cal-timegrid-scroll) */
@@ -998,6 +1007,7 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   display: flex;
   position: relative;
 }
@@ -1064,7 +1074,7 @@
 }
 
 .cal-day-col:last-child {
-  border-right: none;
+  border-right: none !important;
 }
 
 /* Hairline Grid Lines inside Columns */
@@ -1772,7 +1782,7 @@
 /* Floating Anchored Creation Popover (#cal-drag-create-popover) */
 #cal-drag-create-popover {
   position: fixed;
-  width: 340px;
+  width: 384px;
   max-width: calc(100vw - 24px);
   background: var(--cal-popover-bg, #1a1a1a);
   border: 1px solid var(--cal-popover-border, rgba(255, 255, 255, 0.12));
@@ -1890,19 +1900,28 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
 }
-
 .cal-drag-time-row input[type="date"] {
-  flex: 1.25;
+  flex: 1.35;
+  min-width: 0;
+  padding: 7px 6px;
+  font-size: 12.5px;
+  box-sizing: border-box;
 }
-
 .cal-drag-time-row input[type="time"] {
   flex: 1;
+  min-width: 0;
+  padding: 7px 6px;
+  font-size: 12.5px;
+  box-sizing: border-box;
 }
-
 .cal-drag-time-sep {
-  color: var(--cal-text-muted);
+  font-size: 13px;
   font-weight: 600;
+  flex-shrink: 0;
+  color: var(--cal-text-muted);
 }
 
 .cal-drag-label {
