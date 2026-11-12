@@ -10,15 +10,15 @@
 | `018B` | Frontend Smart Tokenized FIO/Role Search, Clear `✕` & Autocomplete UI | Frontend Calendar & Search Developer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-018` | `[To Do — Parallel with 018A, 018C]` |
 | `018C` | Multi-Theme Styling for Employee Search, Chips, Dropdown & `<mark>` Highlights | UI Theme & Styling Specialist (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-018` | `[To Do — Parallel with 018A, 018B]` |
 | `QA-018` | Comprehensive QA & 1,000-User Scale Test of Smart Employee Search | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `018A–018C` | `[To Do — Depends on 018A, 018B, 018C]` |
-| `019A` | Implement Calendar Views (`Day`, `Month`, `Year`) & Fix `#cal-view-select` | Frontend Calendar Developer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-019` | `[To Do — Parallel with 019B]` |
-| `019B` | Multi-Theme Styling for `Day`, `Month`, and `Year` Views | UI Theme & Styling Specialist (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-019` | `[To Do — Parallel with 019A]` |
-| `QA-019` | Playwright & Multi-Theme QA Verification of `Day`, `Week`, `Month`, `Year` Views | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `019A–019B` | `[To Do — Depends on 019A, 019B]` |
+| `019A` | Implement Calendar Views (`Day`, `Month`, `Year`) & Fix `#cal-view-select` | Frontend Calendar Developer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-019` | `[Completed - Merged]` |
+| `019B` | Multi-Theme Styling for `Day`, `Month`, and `Year` Views | UI Theme & Styling Specialist (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-019` | `[Completed - Merged]` |
+| `QA-019` | Playwright & Multi-Theme QA Verification of `Day`, `Week`, `Month`, `Year` Views | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `019A–019B` | `[Completed - Verified]` |
 | `020A` | Capture Live UI Screenshots & Generate Mermaid/AntV Diagrams & Charts | Visual Assets Specialist (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-020` | `[To Do]` |
 | `020B` | Build 9-Slide Interactive HTML Presentation & 1920×1080 PDF (`frontend-slides`) | Frontend Presentation Developer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-020` | `[To Do — Depends on 020A, Parallel with 020C]` |
 | `020C` | Build 9-Slide Native Editable `.pptx` Deck (`pptx` + `ppt-design-skill`) | PowerPoint Deck Developer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-020` | `[To Do — Depends on 020A, Parallel with 020B]` |
 | `QA-020` | Visual, OOXML & ТЗ Content Audit of Startup Presentation | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `020A–020C` | `[To Do — Depends on 020B, 020C]` |
-| `021A` | Fix Time-Grid / Header Column Misalignment & Cumulative Drift | Frontend Layout Engineer (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-021` | `[To Do — Ready for dispatch]` |
-| `021B` | Fix Drag-to-Create Popover Time Row Width & Overflow Defect | UI Theme & Styling Specialist (`coder-worker`) | `feature/ticktick-calendar-ui` | `QA-021` | `[To Do — Ready for dispatch]` |
+| `021A` | Fix Time-Grid / Header Column Misalignment & Cumulative Drift | Frontend Layout Engineer (`coder-worker`) | `worktree: 4901a744` | `QA-021` | `[In Progress: Worktree 4901a744]` |
+| `021B` | Fix Drag-to-Create Popover Time Row Width & Overflow Defect | UI Theme & Styling Specialist (`coder-worker`) | `worktree: 13a01efd` | `QA-021` | `[In Progress: Worktree 13a01efd]` |
 | `QA-021` | QA Verification for Timegrid Column Alignment and Popover Overflow | QA Verifier (`qa-worker`) | `feature/ticktick-calendar-ui` | Audits `021A–021B` | `[To Do — Depends on 021A, 021B]` |
 
 ---
