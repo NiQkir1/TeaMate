@@ -84,5 +84,34 @@ public class DocumentParserAndProtocolTests
         Assert.Contains("Полная стенограмма созвона", html);
         Assert.Contains("Алексей: Коллеги, начинаем.", html);
     }
+
+    [Fact]
+    public void MeetingProtocolGenerator_Encodes_Html_Special_Characters_Against_Xss()
+    {
+        var generator = new MeetingProtocolGenerator();
+        var data = new ProtocolExportData(
+            Title: "<script>alert('title')</script>",
+            MeetingDate: DateTime.UtcNow,
+            OrganizerName: "<b>Иван</b>",
+            Participants: new List<string> { "<img src=x onerror=alert(1)>" },
+            Summary: "<script>alert('summary')</script>",
+            Decisions: new List<string> { "<svg onload=alert('decision')>" },
+            ActionItems: new List<ActionItemExportData>
+            {
+                new("<script>alert('task')</script>", "<a href='javascript:alert(1)'>Борис</a>", DateTime.UtcNow, "<script>status</script>")
+            },
+            RawTranscript: "<script>alert('raw')</script>"
+        );
+
+        var html = generator.GenerateHtml(data);
+
+        Assert.DoesNotContain("<script>", html);
+        Assert.DoesNotContain("<img src=x", html);
+        Assert.DoesNotContain("<svg onload=", html);
+        Assert.Contains("&lt;script&gt;alert(&#39;title&#39;)&lt;/script&gt;", html);
+        Assert.Contains("&lt;script&gt;alert(&#39;summary&#39;)&lt;/script&gt;", html);
+        Assert.Contains("&lt;svg onload=alert(&#39;decision&#39;)&gt;", html);
+        Assert.Contains("&lt;script&gt;alert(&#39;task&#39;)&lt;/script&gt;", html);
+    }
 }
 

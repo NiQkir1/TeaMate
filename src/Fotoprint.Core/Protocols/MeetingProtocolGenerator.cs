@@ -160,21 +160,26 @@ public class MeetingProtocolGenerator : IMeetingProtocolGenerator
         sb.AppendLine(".badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 12px; background: #e2e8f0; }");
         sb.AppendLine("</style></head><body>");
 
-        sb.AppendLine($"<h1>Протокол встречи: {data.Title}</h1>");
+        var encTitle = System.Net.WebUtility.HtmlEncode(data.Title);
+        var encOrganizer = System.Net.WebUtility.HtmlEncode(data.OrganizerName);
+        var encParticipants = System.Net.WebUtility.HtmlEncode(string.Join(", ", data.Participants));
+        var encSummary = System.Net.WebUtility.HtmlEncode(data.Summary);
+
+        sb.AppendLine($"<h1>Протокол встречи: {encTitle}</h1>");
         sb.AppendLine("<div class=\"meta\">");
         sb.AppendLine($"<p><b>Дата:</b> {data.MeetingDate:dd.MM.yyyy HH:mm} (МСК)</p>");
-        sb.AppendLine($"<p><b>Организатор:</b> {data.OrganizerName}</p>");
-        sb.AppendLine($"<p><b>Присутствовали:</b> {string.Join(", ", data.Participants)}</p>");
+        sb.AppendLine($"<p><b>Организатор:</b> {encOrganizer}</p>");
+        sb.AppendLine($"<p><b>Присутствовали:</b> {encParticipants}</p>");
         sb.AppendLine("</div>");
 
         sb.AppendLine("<h2>1. Краткие итоги и обсуждение</h2>");
-        sb.AppendLine($"<p>{data.Summary}</p>");
+        sb.AppendLine($"<p>{encSummary}</p>");
 
         sb.AppendLine("<h2>2. Принятые решения</h2>");
         sb.AppendLine("<ol>");
         foreach (var dec in data.Decisions)
         {
-            sb.AppendLine($"<li>{dec}</li>");
+            sb.AppendLine($"<li>{System.Net.WebUtility.HtmlEncode(dec)}</li>");
         }
         sb.AppendLine("</ol>");
 
@@ -189,7 +194,7 @@ public class MeetingProtocolGenerator : IMeetingProtocolGenerator
                 ? "требует уточнения"
                 : item.ResponsibleName;
             var deadlineText = item.Deadline?.ToString("dd.MM.yyyy") ?? "требует уточнения";
-            sb.AppendLine($"<tr><td>{i + 1}</td><td>{item.Title}</td><td>{responsibleText}</td><td>{deadlineText}</td><td><span class=\"badge\">{item.Status}</span></td></tr>");
+            sb.AppendLine($"<tr><td>{i + 1}</td><td>{System.Net.WebUtility.HtmlEncode(item.Title)}</td><td>{System.Net.WebUtility.HtmlEncode(responsibleText)}</td><td>{System.Net.WebUtility.HtmlEncode(deadlineText)}</td><td><span class=\"badge\">{System.Net.WebUtility.HtmlEncode(item.Status)}</span></td></tr>");
         }
         sb.AppendLine("</tbody></table>");
 

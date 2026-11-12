@@ -1,9 +1,18 @@
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+
+_SAFE_TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?Z?$")
+
+
+def safe_ts(val: str | None) -> str:
+    if not val or not _SAFE_TS_RE.match(str(val)):
+        raise ValueError(f"Invalid watermark timestamp format: {val!r}")
+    return str(val)
 
 CLICKHOUSE_URL = os.environ.get("CLICKHOUSE_URL", "http://clickhouse:8123")
 CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "clickhouse")
@@ -79,7 +88,7 @@ def sync_once(watermarks: dict[str, str]) -> None:
         streams.setdefault(key, []).append([to_ns(ts_str), json.dumps(obj, ensure_ascii=False)])
 
     # 1. Traces
-    wm_traces = watermarks["traces"]
+    wm_traces = safe_ts(watermarks["traces"])
     traces = ch_query(
         f"""
         SELECT id, timestamp, event_ts, name, user_id, tags, input, output
@@ -104,10 +113,10 @@ def sync_once(watermarks: dict[str, str]) -> None:
                 "output_preview": truncate(row.get("output"), 200),
             },
         )
-        watermarks["traces"] = row["event_ts"]
+        watermarks["traces"] = safe_ts(row["event_ts"])
 
     # 2. Observations (Generations, Spans, Events, Errors)
-    wm_obs = watermarks["observations"]
+    wm_obs = safe_ts(watermarks["observations"])
     observations = ch_query(
         f"""
         SELECT
@@ -152,10 +161,10 @@ def sync_once(watermarks: dict[str, str]) -> None:
                 "output_preview": truncate(row.get("output"), 150),
             },
         )
-        watermarks["observations"] = row["event_ts"]
+        watermarks["observations"] = safe_ts(row["event_ts"])
 
     # 3. Scores (Faithfulness, Formatting, Security Alerts, RAG Found)
-    wm_scores = watermarks["scores"]
+    wm_scores = safe_ts(watermarks["scores"])
     scores = ch_query(
         f"""
         SELECT id, timestamp, event_ts, trace_id, name, value, string_value, comment
@@ -184,10 +193,10 @@ def sync_once(watermarks: dict[str, str]) -> None:
                 "comment": truncate(row.get("comment"), 300),
             },
         )
-        watermarks["scores"] = row["event_ts"]
+        watermarks["scores"] = safe_ts(row["event_ts"])
 
     # 4. ClickHouse Query Errors (system.query_log)
-    wm_ch = watermarks["ch_errors"]
+    wm_ch = safe_ts(watermarks["ch_errors"])
     ch_errors = ch_query(
         f"""
         SELECT event_time_microseconds, type, query_duration_ms, exception_code, exception, query
@@ -211,7 +220,7 @@ def sync_once(watermarks: dict[str, str]) -> None:
                 "query": truncate(row.get("query"), 250),
             },
         )
-        watermarks["ch_errors"] = ts
+        watermarks["ch_errors"] = safe_ts(ts)
 
     push_to_loki(streams)
 

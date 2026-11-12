@@ -15,6 +15,11 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
         @"^\s*\[(?<start>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{1,3})\s*-->\s*(?<end>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{1,3})\]\s*(?<text>.*)$",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
+    private static readonly HashSet<string> AllowedAudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".wav", ".mp3", ".m4a", ".ogg", ".oga", ".opus", ".webm", ".flac", ".aac", ".mp4"
+    };
+
     private readonly IAudioEngineResolver _engineResolver;
     private readonly IVocabularyProvider _vocabularyProvider;
     private readonly IVocabularyPostProcessor _postProcessor;
@@ -70,8 +75,9 @@ public class LocalEngineAudioTranscriber : IAudioTranscriber
                 ErrorMessage: "Audio stream is null.");
         }
 
-        var ext = Path.GetExtension(fileName);
-        if (string.IsNullOrWhiteSpace(ext))
+        var safeFileName = string.IsNullOrWhiteSpace(fileName) ? "audio.wav" : Path.GetFileName(fileName);
+        var ext = Path.GetExtension(safeFileName);
+        if (string.IsNullOrWhiteSpace(ext) || !AllowedAudioExtensions.Contains(ext))
         {
             ext = ".wav";
         }

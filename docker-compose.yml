@@ -75,7 +75,7 @@ services:
       TZ: Europe/Moscow
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-fotoprint-n8n-encryption-key-2026}
       NODE_FUNCTION_ALLOW_EXTERNAL: axios,lodash,form-data
-      NODE_FUNCTION_ALLOW_BUILTIN: "*"
+      NODE_FUNCTION_ALLOW_BUILTIN: "crypto,url,path,buffer,util"
       N8N_COMMUNITY_PACKAGES_ENABLED: "false"
       N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
       N8N_DIAGNOSTICS_ENABLED: "false"
@@ -94,7 +94,7 @@ services:
       MCP_CALENDAR_URL: http://mcp-calendar:8084
       MCP_KNOWLEDGE_BASE_URL: http://mcp-knowledge-base:8086
     ports:
-      - "${N8N_PORT:-5678}:5678"
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows:ro
@@ -178,7 +178,7 @@ services:
     environment: &langfuse-env
       DATABASE_URL: postgresql://${POSTGRES_USER:-fotoprint}:${POSTGRES_PASSWORD:-fotoprint_secret}@postgres:5432/langfuse
       SALT: ${LANGFUSE_SALT:-fotoprint-langfuse-salt-secret-2026}
-      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-7f3d9a8b2c4e6f1058a9b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6}
       TELEMETRY_ENABLED: "false"
       CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_URL: http://clickhouse:8123
@@ -211,7 +211,7 @@ services:
       langfuse-minio:
         condition: service_healthy
     ports:
-      - "${LANGFUSE_PORT:-3000}:3000"
+      - "127.0.0.1:${LANGFUSE_PORT:-3000}:3000"
     environment:
       <<: *langfuse-env
       NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3000}
@@ -256,7 +256,7 @@ services:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-fotoprint};Username=${POSTGRES_USER:-fotoprint};Password=${POSTGRES_PASSWORD:-fotoprint_secret}
       N8n__WebhookBaseUrl: http://n8n:5678/webhook
       Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-demo-bot-token}
-      Telegram__WebhookSecret: ${TELEGRAM_WEBHOOK_SECRET:-}
+      Telegram__WebhookSecret: ${TELEGRAM_WEBHOOK_SECRET:-fotoprint-telegram-webhook-secret-2026}
       Telegram__CloudflaredMetricsUrl: http://cloudflared:2000/quicktunnel
       LLM_PROVIDER: ${LLM_PROVIDER:-nvidia}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
@@ -400,8 +400,6 @@ services:
     # Порты MCP закрыты от внешних сканеров, доступны только внутри fotoprint-net
     networks:
       - fotoprint-net
-    networks:
-      - fotoprint-net
 
   # =========================================================================
   # 5. Готовый внешний MCP-сервер Битрикс24 (Опциональный готовый коннектор)
@@ -458,7 +456,7 @@ services:
     image: grafana/alloy:v1.7.5
     container_name: fotoprint-alloy
     restart: unless-stopped
-    command: run --server.http.listen-addr=0.0.0.0:12345 /etc/alloy/config.alloy
+    command: run --server.http.listen-addr=127.0.0.1:12345 /etc/alloy/config.alloy
     depends_on:
       loki:
         condition: service_healthy

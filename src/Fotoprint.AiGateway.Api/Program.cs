@@ -254,25 +254,27 @@ app.MapPost("/api/audio/transcribe", async (
     }
 
     var startSpan = DateTime.UtcNow;
+    var safeAudioFileName = string.IsNullOrWhiteSpace(file.FileName) ? "audio.wav" : Path.GetFileName(file.FileName);
+    if (string.IsNullOrWhiteSpace(safeAudioFileName)) safeAudioFileName = "audio.wav";
     await using var stream = file.OpenReadStream();
     var result = await transcriber.TranscribeAsync(
         stream,
-        string.IsNullOrWhiteSpace(file.FileName) ? "audio.wav" : file.FileName,
+        safeAudioFileName,
         string.IsNullOrWhiteSpace(language) ? "ru" : language,
         ct);
     var endSpan = DateTime.UtcNow;
 
     try
     {
-        var traceName = string.IsNullOrWhiteSpace(file.FileName) ? "meeting-audio-transcribe" : "meeting-audio-transcribe";
+        var traceName = "meeting-audio-transcribe";
         await langfuse.CreateTraceAsync(
             traceId: traceId,
             name: traceName,
             userId: null,
             sessionId: null,
-            metadata: new { file_name = file.FileName, size_bytes = file.Length, language = language ?? "ru", provider = result.Provider, duration_ms = result.DurationMs },
+            metadata: new { file_name = safeAudioFileName, size_bytes = file.Length, language = language ?? "ru", provider = result.Provider, duration_ms = result.DurationMs },
             tags: new[] { "channel:api", "module:meetings", $"stt:{result.Provider}", result.Success ? "status:ok" : "status:error" },
-            input: new { file_name = file.FileName, size_bytes = file.Length, language = language ?? "ru" },
+            input: new { file_name = safeAudioFileName, size_bytes = file.Length, language = language ?? "ru" },
             output: result.Success ? (object)new { text = result.Text, segments_count = result.Segments?.Count ?? 0, provider = result.Provider } : new { error = result.ErrorMessage },
             ct: ct);
 
@@ -281,7 +283,7 @@ app.MapPost("/api/audio/transcribe", async (
             name: "Span:Audio_Transcribe",
             startTime: startSpan,
             endTime: endSpan,
-            input: new { file_name = file.FileName, size_bytes = file.Length, language = language ?? "ru" },
+            input: new { file_name = safeAudioFileName, size_bytes = file.Length, language = language ?? "ru" },
             output: new { success = result.Success, provider = result.Provider, text_length = result.Text?.Length ?? 0 },
             metadata: new { duration_ms = result.DurationMs, error = result.ErrorMessage },
             ct: ct);
@@ -850,15 +852,17 @@ app.MapPost("/api/rag/index-document", async (
             .ToList();
     }
 
-    // Парсим документ
+    // Парсим документ (санитизируем имя файла против Path Traversal)
+    var safeDocFileName = string.IsNullOrWhiteSpace(file.FileName) ? "document.txt" : Path.GetFileName(file.FileName);
+    if (string.IsNullOrWhiteSpace(safeDocFileName)) safeDocFileName = "document.txt";
     await using var stream = file.OpenReadStream();
-    var parsed = await docParser.ParseStreamAsync(stream, file.FileName);
+    var parsed = await docParser.ParseStreamAsync(stream, safeDocFileName);
 
     // Сохраняем в БД
     var docId = await repo.SaveDocumentAsync(
         title: parsed.Title,
         sourceType: parsed.SourceType,
-        filePath: $"/storage/docs/{file.FileName}",
+        filePath: $"/storage/docs/{safeDocFileName}",
         department: department,
         allowedAccessGroups: groups,
         ct: ct
@@ -1238,10 +1242,12 @@ app.MapPost("/api/meetings/process-audio", async (
         });
     }
 
+    var safeMeetingFileName = string.IsNullOrWhiteSpace(file.FileName) ? "meeting.m4a" : Path.GetFileName(file.FileName);
+    if (string.IsNullOrWhiteSpace(safeMeetingFileName)) safeMeetingFileName = "meeting.m4a";
     await using var audioStream = file.OpenReadStream();
     var transcription = await transcriber.TranscribeAsync(
         audioStream,
-        string.IsNullOrWhiteSpace(file.FileName) ? "meeting.m4a" : file.FileName,
+        safeMeetingFileName,
         string.IsNullOrWhiteSpace(language) ? "ru" : language,
         ct);
 
@@ -1484,7 +1490,7 @@ app.MapPost("/api/meetings/process-audio", async (
                 action_items_count = normalizedItems.Count
             },
             tags: new[] { "channel:api", "module:meetings", $"stt:{transcription.Provider}", "status:ok" },
-            input: new { title = effectiveTitle, file_name = file.FileName, transcript_preview = transcription.Text.Length > 1000 ? transcription.Text[..1000] : transcription.Text },
+            input: new { title = effectiveTitle, file_name = safeMeetingFileName, transcript_preview = transcription.Text.Length > 1000 ? transcription.Text[..1000] : transcription.Text },
             output: new { meeting_id = meetingId, protocol_id = protocolId, summary = analysis.Summary, decisions = analysis.Decisions, action_items_count = normalizedItems.Count },
             ct: ct);
 
@@ -2017,6 +2023,7 @@ app.MapPost("/api/meetings/rag-search", async (
 
 // Экспорт полного созвона (саммари + решения + поручения + вся стенограмма) в .docx или .pdf (.html) с проверкой RBAC
 app.MapGet("/api/meetings/{id:guid}/export-full", async (
+    HttpContext httpContext,
     Guid id,
     [FromQuery] long master_id,
     [FromQuery] string? format,
@@ -2127,6 +2134,12 @@ app.MapGet("/api/meetings/{id:guid}/export-full", async (
     await langfuse.CreateSpanAsync(traceId, "Span:Meeting_Export_Full", exportStart, exportEnd,
         input: new { meeting_id = id, master_id, format = fmt },
         output: new { file_name = fileName, bytes = exportBytes.Length }, ct: ct);
+
+    httpContext.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    if (fmt is "pdf" or "html")
+    {
+        httpContext.Response.Headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'";
+    }
 
     return Results.File(exportBytes, contentType, fileName);
 });
@@ -2330,9 +2343,7 @@ static async Task<int> BackfillMissingEmbeddingsAsync(
 
 static bool HasValidInternalServiceKey(HttpContext httpContext, FotoprintConfig config)
 {
-    var providedKey = httpContext.Request.Headers["X-Internal-Service-Key"].FirstOrDefault();
-    return !string.IsNullOrWhiteSpace(providedKey) &&
-           string.Equals(providedKey, config.Security.InternalServiceSecretKey, StringComparison.Ordinal);
+    return InternalServiceAuthMiddleware.IsAuthorized(httpContext.Request, config);
 }
 
 static async Task<EmployeeSecurityContext?> ResolveCallerSecurityContextAsync(

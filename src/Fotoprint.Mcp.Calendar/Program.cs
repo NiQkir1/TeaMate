@@ -345,8 +345,9 @@ app.MapPost("/tools/find_free_slots", [RequirePermission("calendar:read_meetings
 });
 
 // Tool 4: create_meeting
-app.MapPost("/tools/create_meeting", [RequirePermission("calendar:read_meetings")] async (CreateMeetingRequest req, IFotoprintRepository repo, CancellationToken ct) =>
+app.MapPost("/tools/create_meeting", [RequirePermission("calendar:read_meetings")] async (HttpContext ctx, CreateMeetingRequest req, IFotoprintRepository repo, CancellationToken ct) =>
 {
+    var secContext = ctx.Items["SecurityContext"] as EmployeeSecurityContext;
     var mskZone = FotoprintRepository.GetMoscowTimeZone();
     var startTimeUtc = req.EffectiveStartTime.Kind == DateTimeKind.Utc
         ? req.EffectiveStartTime
@@ -356,7 +357,11 @@ app.MapPost("/tools/create_meeting", [RequirePermission("calendar:read_meetings"
         ? (req.EffectiveEndTime.Value.Kind == DateTimeKind.Utc ? req.EffectiveEndTime.Value : req.EffectiveEndTime.Value.ToUniversalTime())
         : startTimeUtc.AddMinutes(30);
 
-    var organizerId = req.EffectiveOrganizerId ?? 1;
+    var organizerId = req.EffectiveOrganizerId ?? secContext?.EmployeeId ?? 1;
+    if (secContext != null && !secContext.IsExecutive && secContext.EmployeeId > 0)
+    {
+        organizerId = secContext.EmployeeId;
+    }
     var participantIds = req.EffectiveParticipantIds;
     var status = string.IsNullOrWhiteSpace(req.Status) ? "scheduled" : req.Status;
 

@@ -40,7 +40,6 @@ public sealed class TelegramWebhookProcessor
     private sealed record VoiceMediaInfo(
         string? FileId,
         string FileName,
-        string? LocalFilePath,
         string? AudioBase64);
 
     public TelegramWebhookProcessor(
@@ -679,19 +678,18 @@ public sealed class TelegramWebhookProcessor
         TranscriptionResult? result = null;
         try
         {
-            if (!string.IsNullOrWhiteSpace(media.LocalFilePath) && File.Exists(media.LocalFilePath))
+            if (!string.IsNullOrWhiteSpace(media.AudioBase64))
             {
-                result = await transcriber.TranscribeFileAsync(media.LocalFilePath, "ru", ct);
-            }
-            else if (!string.IsNullOrWhiteSpace(media.AudioBase64))
-            {
-                var bytes = Convert.FromBase64String(media.AudioBase64);
-                using var ms = new MemoryStream(bytes);
-                result = await transcriber.TranscribeAsync(ms, media.FileName, "ru", ct);
-            }
-            else if (!string.IsNullOrWhiteSpace(media.FileId) && File.Exists(media.FileId))
-            {
-                result = await transcriber.TranscribeFileAsync(media.FileId, "ru", ct);
+                var maxBytes = Math.Max(1, _config.Audio.MaxFileSizeMb) * 1024L * 1024L;
+                if (media.AudioBase64.Length <= maxBytes * 2)
+                {
+                    var bytes = Convert.FromBase64String(media.AudioBase64);
+                    if (bytes.LongLength <= maxBytes)
+                    {
+                        using var ms = new MemoryStream(bytes);
+                        result = await transcriber.TranscribeAsync(ms, media.FileName, "ru", ct);
+                    }
+                }
             }
             else if (!string.IsNullOrWhiteSpace(media.FileId) && _botOptions.IsConfigured)
             {
@@ -804,17 +802,16 @@ public sealed class TelegramWebhookProcessor
         if (defaultAudioName != null)
         {
             var fileId = mediaElem.TryGetProperty("file_id", out var fidProp) ? fidProp.GetString() : null;
-            var fileName = mediaElem.TryGetProperty("file_name", out var fnProp) && !string.IsNullOrWhiteSpace(fnProp.GetString())
-                ? fnProp.GetString()!
+            var rawFileName = mediaElem.TryGetProperty("file_name", out var fnProp) ? fnProp.GetString() : null;
+            var safeFileName = !string.IsNullOrWhiteSpace(rawFileName) ? Path.GetFileName(rawFileName) : null;
+            var fileName = !string.IsNullOrWhiteSpace(safeFileName)
+                ? safeFileName
                 : defaultAudioName;
-            var localFilePath = mediaElem.TryGetProperty("local_file_path", out var lfpProp)
-                ? lfpProp.GetString()
-                : (message.TryGetProperty("local_file_path", out var msgLfp) ? msgLfp.GetString() : null);
             var audioBase64 = mediaElem.TryGetProperty("audio_base64", out var b64Prop)
                 ? b64Prop.GetString()
                 : (message.TryGetProperty("audio_base64", out var msgB64) ? msgB64.GetString() : null);
 
-            voiceMedia = new VoiceMediaInfo(fileId, fileName, localFilePath, audioBase64);
+            voiceMedia = new VoiceMediaInfo(fileId, fileName, audioBase64);
         }
 
         return true;
