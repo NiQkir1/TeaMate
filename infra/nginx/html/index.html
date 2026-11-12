@@ -2329,6 +2329,7 @@
         refreshCalendarEvents();
         renderCalendarGrid();
         renderWeekViewGrid();
+        syncCalendarScrollbarGutter();
 
         if (window.lucide) lucide.createIcons();
 
@@ -2450,6 +2451,7 @@
 
       renderCalendarGrid();
       renderWeekViewGrid();
+      syncCalendarScrollbarGutter();
 
       if (viewMode === 'year' || viewMode === 'month') {
         refreshCalendarEvents();
@@ -2805,6 +2807,14 @@
       renderWeekViewGrid();
     }
 
+    function syncCalendarScrollbarGutter() {
+      const scrollEl = document.getElementById('cal-timegrid-scroll');
+      const workspaceEl = document.getElementById('cal-workspace-body');
+      if (!scrollEl || !workspaceEl) return;
+      const scrollbarWidth = Math.max(0, scrollEl.offsetWidth - scrollEl.clientWidth);
+      workspaceEl.style.setProperty('--cal-scrollbar-width', `${scrollbarWidth}px`);
+    }
+
     function renderActiveCalendarView() {
       const weekHeader = document.querySelector('.cal-week-header');
       const alldayStrip = document.querySelector('.cal-allday-strip');
@@ -2839,10 +2849,12 @@
         if (timegridScroll) timegridScroll.style.display = 'flex';
         renderTimeGridView();
       }
+      syncCalendarScrollbarGutter();
     }
 
     function renderWeekViewGrid() {
       renderActiveCalendarView();
+      syncCalendarScrollbarGutter();
     }
 
     function renderTimeGridView() {
@@ -3865,7 +3877,7 @@
       if (!ghost) return;
 
       const ghostRect = ghost.getBoundingClientRect();
-      const popoverWidth = popover.offsetWidth || 340;
+      const popoverWidth = popover.offsetWidth || 384;
       const popoverHeight = popover.offsetHeight || 360;
 
       const spaceRight = window.innerWidth - ghostRect.right - 12;
@@ -4094,7 +4106,9 @@
     }
 
     // Dynamic tracking on window resize
+    window.addEventListener('resize', syncCalendarScrollbarGutter);
     window.addEventListener('resize', () => {
+      syncCalendarScrollbarGutter();
       if (activeDragGhost) {
         requestAnimationFrame(repositionDragCreatePopover);
       }
@@ -4104,6 +4118,7 @@
     const calSidebarElement = document.getElementById('cal-sidebar');
     if (calSidebarElement) {
       calSidebarElement.addEventListener('transitionend', () => {
+        syncCalendarScrollbarGutter();
         requestAnimationFrame(repositionDragCreatePopover);
       });
     }
@@ -4113,6 +4128,7 @@
       const mainAreaEl = document.querySelector('.cal-main-area');
       if (mainAreaEl) {
         const ro = new ResizeObserver(() => {
+          syncCalendarScrollbarGutter();
           if (activeDragGhost) {
             requestAnimationFrame(repositionDragCreatePopover);
           }
@@ -5253,6 +5269,7 @@
       initEmployeeSearchUI();
       renderCalendarGrid();
       refreshCalendarEvents();
+      syncCalendarScrollbarGutter();
       if (window.lucide) {
         lucide.createIcons();
       }
