@@ -344,7 +344,7 @@ public static class CalendarHelper
                 category = "accounting";
             else if (text.Contains("руководств") || text.Contains("langfuse") || text.Contains("sla") || text.Contains("n8n") || text.Contains("стратег"))
                 category = "management";
-            else if (text.Contains("сводка") || text.Contains("поощрение") || text.Contains("брака"))
+            else if (text.Contains("сводка") || text.Contains("выработка") || text.Contains("брака"))
                 category = "routine";
         }
 
@@ -442,14 +442,14 @@ public static class CalendarHelper
         for (int day = 12; day <= 18; day++)
         {
             var dateStr = $"2026-11-{day:D2}";
-            // 1. Утренняя сводка цеха / Поощрение себя
+            // 1. Утренняя сводка выработки цеха
             items.Add(new CalendarEventItem
             {
                 Id = $"b0000001-11{day:D2}-2026-0000-000000000001",
                 MeetingId = Guid.Parse($"b0000001-11{day:D2}-2026-0000-000000000001"),
                 ItemType = "routine",
                 Category = "routine",
-                Title = "Утренняя сводка цеха / Поощрение себя",
+                Title = "Утренняя сводка выработки цеха",
                 Description = "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов дня",
                 StartTime = $"{dateStr}T00:00:00+03:00",
                 EndTime = $"{dateStr}T23:59:59+03:00",
