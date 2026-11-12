@@ -1111,4 +1111,544 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-event-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.cal-card-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.cal-inline-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+.cal-mini-icon {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+.cal-allday-bar {
+  position: relative;
+  height: 20px;
+  min-height: 20px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: filter 0.12s ease;
+}
+
+.cal-allday-bar:hover {
+  filter: brightness(1.2);
+}
+
+.cal-allday-bar i,
+.cal-allday-bar svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   6. EVENT INSPECTOR POPOVER & QUICK MODAL
+   ========================================================================== */
+.cal-popover {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-popover-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+}
+
+.cal-popover-card {
+  position: relative;
+  width: 440px;
+  max-width: 90vw;
+  background: var(--cal-bg-sidebar);
+  border: 1px solid var(--cal-border);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  z-index: 1001;
+  box-sizing: border-box;
+}
+
+.cal-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cal-popover-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-badge-cat {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--cal-text-primary);
+  border: 1px solid var(--cal-border);
+}
+
+.cal-badge-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+.cal-badge-status.status-scheduled {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+}
+.cal-badge-status.status-completed {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.cal-popover-close {
+  background: transparent;
+  border: none;
+  color: var(--cal-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cal-popover-close:hover {
+  color: var(--cal-text-primary);
+  background: var(--cal-hover-bg);
+}
+.cal-popover-close svg,
+.cal-popover-close i {
+  width: 18px;
+  height: 18px;
+}
+
+.cal-popover-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cal-text-primary);
+  margin: 0;
+  line-height: 1.35;
+}
+
+.cal-popover-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--cal-text-secondary);
+}
+.cal-popover-time-row svg,
+.cal-popover-time-row i {
+  width: 15px;
+  height: 15px;
+  color: var(--cal-today-accent);
+}
+
+.cal-popover-desc {
+  font-size: 13px;
+  color: var(--cal-text-secondary);
+  line-height: 1.45;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--cal-border);
+}
+.cal-popover-desc p {
+  margin: 0;
+}
+
+.cal-popover-busy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--cal-border);
+}
+
+.cal-popover-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cal-text-muted);
+}
+.cal-popover-section-label svg,
+.cal-popover-section-label i {
+  width: 14px;
+  height: 14px;
+}
+
+.cal-popover-busy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cal-popover-busy-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cal-busy-details {
+  display: flex;
+  flex-direction: column;
+}
+
+.cal-busy-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cal-text-primary);
+}
+
+.cal-org-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #f59e0b;
+}
+
+.cal-busy-role {
+  font-size: 11px;
+  color: var(--cal-text-muted);
+}
+
+.cal-popover-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cal-popover-tag {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--cal-border);
+  color: var(--cal-text-secondary);
+}
+
+.cal-popover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cal-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--cal-today-accent);
+  color: #ffffff;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cal-btn-primary:hover {
+  filter: brightness(1.15);
+}
+.cal-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cal-btn-primary svg,
+.cal-btn-primary i {
+  width: 15px;
+  height: 15px;
+}
+
+.cal-btn-sec {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cal-text-secondary);
+  border: 1px solid var(--cal-border);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cal-btn-sec:hover {
+  color: var(--cal-text-primary);
+  background: var(--cal-hover-bg);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.cal-btn-sec svg,
+.cal-btn-sec i {
+  width: 15px;
+  height: 15px;
+}
+
+/* Modal Overlay & Quick Form */
+.cal-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(5px);
+}
+
+.cal-modal-content {
+  position: relative;
+  width: 480px;
+  max-width: 92vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--cal-bg-sidebar);
+  border: 1px solid var(--cal-border);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
+  z-index: 1001;
+  box-sizing: border-box;
+}
+
+.cal-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.cal-modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cal-modal-title-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--cal-today-accent);
+}
+
+.cal-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cal-text-primary);
+  margin: 0;
+}
+
+.cal-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--cal-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cal-modal-close:hover {
+  color: var(--cal-text-primary);
+  background: var(--cal-hover-bg);
+}
+.cal-modal-close svg,
+.cal-modal-close i {
+  width: 18px;
+  height: 18px;
+}
+
+.cal-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.cal-form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.cal-form-half {
+  flex: 1;
+}
+
+.cal-form-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--cal-text-muted);
+}
+
+.cal-form-input,
+.cal-form-select,
+.cal-form-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--cal-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--cal-text-primary);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  font-family: inherit;
+}
+
+.cal-form-input:focus,
+.cal-form-select:focus,
+.cal-form-textarea:focus {
+  border-color: var(--cal-today-accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.cal-form-select option {
+  background: #1a1a1a;
+  color: #f8fafc;
+}
+
+.cal-duration-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cal-duration-pill {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--cal-border);
+  color: var(--cal-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cal-duration-pill:hover {
+  background: var(--cal-hover-bg);
+  color: var(--cal-text-primary);
+}
+
+.cal-duration-pill.active {
+  background: var(--cal-today-accent);
+  border-color: var(--cal-today-accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.cal-participants-checkboxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.cal-participant-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--cal-text-secondary);
+  cursor: pointer;
+}
+
+.cal-participant-check input[type="checkbox"] {
+  accent-color: var(--cal-today-accent);
+  cursor: pointer;
+}
+
+.cal-emp-badge {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.cal-modal-msg {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.cal-modal-msg.success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.cal-modal-msg.error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
 }
