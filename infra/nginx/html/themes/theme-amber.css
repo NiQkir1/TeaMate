@@ -60,6 +60,17 @@
   --cal-popover-border: rgba(245, 158, 11, 0.28);
   --cal-popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 16px rgba(245, 158, 11, 0.2);
   --cal-popover-blur: blur(16px);
+
+  /* Employee Search, Highlight, Chips & Dropdown Tokens (Task 018C) */
+  --cal-highlight-bg: rgba(251, 191, 36, 0.25);
+  --cal-highlight-text: #fde68a;
+  --cal-chip-bg: #181b24;
+  --cal-chip-border: rgba(245, 158, 11, 0.45);
+  --cal-chip-text: #fbbf24;
+  --cal-dropdown-bg: #111319;
+  --cal-dropdown-border: rgba(245, 158, 11, 0.25);
+  --cal-dropdown-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 12px rgba(245, 158, 11, 0.15);
+  --cal-dropdown-hover: rgba(245, 158, 11, 0.12);
 }
 
 /* ============================================================================
@@ -1836,5 +1847,345 @@ main:not(.cal-main-area) {
 
 #drag-create-submit-btn:active {
   transform: translateY(0);
+}
+
+/* ==========================================================================
+   FOTOPRINT AI COPILOT — SMART EMPLOYEE SEARCH & CHIPS (Task 018C)
+   Business Noir & Electric Amber Theme: Dark carbon surfaces, electric amber
+   match highlights, warm halo shadows, gold chips, zero emoji, WCAG AAA.
+   ========================================================================== */
+
+/* Search Highlight */
+[data-theme="amber"] mark.cal-search-highlight,
+[data-theme="amber"] .cal-search-highlight,
+mark.cal-search-highlight,
+.cal-search-highlight {
+  background: var(--cal-highlight-bg, rgba(251, 191, 36, 0.25));
+  color: var(--cal-highlight-text, #fde68a);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* Selected Participants Chips Container */
+#drag-create-selected-chips,
+#quick-selected-chips,
+.cal-emp-chips-container,
+.cal-selected-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-height: 0;
+}
+
+#drag-create-selected-chips:empty,
+#quick-selected-chips:empty,
+.cal-emp-chips-container:empty,
+.cal-selected-chips:empty {
+  display: none;
+  margin-bottom: 0;
+}
+
+/* Selected Participant Chip */
+.cal-emp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--cal-chip-bg, #181b24);
+  border: 1px solid var(--cal-chip-border, rgba(245, 158, 11, 0.45));
+  color: var(--cal-chip-text, #fbbf24);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 3px 8px;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 0 6px rgba(245, 158, 11, 0.1);
+  user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cal-emp-chip:hover {
+  background: #202430;
+  border-color: #fbbf24;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 10px rgba(245, 158, 11, 0.25);
+}
+
+/* Chip Remove Button */
+.cal-emp-chip .cal-emp-chip-remove,
+.cal-emp-chip .cal-chip-remove,
+.cal-emp-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-left: 2px;
+  color: var(--cal-chip-text, #fbbf24);
+  cursor: pointer;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.8;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.cal-emp-chip .cal-emp-chip-remove:hover,
+.cal-emp-chip .cal-chip-remove:hover,
+.cal-emp-chip button:hover {
+  opacity: 1;
+  color: #fffbeb;
+  background: rgba(245, 158, 11, 0.25);
+}
+
+.cal-emp-chip svg,
+.cal-emp-chip i {
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+}
+
+/* Search Box Container */
+.cal-emp-search-box,
+.cal-emp-search-wrap,
+.cal-sidebar-emp-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+/* Search Input */
+.cal-emp-search-input,
+#drag-create-emp-search,
+#quick-emp-search,
+#sidebar-emp-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: #111319;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: 6px;
+  padding: 6px 30px 6px 10px;
+  font-size: 12.5px;
+  color: var(--text-platinum, #f4f4f5);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.cal-emp-search-input:focus,
+#drag-create-emp-search:focus,
+#quick-emp-search:focus,
+#sidebar-emp-search:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25), 0 0 10px rgba(245, 158, 11, 0.2);
+  background: #151821;
+}
+
+.cal-emp-search-input::placeholder,
+#drag-create-emp-search::placeholder,
+#quick-emp-search::placeholder,
+#sidebar-emp-search::placeholder {
+  color: #a1a1aa;
+  font-size: 12px;
+}
+
+/* Clear Button */
+.cal-search-clear-btn,
+#drag-create-emp-clear,
+#quick-emp-clear,
+#sidebar-emp-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: #a1a1aa;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.cal-search-clear-btn:hover,
+#drag-create-emp-clear:hover,
+#quick-emp-clear:hover,
+#sidebar-emp-clear:hover {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.cal-search-clear-btn svg,
+.cal-search-clear-btn i {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.cal-search-clear-btn[hidden],
+.cal-search-clear-btn.hidden {
+  display: none !important;
+}
+
+/* Autocomplete Dropdown */
+.cal-emp-dropdown,
+#drag-create-emp-dropdown,
+#quick-emp-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--cal-dropdown-bg, #111319);
+  border: 1px solid var(--cal-dropdown-border, rgba(245, 158, 11, 0.25));
+  border-radius: 8px;
+  box-shadow: var(--cal-dropdown-shadow, 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 12px rgba(245, 158, 11, 0.15));
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 1100;
+  padding: 4px;
+  margin: 0;
+  list-style: none;
+  box-sizing: border-box;
+}
+
+.cal-emp-dropdown[hidden],
+.cal-emp-dropdown.hidden {
+  display: none !important;
+}
+
+/* Dropdown Scrollbar */
+.cal-emp-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cal-emp-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cal-emp-dropdown::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.2);
+  border-radius: 3px;
+}
+
+.cal-emp-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.45);
+}
+
+/* Dropdown Item */
+.cal-emp-dropdown-item,
+.cal-emp-item,
+.cal-emp-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  font-size: 12px;
+  color: var(--text-platinum, #f4f4f5);
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.cal-emp-dropdown-item:hover,
+.cal-emp-dropdown-item.active,
+.cal-emp-dropdown-item.is-active,
+.cal-emp-item:hover,
+.cal-emp-item.active {
+  background: var(--cal-dropdown-hover, rgba(245, 158, 11, 0.12));
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.cal-emp-dropdown-item.selected,
+.cal-emp-dropdown-item.is-selected {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.cal-emp-dropdown-info,
+.cal-emp-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cal-emp-dropdown-name,
+.cal-emp-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #f4f4f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-emp-dropdown-role,
+.cal-emp-role,
+.cal-emp-dropdown-meta {
+  font-size: 11px;
+  color: #a1a1aa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-emp-dropdown-status,
+.cal-emp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cal-emp-dropdown-status.free,
+.cal-emp-status-dot.free {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+}
+
+.cal-emp-dropdown-status.busy,
+.cal-emp-status-dot.busy {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+.cal-emp-dropdown-check,
+.cal-emp-check-icon {
+  color: #fbbf24;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-emp-dropdown-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Empty State */
+.cal-emp-dropdown-empty {
+  padding: 12px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #a1a1aa;
 }
 
