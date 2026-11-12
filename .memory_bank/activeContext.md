@@ -1,14 +1,15 @@
 # Active Context
 
-- **Current Epics**:
-  - **Stage 10**: Smart Tokenized Employee / Client Search by FIO, Position & Department (`Tasks 018A, 018B, 018C, QA-018`).
-  - **Stage 11**: Calendar Views (`Day`, `Month`, `Year`) + `#cal-view-select` Fix (`Tasks 019A, 019B, QA-019`).
-- **Completed Baseline**:
-  - Standalone 3-column TickTick Calendar Window (`#calendar-window-view`, Week View) + Drag-to-Create selection + Context-Anchored Popover (`#cal-drag-create-popover`) implemented and visually verified across `Obsidian`, `Liquid Glass`, and `Business Amber`.
-- **Stage 11 Plan (`019A`, `019B`, `QA-019`) — Aligned to TickTick Reference Screenshots**:
-  - **Contract**: `.memory_bank/contracts/calendar_view_switcher_contract.md`
-  - **Task `019A`**: Replace `3days` with `day` / `week` / `month` / `year` in `#cal-view-select`; fix 1-column `Day` view (`--cal-grid-cols: 1`), add 7×6 `Month` view (`#cal-month-grid` with `W44–W49` week numbers, compact event pills, `+N` overflow), and add 4×3 `Year` heatmap view (`#cal-year-grid` with left week-number column `1–52`, event-density shading, and click-to-drill-down).
-  - **Task `019B`**: Theme tokens and styling for `Day`, `Month`, and `Year` heatmap views across `theme-obsidian.css`, `theme-liquid-glass.css`, and `theme-amber.css`.
-  - **Task `QA-019`**: Verification of `Day`, `Week`, `Month`, `Year` views, navigation steps, drill-down, drag-to-create, and all 3 themes.
-- **Next Step**:
-  - Dispatch `019A` + `019B` (and/or `018A`–`018C`) to `coder-worker` subagents upon user confirmation.
+- **Current Epics & Milestones**:
+  - **Stage 11**: Calendar Views `Day`, `Month`, `Year` + `#cal-view-select` Fix (`019A, 019B, QA-019`) [COMPLETED & MERGED].
+  - **Stage 13**: Layout & Popover Remediation (`021A, 021B, QA-021`) [COMPLETED & MERGED].
+    - Time-grid / Header column dividers synchronized with dynamic `scrollbar-gutter` and `syncCalendarScrollbarGutter()`. 22px cumulative drift eliminated.
+    - Drag-to-Create popover widened to 384px with compact time row; `06:00` input fully contained with >16px margin.
+  - **Stage 12**: Startup Hackathon Presentation, 9 Slides (`020A, 020B, 020C, QA-020`) [READY].
+  - **Stage 14**: Copilot Chat Workspace & Header UX Redesign (Nielsen 10 Overhaul — `022A`, `022B`, `022C`, `022D`, `QA-022`) [READY].
+- **Stage 14 In-Flight Dispatch**:
+  - **Contract**: `.memory_bank/contracts/copilot_chat_ux_contract.md`
+  - **Worker 1**: Frontend UI & DOM Architect (`022A, 022B, 022C`) in `infra/nginx/html/index.html` and `theme-core.css`.
+  - **Worker 2**: UI Theme Specialist (`022D`) in `theme-obsidian.css`, `theme-liquid-glass.css`, and `theme-amber.css`.
+  - Strict zero-overlap boundary guaranteed.
+  - Followed by `QA-022` verification.

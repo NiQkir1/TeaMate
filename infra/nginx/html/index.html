@@ -492,9 +492,10 @@
 
           <!-- View Mode Selector -->
           <select id="cal-view-select" class="cal-view-dropdown" onchange="changeCalendarView(this.value)" title="Режим отображения сетки">
-            <option value="week" selected>Неделя</option>
-            <option value="3days">3 дня</option>
             <option value="day">День</option>
+            <option value="week" selected>Неделя</option>
+            <option value="month">Месяц</option>
+            <option value="year">Год</option>
           </select>
 
           <!-- Navigation Group -->
@@ -561,6 +562,12 @@
             <div class="cal-now-line" id="cal-now-line"></div>
           </div>
         </div>
+
+        <!-- Month Grid Container (Task 019A) -->
+        <div id="cal-month-grid" class="cal-month-grid" style="display: none;"></div>
+
+        <!-- Year Grid Container (Task 019A) -->
+        <div id="cal-year-grid" class="cal-year-grid" style="display: none;"></div>
 
       </div>
     </main>
@@ -820,6 +827,7 @@
     let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 100001;
 
     // Calendar state
+    let currentCalendarViewMode = 'week';
     let currentCalendarDate = new Date(2026, 10, 12); // Default: November 12, 2026
     let selectedCalendarDate = new Date(2026, 10, 12);
     let currentWeekStart = new Date(2026, 10, 12); // Reference week starts Thu 12 Nov 2026
@@ -2332,6 +2340,7 @@
         refreshCalendarEvents();
         renderCalendarGrid();
         renderWeekViewGrid();
+        syncCalendarScrollbarGutter();
 
         if (window.lucide) lucide.createIcons();
 
@@ -2399,9 +2408,27 @@
 
     function changeWeek(delta) {
       if (!currentWeekStart) currentWeekStart = new Date(2026, 10, 12);
-      currentWeekStart.setDate(currentWeekStart.getDate() + delta * 7);
-      selectedCalendarDate = new Date(currentWeekStart);
-      currentCalendarDate = new Date(currentWeekStart);
+      if (!selectedCalendarDate) selectedCalendarDate = new Date(currentWeekStart);
+      if (!currentCalendarDate) currentCalendarDate = new Date(currentWeekStart);
+
+      if (currentCalendarViewMode === 'day') {
+        selectedCalendarDate.setDate(selectedCalendarDate.getDate() + delta);
+        currentCalendarDate = new Date(selectedCalendarDate);
+        currentWeekStart = new Date(selectedCalendarDate);
+      } else if (currentCalendarViewMode === 'month') {
+        currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
+        selectedCalendarDate = new Date(currentCalendarDate);
+        currentWeekStart = new Date(currentCalendarDate);
+      } else if (currentCalendarViewMode === 'year') {
+        currentCalendarDate.setFullYear(currentCalendarDate.getFullYear() + delta);
+        selectedCalendarDate = new Date(currentCalendarDate);
+        currentWeekStart = new Date(currentCalendarDate);
+      } else {
+        currentWeekStart.setDate(currentWeekStart.getDate() + delta * 7);
+        selectedCalendarDate = new Date(currentWeekStart);
+        currentCalendarDate = new Date(currentWeekStart);
+      }
+
       renderCalendarGrid();
       renderWeekViewGrid();
       refreshCalendarEvents();
@@ -2415,13 +2442,31 @@
       renderWeekViewGrid();
       refreshCalendarEvents();
       const scrollArea = document.getElementById('cal-timegrid-scroll');
-      if (scrollArea) scrollArea.scrollTop = 450;
+      if (scrollArea && (currentCalendarViewMode === 'day' || currentCalendarViewMode === 'week')) {
+        scrollArea.scrollTop = 450;
+      }
     }
 
     function changeCalendarView(viewMode) {
+      const validModes = ['day', 'week', 'month', 'year'];
+      if (!validModes.includes(viewMode)) {
+        viewMode = 'week';
+      }
+      currentCalendarViewMode = viewMode;
       const sel = document.getElementById('cal-view-select');
       if (sel && sel.value !== viewMode) sel.value = viewMode;
+
+      if (typeof closeDragCreatePopover === 'function') {
+        closeDragCreatePopover();
+      }
+
+      renderCalendarGrid();
       renderWeekViewGrid();
+      syncCalendarScrollbarGutter();
+
+      if (viewMode === 'year' || viewMode === 'month') {
+        refreshCalendarEvents();
+      }
     }
 
     function updateAvatarBadge(user) {
@@ -2570,8 +2615,28 @@
       const monthLabel = document.getElementById('current-month-label');
       const miniLabel = document.getElementById('mini-month-label');
       const labelText = `${MONTH_NAMES[month]} ${year}`;
-      if (monthLabel) monthLabel.textContent = labelText;
+      if (monthLabel) {
+        monthLabel.textContent = (currentCalendarViewMode === 'year') ? `${year} г.` : labelText;
+      }
       if (miniLabel) miniLabel.textContent = labelText;
+
+      const prevBtn = document.getElementById('cal-prev-btn');
+      const nextBtn = document.getElementById('cal-next-btn');
+      if (prevBtn && nextBtn) {
+        if (currentCalendarViewMode === 'day') {
+          prevBtn.title = 'Предыдущий день';
+          nextBtn.title = 'Следующий день';
+        } else if (currentCalendarViewMode === 'month') {
+          prevBtn.title = 'Предыдущий месяц';
+          nextBtn.title = 'Следующий месяц';
+        } else if (currentCalendarViewMode === 'year') {
+          prevBtn.title = 'Предыдущий год';
+          nextBtn.title = 'Следующий год';
+        } else {
+          prevBtn.title = 'Предыдущая неделя';
+          nextBtn.title = 'Следующая неделя';
+        }
+      }
 
       const grid = document.getElementById('calendar-days-grid');
       if (!grid) return;
@@ -2753,12 +2818,73 @@
       renderWeekViewGrid();
     }
 
+    function syncCalendarScrollbarGutter() {
+      const scrollEl = document.getElementById('cal-timegrid-scroll');
+      const workspaceEl = document.getElementById('cal-workspace-body');
+      if (!scrollEl || !workspaceEl) return;
+      const scrollbarWidth = Math.max(0, scrollEl.offsetWidth - scrollEl.clientWidth);
+      workspaceEl.style.setProperty('--cal-scrollbar-width', `${scrollbarWidth}px`);
+    }
+
+    function renderActiveCalendarView() {
+      const weekHeader = document.querySelector('.cal-week-header');
+      const alldayStrip = document.querySelector('.cal-allday-strip');
+      const timegridScroll = document.getElementById('cal-timegrid-scroll');
+      const monthGrid = document.getElementById('cal-month-grid');
+      const yearGrid = document.getElementById('cal-year-grid');
+
+      if (currentCalendarViewMode === 'month') {
+        if (weekHeader) weekHeader.style.display = 'none';
+        if (alldayStrip) alldayStrip.style.display = 'none';
+        if (timegridScroll) timegridScroll.style.display = 'none';
+        if (yearGrid) yearGrid.style.display = 'none';
+        if (monthGrid) {
+          monthGrid.style.display = 'flex';
+          renderMonthViewGrid();
+        }
+      } else if (currentCalendarViewMode === 'year') {
+        if (weekHeader) weekHeader.style.display = 'none';
+        if (alldayStrip) alldayStrip.style.display = 'none';
+        if (timegridScroll) timegridScroll.style.display = 'none';
+        if (monthGrid) monthGrid.style.display = 'none';
+        if (yearGrid) {
+          yearGrid.style.display = 'grid';
+          renderYearViewGrid();
+        }
+      } else {
+        // 'day' or 'week'
+        if (monthGrid) monthGrid.style.display = 'none';
+        if (yearGrid) yearGrid.style.display = 'none';
+        if (weekHeader) weekHeader.style.display = 'flex';
+        if (alldayStrip) alldayStrip.style.display = 'flex';
+        if (timegridScroll) timegridScroll.style.display = 'flex';
+        renderTimeGridView();
+      }
+      syncCalendarScrollbarGutter();
+    }
+
     function renderWeekViewGrid() {
+      renderActiveCalendarView();
+      syncCalendarScrollbarGutter();
+    }
+
+    function renderTimeGridView() {
       if (!currentWeekStart) currentWeekStart = new Date(2026, 10, 12);
+      if (!selectedCalendarDate) selectedCalendarDate = new Date(currentWeekStart);
+
+      const isDayView = (currentCalendarViewMode === 'day');
+      const numCols = isDayView ? 1 : 7;
+
+      const workspaceBody = document.getElementById('cal-workspace-body');
+      if (workspaceBody) {
+        workspaceBody.style.setProperty('--cal-grid-cols', String(numCols));
+      }
+
+      const anchorDate = isDayView ? selectedCalendarDate : currentWeekStart;
 
       const weekNumEl = document.getElementById('cal-week-number');
       if (weekNumEl) {
-        weekNumEl.textContent = `W${getWeekNumber(currentWeekStart)}`;
+        weekNumEl.textContent = `W${getWeekNumber(anchorDate)}`;
       }
 
       const weekColumnsHeader = document.getElementById('cal-week-columns-header');
@@ -2786,14 +2912,16 @@
       const weekDates = [];
       const WEEKDAY_NAMES_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-      for (let i = 0; i < 7; i++) {
-        const colDate = new Date(currentWeekStart.getFullYear(), currentWeekStart.getMonth(), currentWeekStart.getDate() + i);
+      for (let i = 0; i < numCols; i++) {
+        const colDate = isDayView
+          ? new Date(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate())
+          : new Date(currentWeekStart.getFullYear(), currentWeekStart.getMonth(), currentWeekStart.getDate() + i);
         const isoDate = `${colDate.getFullYear()}-${String(colDate.getMonth() + 1).padStart(2, '0')}-${String(colDate.getDate()).padStart(2, '0')}`;
         const isToday = (isoDate === todayStr);
         const weekday = WEEKDAY_NAMES_EN[colDate.getDay()];
         weekDates.push({ date: colDate, isoDate, isToday, weekday, dayNum: colDate.getDate() });
 
-        // 1. Day header column (Thu 12 .. Wed 18)
+        // 1. Day header column
         const headerCol = document.createElement('div');
         headerCol.className = 'cal-day-header-col' + (isToday ? ' is-today' : '');
         headerCol.innerHTML = `
@@ -2937,7 +3065,7 @@
       if (nowDot) {
         if (todayColIdx >= 0) {
           nowDot.style.display = 'block';
-          nowDot.style.left = `calc(56px + ${todayColIdx} * ((100% - 56px) / 7))`;
+          nowDot.style.left = `calc(56px + ${todayColIdx} * ((100% - 56px) / ${numCols}))`;
         } else {
           nowDot.style.display = 'none';
         }
@@ -2946,14 +3074,347 @@
       if (window.lucide) lucide.createIcons();
     }
 
+    function renderMonthViewGrid() {
+      const monthGrid = document.getElementById('cal-month-grid');
+      if (!monthGrid) return;
+      monthGrid.innerHTML = '';
+
+      const year = currentCalendarDate.getFullYear();
+      const month = currentCalendarDate.getMonth();
+      const todayStr = '2026-11-12';
+
+      // 1. Weekday headers row
+      const weekdaysHeader = document.createElement('div');
+      weekdaysHeader.className = 'cal-month-weekdays';
+      WEEKDAY_NAMES_SHORT.forEach(dayName => {
+        const col = document.createElement('div');
+        col.className = 'cal-month-weekday-col';
+        col.textContent = dayName;
+        weekdaysHeader.appendChild(col);
+      });
+      monthGrid.appendChild(weekdaysHeader);
+
+      // 2. Cells container
+      const cellsContainer = document.createElement('div');
+      cellsContainer.className = 'cal-month-cells';
+
+      const firstDayOfMonth = new Date(year, month, 1);
+      let startDay = firstDayOfMonth.getDay() - 1; // 0 for Mon, 6 for Sun
+      if (startDay === -1) startDay = 6;
+
+      const prevMonthLastDate = new Date(year, month, 0).getDate();
+      const daysInCurrentMonth = new Date(year, month + 1, 0).getDate();
+
+      const allCells = [];
+
+      // Leading days from previous month
+      for (let i = startDay - 1; i >= 0; i--) {
+        const d = prevMonthLastDate - i;
+        const cellDate = new Date(year, month - 1, d);
+        allCells.push({ date: cellDate, dayNum: d, isCurrentMonth: false });
+      }
+
+      // Days in current month
+      for (let d = 1; d <= daysInCurrentMonth; d++) {
+        const cellDate = new Date(year, month, d);
+        allCells.push({ date: cellDate, dayNum: d, isCurrentMonth: true });
+      }
+
+      // Trailing days from next month to reach exactly 42 (7 cols * 6 rows)
+      const remaining = 42 - allCells.length;
+      for (let d = 1; d <= remaining; d++) {
+        const cellDate = new Date(year, month + 1, d);
+        allCells.push({ date: cellDate, dayNum: d, isCurrentMonth: false });
+      }
+
+      const SHORT_MONTH_NAMES_RU = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+
+      allCells.forEach((cData, index) => {
+        const colIndex = index % 7;
+        const isoDate = `${cData.date.getFullYear()}-${String(cData.date.getMonth() + 1).padStart(2, '0')}-${String(cData.date.getDate()).padStart(2, '0')}`;
+        const isToday = (isoDate === todayStr);
+
+        const cell = document.createElement('div');
+        cell.className = 'cal-month-cell';
+        cell.setAttribute('data-date', isoDate);
+        if (!cData.isCurrentMonth) cell.classList.add('other-month');
+        if (isToday) cell.classList.add('is-today');
+
+        // Header row inside cell: day number + week number on Mondays
+        const header = document.createElement('div');
+        header.className = 'cal-month-cell-header';
+
+        const dayNumSpan = document.createElement('span');
+        dayNumSpan.className = 'cal-month-day-num' + (isToday ? ' is-today' : '');
+        if (cData.dayNum === 1) {
+          dayNumSpan.textContent = `${SHORT_MONTH_NAMES_RU[cData.date.getMonth()]} 1`;
+        } else {
+          dayNumSpan.textContent = String(cData.dayNum);
+        }
+
+        dayNumSpan.onclick = (e) => {
+          e.stopPropagation();
+          selectedCalendarDate = new Date(cData.date);
+          currentCalendarDate = new Date(cData.date);
+          currentWeekStart = new Date(cData.date);
+          changeCalendarView('day');
+        };
+
+        header.appendChild(dayNumSpan);
+
+        if (colIndex === 0) {
+          const weekNumSpan = document.createElement('span');
+          weekNumSpan.className = 'cal-month-week-num';
+          weekNumSpan.textContent = `W${getWeekNumber(cData.date)}`;
+          header.appendChild(weekNumSpan);
+        }
+
+        cell.appendChild(header);
+
+        // Events list inside cell
+        const eventsList = document.createElement('div');
+        eventsList.className = 'cal-month-events-list';
+
+        const dayEvents = cachedCalendarEvents.filter(ev => {
+          if (!isEventVisible(ev)) return false;
+          return ev.start_time && ev.start_time.startsWith(isoDate);
+        });
+
+        const maxPills = 5;
+        const visibleEvents = dayEvents.slice(0, maxPills);
+        const overflowCount = dayEvents.length - maxPills;
+
+        visibleEvents.forEach(ev => {
+          const pill = document.createElement('div');
+          pill.className = 'cal-month-event-pill';
+          const isRec = ev.is_recurring || ev.item_type === 'routine';
+          if (isRec) pill.classList.add('cal-event-routine');
+          else if (ev.item_type === 'task') pill.classList.add('cal-event-task');
+          else pill.classList.add('cal-event-meeting');
+
+          let iconName = 'calendar';
+          if (isRec) iconName = 'repeat';
+          else if (ev.category === 'production') iconName = 'printer';
+          else if (ev.category === 'sales') iconName = 'briefcase';
+          else if (ev.category === 'accounting') iconName = 'calculator';
+          else if (ev.category === 'management') iconName = 'award';
+          else if (ev.item_type === 'task') iconName = 'check-square';
+
+          let timeStr = '';
+          if (!ev.is_all_day && !ev.is_recurring && ev.start_time) {
+            const startD = new Date(ev.start_time);
+            timeStr = startD.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          }
+
+          pill.innerHTML = `
+            <i data-lucide="${iconName}"></i>
+            <span class="cal-month-pill-title">${escapeHtml(ev.title)}</span>
+            ${timeStr ? `<span class="cal-month-pill-time">${timeStr}</span>` : ''}
+          `;
+          pill.title = `${ev.title}${timeStr ? ' (' + timeStr + ')' : ''}`;
+
+          pill.onclick = (e) => {
+            e.stopPropagation();
+            openEventPopover(ev, pill);
+          };
+
+          eventsList.appendChild(pill);
+        });
+
+        if (overflowCount > 0) {
+          const moreBadge = document.createElement('div');
+          moreBadge.className = 'cal-month-more-badge';
+          moreBadge.textContent = `+${overflowCount}`;
+          moreBadge.title = `Показать еще ${overflowCount} событий`;
+          moreBadge.onclick = (e) => {
+            e.stopPropagation();
+            selectedCalendarDate = new Date(cData.date);
+            currentCalendarDate = new Date(cData.date);
+            currentWeekStart = new Date(cData.date);
+            changeCalendarView('day');
+          };
+          eventsList.appendChild(moreBadge);
+        }
+
+        cell.appendChild(eventsList);
+
+        cell.onclick = (e) => {
+          if (e.target === cell || e.target === eventsList) {
+            if (typeof openQuickAddModal === 'function') {
+              openQuickAddModal(isoDate, 10, 0);
+            }
+          }
+        };
+
+        cell.ondblclick = () => {
+          selectedCalendarDate = new Date(cData.date);
+          currentCalendarDate = new Date(cData.date);
+          currentWeekStart = new Date(cData.date);
+          changeCalendarView('day');
+        };
+
+        cellsContainer.appendChild(cell);
+      });
+
+      monthGrid.appendChild(cellsContainer);
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function getEventsPluralRu(n) {
+      const mod10 = n % 10;
+      const mod100 = n % 100;
+      if (mod100 >= 11 && mod100 <= 19) return 'событий';
+      if (mod10 === 1) return 'событие';
+      if (mod10 >= 2 && mod10 <= 4) return 'события';
+      return 'событий';
+    }
+
+    function renderYearViewGrid() {
+      const yearGrid = document.getElementById('cal-year-grid');
+      if (!yearGrid) return;
+      yearGrid.innerHTML = '';
+
+      const year = currentCalendarDate.getFullYear();
+      const todayStr = '2026-11-12';
+
+      for (let m = 0; m < 12; m++) {
+        const monthCard = document.createElement('div');
+        monthCard.className = 'cal-year-month-card';
+        monthCard.setAttribute('data-month', String(m));
+
+        // Month title (clicking switches to Month view for month m)
+        const monthTitle = document.createElement('div');
+        monthTitle.className = 'cal-year-month-title';
+        monthTitle.textContent = MONTH_NAMES[m];
+        monthTitle.onclick = () => {
+          currentCalendarDate = new Date(year, m, 1);
+          selectedCalendarDate = new Date(year, m, 1);
+          currentWeekStart = new Date(year, m, 1);
+          changeCalendarView('month');
+        };
+        monthCard.appendChild(monthTitle);
+
+        // Weekday initials header (Spacer + П В С Ч П С В)
+        const weekdaysHeader = document.createElement('div');
+        weekdaysHeader.className = 'cal-year-weekdays';
+        const spacer = document.createElement('span');
+        spacer.className = 'cal-year-week-spacer';
+        weekdaysHeader.appendChild(spacer);
+        ['П', 'В', 'С', 'Ч', 'П', 'С', 'В'].forEach(initial => {
+          const span = document.createElement('span');
+          span.textContent = initial;
+          weekdaysHeader.appendChild(span);
+        });
+        monthCard.appendChild(weekdaysHeader);
+
+        // Weeks container
+        const weeksContainer = document.createElement('div');
+        weeksContainer.className = 'cal-year-weeks';
+
+        // 42 days for month m
+        const firstDay = new Date(year, m, 1);
+        let startDay = firstDay.getDay() - 1;
+        if (startDay === -1) startDay = 6;
+
+        const prevMonthLast = new Date(year, m, 0).getDate();
+        const daysInMonth = new Date(year, m + 1, 0).getDate();
+
+        const monthDays = [];
+        for (let i = startDay - 1; i >= 0; i--) {
+          const d = prevMonthLast - i;
+          monthDays.push({ date: new Date(year, m - 1, d), dayNum: d, isCurrentMonth: false });
+        }
+        for (let d = 1; d <= daysInMonth; d++) {
+          monthDays.push({ date: new Date(year, m, d), dayNum: d, isCurrentMonth: true });
+        }
+        const rem = 42 - monthDays.length;
+        for (let d = 1; d <= rem; d++) {
+          monthDays.push({ date: new Date(year, m + 1, d), dayNum: d, isCurrentMonth: false });
+        }
+
+        // 6 week rows
+        for (let r = 0; r < 6; r++) {
+          const rowDiv = document.createElement('div');
+          rowDiv.className = 'cal-year-week-row';
+
+          const mondayCell = monthDays[r * 7];
+          const weekNum = getWeekNumber(mondayCell.date);
+          const weekNumSpan = document.createElement('span');
+          weekNumSpan.className = 'cal-year-week-num';
+          weekNumSpan.textContent = String(weekNum);
+          rowDiv.appendChild(weekNumSpan);
+
+          for (let c = 0; c < 7; c++) {
+            const cData = monthDays[r * 7 + c];
+            const isoDate = `${cData.date.getFullYear()}-${String(cData.date.getMonth() + 1).padStart(2, '0')}-${String(cData.date.getDate()).padStart(2, '0')}`;
+            const isToday = (isoDate === todayStr);
+
+            // Visible events count
+            const dayEvents = cachedCalendarEvents.filter(ev => {
+              if (!isEventVisible(ev)) return false;
+              return ev.start_time && ev.start_time.startsWith(isoDate);
+            });
+            const count = dayEvents.length;
+
+            let density = '0';
+            if (count === 1) density = '1';
+            else if (count >= 2 && count <= 3) density = '2';
+            else if (count >= 4) density = '3';
+
+            const dayCell = document.createElement('div');
+            dayCell.className = 'cal-year-day-cell';
+            dayCell.setAttribute('data-date', isoDate);
+            dayCell.setAttribute('data-density', density);
+            if (!cData.isCurrentMonth) dayCell.classList.add('other-month');
+            if (isToday) dayCell.classList.add('is-today');
+            dayCell.textContent = String(cData.dayNum);
+
+            let tooltip = `${isoDate}`;
+            if (count > 0) {
+              tooltip = `${count} ${getEventsPluralRu(count)} (${isoDate})`;
+            }
+            dayCell.title = tooltip;
+
+            // Click drills down to Day view
+            dayCell.onclick = (e) => {
+              e.stopPropagation();
+              selectedCalendarDate = new Date(cData.date);
+              currentCalendarDate = new Date(cData.date);
+              currentWeekStart = new Date(cData.date);
+              changeCalendarView('day');
+            };
+
+            rowDiv.appendChild(dayCell);
+          }
+
+          weeksContainer.appendChild(rowDiv);
+        }
+
+        monthCard.appendChild(weeksContainer);
+        yearGrid.appendChild(monthCard);
+      }
+    }
+
     // ========================================================================
     // BACKEND DATA FETCHING WITH FALLBACK
     // ========================================================================
     async function refreshCalendarEvents() {
       const year = currentCalendarDate.getFullYear();
-      const month = currentCalendarDate.getMonth();
-      const startDate = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
-      const endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59)).toISOString().slice(0, 10);
+      let startDate, endDate;
+      if (currentCalendarViewMode === 'year') {
+        startDate = new Date(Date.UTC(year, 0, 1)).toISOString().slice(0, 10);
+        endDate = new Date(Date.UTC(year, 12, 0)).toISOString().slice(0, 10);
+      } else if (currentCalendarViewMode === 'month') {
+        const m = currentCalendarDate.getMonth();
+        const startD = new Date(Date.UTC(year, m - 1, 20));
+        const endD = new Date(Date.UTC(year, m + 1, 15));
+        startDate = startD.toISOString().slice(0, 10);
+        endDate = endD.toISOString().slice(0, 10);
+      } else {
+        const month = currentCalendarDate.getMonth();
+        startDate = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+        endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59)).toISOString().slice(0, 10);
+      }
 
       const user = getCurrentUser();
       const employeeId = user.telegram_id === 100001 ? 1 : (user.telegram_id === 100002 ? 2 : (user.telegram_id === 100003 ? 3 : 4));
@@ -3427,7 +3888,7 @@
       if (!ghost) return;
 
       const ghostRect = ghost.getBoundingClientRect();
-      const popoverWidth = popover.offsetWidth || 340;
+      const popoverWidth = popover.offsetWidth || 384;
       const popoverHeight = popover.offsetHeight || 360;
 
       const spaceRight = window.innerWidth - ghostRect.right - 12;
@@ -3656,7 +4117,9 @@
     }
 
     // Dynamic tracking on window resize
+    window.addEventListener('resize', syncCalendarScrollbarGutter);
     window.addEventListener('resize', () => {
+      syncCalendarScrollbarGutter();
       if (activeDragGhost) {
         requestAnimationFrame(repositionDragCreatePopover);
       }
@@ -3666,6 +4129,7 @@
     const calSidebarElement = document.getElementById('cal-sidebar');
     if (calSidebarElement) {
       calSidebarElement.addEventListener('transitionend', () => {
+        syncCalendarScrollbarGutter();
         requestAnimationFrame(repositionDragCreatePopover);
       });
     }
@@ -3675,6 +4139,7 @@
       const mainAreaEl = document.querySelector('.cal-main-area');
       if (mainAreaEl) {
         const ro = new ResizeObserver(() => {
+          syncCalendarScrollbarGutter();
           if (activeDragGhost) {
             requestAnimationFrame(repositionDragCreatePopover);
           }
@@ -4815,6 +5280,7 @@
       initEmployeeSearchUI();
       renderCalendarGrid();
       refreshCalendarEvents();
+      syncCalendarScrollbarGutter();
       if (window.lucide) {
         lucide.createIcons();
       }
