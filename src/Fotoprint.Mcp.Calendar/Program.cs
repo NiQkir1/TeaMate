@@ -300,27 +300,34 @@ app.MapGet("/tools/search_meeting_rag", [RequirePermission("calendar:read_meetin
         meetingAccessGroups.Add("c-level");
     }
 
-    var queryVector = await embeddingClient.EmbedTextAsync(query, "RETRIEVAL_QUERY", ct);
-    if (queryVector == null)
+    var effectiveTopK = top_k is > 0 and <= 20 ? top_k.Value : 5;
+    var searchMode = "text_fallback";
+    List<CorporateDocumentChunk> matchedChunks = new();
+
+    if (embeddingClient.IsConfigured && !FotoprintRepository.IsGeneralCatalogQuery(query))
     {
-        return Results.Ok(new
+        var queryVector = await embeddingClient.EmbedTextAsync(query, "RETRIEVAL_QUERY", ct);
+        if (queryVector != null)
         {
-            found = false,
-            source = "MCP-Calendar",
-            storage_table = "meeting_chunks",
-            master_id = secContext.MasterId,
-            message = "Не удалось построить векторный эмбеддинг запроса."
-        });
+            matchedChunks = await repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, effectiveTopK, ct);
+            if (matchedChunks.Count > 0)
+            {
+                searchMode = "vector";
+            }
+        }
     }
 
-    var effectiveTopK = top_k is > 0 and <= 20 ? top_k.Value : 5;
-    var matchedChunks = await repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, effectiveTopK, ct);
+    if (matchedChunks.Count == 0)
+    {
+        matchedChunks = await repo.SearchMeetingTextChunksAsync(query, meetingAccessGroups, effectiveTopK, ct);
+        searchMode = "text_fallback";
+    }
 
     var traceId = httpContext.Request.Headers["X-Trace-Id"].FirstOrDefault();
     if (!string.IsNullOrWhiteSpace(traceId))
     {
         await langfuse.LogEventAsync(traceId, "MCP:Calendar:SearchMeetingRag", "INFO",
-            $"Meeting RAG search '{query}' for MasterId={secContext.MasterId} (matches={matchedChunks.Count}, groups=[{string.Join(", ", meetingAccessGroups)}])", ct: ct);
+            $"Meeting RAG search '{query}' for MasterId={secContext.MasterId} (mode={searchMode}, matches={matchedChunks.Count}, groups=[{string.Join(", ", meetingAccessGroups)}])", ct: ct);
     }
 
     if (matchedChunks.Count == 0)
@@ -330,6 +337,7 @@ app.MapGet("/tools/search_meeting_rag", [RequirePermission("calendar:read_meetin
             found = false,
             source = "MCP-Calendar",
             storage_table = "meeting_chunks",
+            search_mode = searchMode,
             master_id = secContext.MasterId,
             is_director = secContext.IsExecutive,
             access_groups = meetingAccessGroups,
@@ -347,6 +355,7 @@ app.MapGet("/tools/search_meeting_rag", [RequirePermission("calendar:read_meetin
         found = true,
         source = "MCP-Calendar",
         storage_table = "meeting_chunks",
+        search_mode = searchMode,
         master_id = secContext.MasterId,
         is_director = secContext.IsExecutive,
         meeting_id = bestMeetingId,

@@ -41,6 +41,7 @@ public interface IFotoprintRepository
     Task<List<CorporateDocumentChunk>> GetMeetingChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
     Task UpdateMeetingChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default) => Task.CompletedTask;
     Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default);
+    Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
 
     // Meetings, Notes, Protocols, Action Items
     Task<Guid> CreateMeetingAsync(
@@ -801,27 +802,8 @@ public class FotoprintRepository : IFotoprintRepository
         }
 
         // Фолбэк по отдельным ключевым словам (>= 3 символов), включая корни слов (первые 4-5 букв для русской морфологии)
-        var rawWords = (queryText ?? "")
-            .Split(new[] { ' ', ',', '.', ';', '?', '!', '-', '"', '\'', '«', '»' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(t => t.Length >= 3)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var patternSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var word in rawWords)
-        {
-            patternSet.Add($"%{word}%");
-            if (word.Length >= 5)
-            {
-                patternSet.Add($"%{word[..^1]}%");
-            }
-            if (word.Length >= 6)
-            {
-                patternSet.Add($"%{word[..^2]}%");
-            }
-        }
-
-        if (patternSet.Count == 0)
+        var patterns = BuildSearchPatterns(queryText);
+        if (patterns.Length == 0)
         {
             return chunks;
         }
@@ -843,12 +825,121 @@ public class FotoprintRepository : IFotoprintRepository
 
         var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
         {
-            Patterns = patternSet.ToArray(),
+            Patterns = patterns,
             Groups = groupsJson,
             TopK = topK
         }, cancellationToken: ct));
 
         return kwChunks.ToList();
+    }
+
+    public async Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+    {
+        if (meetingAccessGroups == null || meetingAccessGroups.Count == 0)
+        {
+            return new List<CorporateDocumentChunk>();
+        }
+
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var groupsJson = JsonSerializer.Serialize(meetingAccessGroups.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+
+        if (IsGeneralCatalogQuery(queryText))
+        {
+            const string allSql = """
+                SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                       mc.chunk_text AS ChunkText,
+                       mc.metadata::text AS MetadataJson
+                FROM meeting_chunks mc
+                JOIN meetings m ON m.id = mc.meeting_id
+                WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+                ORDER BY m.start_time DESC, mc.chunk_index ASC
+                LIMIT @TopK;
+            """;
+
+            var recent = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(allSql, new
+            {
+                Groups = groupsJson,
+                TopK = Math.Max(topK, 10)
+            }, cancellationToken: ct));
+            return recent.ToList();
+        }
+
+        const string exactSql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText,
+                   mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            JOIN meetings m ON m.id = mc.meeting_id
+            WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (mc.chunk_text ILIKE '%' || @QueryText || '%' OR m.title ILIKE '%' || @QueryText || '%')
+            ORDER BY m.start_time DESC, mc.chunk_index ASC
+            LIMIT @TopK;
+        """;
+
+        var exact = (await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(exactSql, new
+        {
+            QueryText = queryText,
+            Groups = groupsJson,
+            TopK = topK
+        }, cancellationToken: ct))).ToList();
+
+        if (exact.Count > 0)
+        {
+            return exact;
+        }
+
+        var patterns = BuildSearchPatterns(queryText);
+        if (patterns.Length == 0)
+        {
+            return exact;
+        }
+
+        const string kwSql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText,
+                   mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            JOIN meetings m ON m.id = mc.meeting_id
+            WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (mc.chunk_text ILIKE ANY(@Patterns) OR m.title ILIKE ANY(@Patterns))
+            ORDER BY m.start_time DESC, mc.chunk_index ASC
+            LIMIT @TopK;
+        """;
+
+        var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
+        {
+            Patterns = patterns,
+            Groups = groupsJson,
+            TopK = topK
+        }, cancellationToken: ct));
+
+        return kwChunks.ToList();
+    }
+
+    private static string[] BuildSearchPatterns(string? queryText)
+    {
+        var rawWords = (queryText ?? "")
+            .Split(new[] { ' ', ',', '.', ';', '?', '!', '-', '"', '\'', '«', '»' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(t => t.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var patternSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var word in rawWords)
+        {
+            patternSet.Add($"%{word}%");
+            if (word.Length >= 5)
+            {
+                patternSet.Add($"%{word[..^1]}%");
+            }
+            if (word.Length >= 6)
+            {
+                patternSet.Add($"%{word[..^2]}%");
+            }
+        }
+
+        return patternSet.ToArray();
     }
 
     public async Task<Guid> CreateMeetingAsync(

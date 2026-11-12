@@ -167,6 +167,16 @@
     },
     {
       "parameters": {
+        "jsCode": "const stt = $json || {};\nif (stt.success === false || !String(stt.text || '').trim()) {\n  throw new Error('STT failed or empty transcript: ' + (stt.error || 'empty text'));\n}\nreturn [{ json: stt }];"
+      },
+      "name": "Validate STT Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "node-validate-stt"
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "http://ai-gateway:8080/api/llm/generate",
         "sendBody": true,
@@ -289,6 +299,13 @@
       ]
     },
     "Whisper Transcribe (STT)": {
+      "main": [
+        [
+          { "node": "Validate STT Transcript", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate STT Transcript": {
       "main": [
         [
           { "node": "LLM Summarize Meeting", "type": "main", "index": 0 }

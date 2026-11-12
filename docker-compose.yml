@@ -264,7 +264,9 @@ services:
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      AUDIO_ENGINE_PATH: /usr/local/bin/whisper-cli
+      WHISPER_MODEL_PATH: /app/models/ggml-base.bin
       Langfuse__BaseUrl: http://langfuse-web:3000
       Langfuse__PublicKey: ${LANGFUSE_PUBLIC_KEY:-pk-lf-fotoprint-local}
       Langfuse__SecretKey: ${LANGFUSE_SECRET_KEY:-sk-lf-fotoprint-local}
@@ -279,6 +281,7 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./config/vocabulary.yaml:/app/config/vocabulary.yaml:ro
+      - ./models:/app/models:ro
     networks:
       - fotoprint-net
 

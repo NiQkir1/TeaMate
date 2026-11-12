@@ -1692,29 +1692,27 @@ app.MapPost("/api/meetings/rag-search", async (
     }
 
     var startSpan = DateTime.UtcNow;
-    var queryVector = await embeddingClient.EmbedTextAsync(req.Query, "RETRIEVAL_QUERY", ct);
-    if (queryVector == null)
+    var searchMode = "text_fallback";
+    List<CorporateDocumentChunk> matchedChunks = new();
+
+    if (embeddingClient.IsConfigured && !FotoprintRepository.IsGeneralCatalogQuery(req.Query))
     {
-        await langfuse.CreateTraceAsync(
-            traceId: traceId,
-            name: "google-meet-rag-search",
-            userId: secContext.MasterId.ToString(),
-            sessionId: null,
-            metadata: new { master_id = secContext.MasterId, is_director = secContext.IsExecutive },
-            tags: new[] { "channel:api", "module:meetings", "source:google_meet", "status:error" },
-            input: req.Query,
-            output: "Не удалось построить векторный эмбеддинг запроса.",
-            ct: ct);
-        return Results.Ok(new
+        var queryVector = await embeddingClient.EmbedTextAsync(req.Query, "RETRIEVAL_QUERY", ct);
+        if (queryVector != null)
         {
-            found = false,
-            trace_id = traceId,
-            master_id = secContext.MasterId,
-            message = "Не удалось построить векторный эмбеддинг запроса."
-        });
+            matchedChunks = await repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, req.TopK, ct);
+            if (matchedChunks.Count > 0)
+            {
+                searchMode = "vector";
+            }
+        }
     }
 
-    var matchedChunks = await repo.SearchMeetingSimilarChunksAsync(queryVector, meetingAccessGroups, req.TopK, ct);
+    if (matchedChunks.Count == 0)
+    {
+        matchedChunks = await repo.SearchMeetingTextChunksAsync(req.Query, meetingAccessGroups, req.TopK, ct);
+        searchMode = "text_fallback";
+    }
     var endSpan = DateTime.UtcNow;
 
     if (matchedChunks.Count == 0)
@@ -1821,6 +1819,7 @@ app.MapPost("/api/meetings/rag-search", async (
     return Results.Ok(new
     {
         found = true,
+        search_mode = searchMode,
         trace_id = traceId,
         master_id = secContext.MasterId,
         is_director = secContext.IsExecutive,

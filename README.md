@@ -6,7 +6,7 @@
 - **Чат, выбор инструментов и саммаризация (LLM):** `nvidia/nemotron-3-ultra-550b-a55b` (NVIDIA NIM, `enable_thinking: true`)
 - **Быстрый синтез ответов, детекция смены контекста и Fallback:** `nvidia/nemotron-3.5-bolt-e4b`
 - **Векторные эмбеддинги базы знаний и созвонов (RAG):** `gemini-embedding-2` (Google Gemini API, `1536` измерений, L2-нормализация, cosine HNSW в `pgvector`)
-- **Распознавание речи (STT):** локальный движок Whisper / Vulkan GPU с облачным fallback `gemini-1.5-flash` и словарём терминологии типографии
+- **Распознавание речи (STT):** локальный движок Whisper / Vulkan GPU с облачным fallback `gemini-2.5-flash` и словарём терминологии типографии
 
 Система автоматизирует:
 - подготовку к планеркам (`pre-meeting`), живого ассистента на встречах (`live-copilot`) и автоматическое протоколирование (**Minutes of Meeting / DOCX / PDF-HTML**);

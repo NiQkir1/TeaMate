@@ -63,7 +63,7 @@ public class LocalEngineAudioConfig
 
 public class GeminiAudioConfig
 {
-    public string Model { get; set; } = "gemini-1.5-flash";
+    public string Model { get; set; } = "gemini-2.5-flash";
 }
 
 public class ContextSwitchConfig

@@ -634,7 +634,7 @@ public class AudioTranscriptionTests
             Assert.True(result.Success);
             Assert.Equal("Распознанный текст совещания", result.Text);
             Assert.NotNull(capturedEndpoint);
-            Assert.StartsWith("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent", capturedEndpoint);
+            Assert.StartsWith("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", capturedEndpoint);
         }
         finally
         {

@@ -56,7 +56,7 @@ public class FotoprintConfigTests
         Assert.Equal("auto", config.Audio.Provider);
         Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
         Assert.Equal(300, config.Audio.Engine.TimeoutSeconds);
-        Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
+        Assert.Equal("gemini-2.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
     }
 
@@ -78,7 +78,7 @@ public class FotoprintConfigTests
         Assert.Equal("auto", config.Audio.Provider);
         Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
         Assert.Equal(300, config.Audio.Engine.TimeoutSeconds);
-        Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
+        Assert.Equal("gemini-2.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
     }
 }
