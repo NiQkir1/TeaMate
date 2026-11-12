@@ -52,6 +52,17 @@
   --cal-dropdown-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   --cal-dropdown-hover: rgba(255, 255, 255, 0.06);
 
+  /* Calendar Day, Month & Year Views Tokens (Task 019B) */
+  --cal-month-cell-bg: #141414;
+  --cal-month-cell-other-bg: #0d0e12;
+  --cal-month-cell-hover: #191b24;
+  --cal-year-card-bg: #121318;
+  --cal-year-card-border: rgba(255, 255, 255, 0.08);
+  --cal-year-card-hover: #161822;
+  --cal-year-heat-1: rgba(59, 130, 246, 0.20);
+  --cal-year-heat-2: rgba(59, 130, 246, 0.45);
+  --cal-year-heat-3: rgba(59, 130, 246, 0.75);
+
   --obsidian-emerald: #10b981;
   --obsidian-emerald-muted: rgba(16, 185, 129, 0.12);
   --obsidian-emerald-border: rgba(16, 185, 129, 0.35);
@@ -2262,4 +2273,430 @@ mark.cal-search-highlight,
   font-size: 12px;
   color: #71717a;
 }
+
+/* ==========================================================================
+   FOTOPRINT AI COPILOT — CALENDAR DAY, MONTH & YEAR VIEWS (Task 019B)
+   Obsidian Pro Theme: Linear matte dark surfaces, surgical hairline borders,
+   indigo/blue heatmap tiers, solid Today badges, high-contrast event pills.
+   ========================================================================== */
+
+/* View Dropdown (.cal-view-dropdown) */
+[data-theme="obsidian"] .cal-view-dropdown,
+.cal-view-dropdown {
+  background: #141414;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 0 10px;
+  height: 32px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-theme="obsidian"] .cal-view-dropdown:hover,
+.cal-view-dropdown:hover {
+  background: #1a1a22;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="obsidian"] .cal-view-dropdown:focus,
+.cal-view-dropdown:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+
+[data-theme="obsidian"] .cal-view-dropdown option,
+.cal-view-dropdown option {
+  background: #141414;
+  color: #f8fafc;
+}
+
+/* --------------------------------------------------------------------------
+   MONTH VIEW (.cal-month-grid)
+   -------------------------------------------------------------------------- */
+
+[data-theme="obsidian"] .cal-month-grid,
+.cal-month-grid {
+  background: #0d0e13;
+  color: #f8fafc;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+[data-theme="obsidian"] .cal-month-weekdays,
+.cal-month-weekdays {
+  background: #141414;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="obsidian"] .cal-month-weekday,
+.cal-month-weekday {
+  color: #71717a;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 4px;
+}
+
+[data-theme="obsidian"] .cal-month-cells,
+.cal-month-cells {
+  background-color: rgba(255, 255, 255, 0.06); /* hairline borders via gap */
+  gap: 1px;
+}
+
+[data-theme="obsidian"] .cal-month-cell,
+.cal-month-cell {
+  background: var(--cal-month-cell-bg, #141414);
+  color: #f8fafc;
+  min-height: 80px;
+  min-width: 0;
+  padding: 6px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-theme="obsidian"] .cal-month-cell:hover,
+.cal-month-cell:hover {
+  background: var(--cal-month-cell-hover, #191b24);
+}
+
+[data-theme="obsidian"] .cal-month-cell.is-today,
+.cal-month-cell.is-today {
+  box-shadow: inset 0 2px 0 0 #3b82f6;
+}
+
+[data-theme="obsidian"] .cal-month-cell.other-month,
+.cal-month-cell.other-month {
+  background: var(--cal-month-cell-other-bg, #0d0e12);
+  opacity: 0.55;
+}
+
+[data-theme="obsidian"] .cal-month-cell.other-month .cal-month-day-num,
+.cal-month-cell.other-month .cal-month-day-num {
+  color: #52525b;
+}
+
+[data-theme="obsidian"] .cal-month-cell-header,
+.cal-month-cell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+[data-theme="obsidian"] .cal-month-day-num,
+.cal-month-day-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+[data-theme="obsidian"] .cal-month-day-num.is-today,
+[data-theme="obsidian"] .cal-month-cell.is-today .cal-month-day-num,
+.cal-month-day-num.is-today,
+.cal-month-cell.is-today .cal-month-day-num {
+  background: #3b82f6 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.4);
+}
+
+[data-theme="obsidian"] .cal-month-week-num,
+.cal-month-week-num {
+  font-size: 10.5px;
+  font-family: var(--font-mono, monospace);
+  color: #52525b;
+  font-weight: 500;
+}
+
+/* Event Pills */
+[data-theme="obsidian"] .cal-month-events-list,
+.cal-month-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: hidden;
+  min-height: 0;
+  flex: 1;
+}
+
+[data-theme="obsidian"] .cal-month-event-pill,
+.cal-month-event-pill {
+  background: #1a1c26;
+  border-left: 2.5px solid #6366f1;
+  color: #f8fafc;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 2px 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+[data-theme="obsidian"] .cal-month-event-pill:hover,
+.cal-month-event-pill:hover {
+  background: #222533;
+  transform: translateY(-0.5px);
+}
+
+[data-theme="obsidian"] .cal-month-event-pill.cal-event-routine,
+.cal-month-event-pill.cal-event-routine {
+  background: rgba(217, 119, 6, 0.16);
+  border-left: 2.5px solid #d97706;
+  color: #fde68a;
+}
+
+[data-theme="obsidian"] .cal-month-event-pill.cal-event-task,
+.cal-month-event-pill.cal-event-task {
+  background: rgba(59, 130, 246, 0.18);
+  border-left: 2.5px solid #3b82f6;
+  color: #93c5fd;
+}
+
+[data-theme="obsidian"] .cal-month-event-pill.cal-event-meeting,
+.cal-month-event-pill.cal-event-meeting {
+  background: rgba(99, 102, 241, 0.18);
+  border-left: 2.5px solid #818cf8;
+  color: #c7d2fe;
+}
+
+[data-theme="obsidian"] .cal-month-event-pill svg,
+[data-theme="obsidian"] .cal-month-event-pill i,
+[data-theme="obsidian"] .cal-month-event-pill .cal-month-event-icon,
+.cal-month-event-pill svg,
+.cal-month-event-pill i,
+.cal-month-event-pill .cal-month-event-icon {
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+[data-theme="obsidian"] .cal-month-event-pill .cal-month-event-title,
+.cal-month-event-pill .cal-month-event-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #f8fafc;
+}
+
+[data-theme="obsidian"] .cal-month-event-pill .cal-month-event-time,
+.cal-month-event-pill .cal-month-event-time {
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  color: #94a3b8;
+  flex-shrink: 0;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+[data-theme="obsidian"] .cal-month-cell.other-month .cal-month-event-pill,
+.cal-month-cell.other-month .cal-month-event-pill {
+  opacity: 0.5;
+}
+
+/* More Badge */
+[data-theme="obsidian"] .cal-month-more-badge,
+.cal-month-more-badge {
+  background: #1a1c26;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #93c5fd;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  align-self: flex-start;
+  margin-top: 2px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+[data-theme="obsidian"] .cal-month-more-badge:hover,
+.cal-month-more-badge:hover {
+  background: #25355a;
+  color: #ffffff;
+  border-color: #3b82f6;
+}
+
+/* --------------------------------------------------------------------------
+   YEAR VIEW (.cal-year-grid)
+   -------------------------------------------------------------------------- */
+
+[data-theme="obsidian"] .cal-year-grid,
+.cal-year-grid {
+  background: #0d0e13;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+[data-theme="obsidian"] .cal-year-month-card,
+.cal-year-month-card {
+  background: var(--cal-year-card-bg, #121318);
+  border: 1px solid var(--cal-year-card-border, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-theme="obsidian"] .cal-year-month-card:hover,
+.cal-year-month-card:hover {
+  background: var(--cal-year-card-hover, #161822);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="obsidian"] .cal-year-month-title,
+.cal-year-month-title {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: color 0.15s ease;
+}
+
+[data-theme="obsidian"] .cal-year-month-title:hover,
+.cal-year-month-title:hover {
+  color: #3b82f6;
+}
+
+[data-theme="obsidian"] .cal-year-weekdays,
+.cal-year-weekdays {
+  color: #71717a;
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+[data-theme="obsidian"] .cal-year-weekday,
+.cal-year-weekday {
+  color: #71717a;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
+}
+
+[data-theme="obsidian"] .cal-year-week-row,
+.cal-year-week-row {
+  align-items: center;
+}
+
+[data-theme="obsidian"] .cal-year-week-num,
+.cal-year-week-num {
+  color: #52525b;
+  font-family: var(--font-mono, monospace);
+  font-size: 9.5px;
+  text-align: right;
+  padding-right: 4px;
+}
+
+[data-theme="obsidian"] .cal-year-day-cell,
+.cal-year-day-cell {
+  color: #cbd5e1;
+  font-weight: 500;
+  font-size: 10.5px;
+  border-radius: 3px;
+  aspect-ratio: 1 / 1;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease, outline 0.12s ease;
+}
+
+[data-theme="obsidian"] .cal-year-day-cell[data-density="0"],
+.cal-year-day-cell[data-density="0"] {
+  background: transparent;
+}
+
+[data-theme="obsidian"] .cal-year-day-cell.other-month,
+.cal-year-day-cell.other-month {
+  opacity: 0.18;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Progressive Heatmap Shading (Linear Obsidian Blue/Indigo) */
+[data-theme="obsidian"] .cal-year-day-cell[data-density="1"],
+.cal-year-day-cell[data-density="1"] {
+  background: var(--cal-year-heat-1, rgba(59, 130, 246, 0.20));
+  color: #bfdbfe;
+}
+
+[data-theme="obsidian"] .cal-year-day-cell[data-density="2"],
+.cal-year-day-cell[data-density="2"] {
+  background: var(--cal-year-heat-2, rgba(59, 130, 246, 0.45));
+  color: #ffffff;
+  font-weight: 600;
+}
+
+[data-theme="obsidian"] .cal-year-day-cell[data-density="3"],
+.cal-year-day-cell[data-density="3"] {
+  background: var(--cal-year-heat-3, rgba(59, 130, 246, 0.75));
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
+}
+
+/* Today Badge in Year View */
+[data-theme="obsidian"] .cal-year-day-cell.is-today,
+.cal-year-day-cell.is-today {
+  background: #3b82f6 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border-radius: 50% !important;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.6) !important;
+}
+
+[data-theme="obsidian"] .cal-year-day-cell:hover:not(.other-month),
+.cal-year-day-cell:hover:not(.other-month) {
+  outline: 1px solid #3b82f6;
+  transform: scale(1.15);
+  z-index: 2;
+}
+
+/* --------------------------------------------------------------------------
+   DAY VIEW (.cal-timegrid-col in 1-column mode)
+   -------------------------------------------------------------------------- */
+[data-theme="obsidian"] .cal-main-area[style*="--cal-grid-cols: 1"] .cal-week-col-header,
+[data-theme="obsidian"] .cal-main-area[style*="--cal-grid-cols:1"] .cal-week-col-header {
+  border-right: none;
+}
+
 
