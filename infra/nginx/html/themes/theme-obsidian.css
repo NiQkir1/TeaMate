@@ -41,6 +41,17 @@
   --cal-popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
   --cal-popover-blur: none;
 
+  /* Employee Search, Highlight, Chips & Dropdown Tokens (Task 018C) */
+  --cal-highlight-bg: rgba(59, 130, 246, 0.28);
+  --cal-highlight-text: #93c5fd;
+  --cal-chip-bg: #25355a;
+  --cal-chip-border: #3b82f6;
+  --cal-chip-text: #93c5fd;
+  --cal-dropdown-bg: #1a1a1f;
+  --cal-dropdown-border: rgba(255, 255, 255, 0.12);
+  --cal-dropdown-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --cal-dropdown-hover: rgba(255, 255, 255, 0.06);
+
   --obsidian-emerald: #10b981;
   --obsidian-emerald-muted: rgba(16, 185, 129, 0.12);
   --obsidian-emerald-border: rgba(16, 185, 129, 0.35);
@@ -1913,5 +1924,342 @@ main:not(.cal-main-area) {
 
 #drag-create-submit-btn:active {
   transform: translateY(0);
+}
+
+/* ==========================================================================
+   FOTOPRINT AI COPILOT — SMART EMPLOYEE SEARCH & CHIPS (Task 018C)
+   Obsidian Pro Theme: Matte graphite surfaces, surgical indigo/blue highlights,
+   crisp Raycast-style chip badges, zero emoji, WCAG AA/AAA contrast.
+   ========================================================================== */
+
+/* Search Highlight */
+[data-theme="obsidian"] mark.cal-search-highlight,
+[data-theme="obsidian"] .cal-search-highlight,
+mark.cal-search-highlight,
+.cal-search-highlight {
+  background: var(--cal-highlight-bg, rgba(59, 130, 246, 0.28));
+  color: var(--cal-highlight-text, #93c5fd);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* Selected Participants Chips Container */
+#drag-create-selected-chips,
+#quick-selected-chips,
+.cal-emp-chips-container,
+.cal-selected-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-height: 0;
+}
+
+#drag-create-selected-chips:empty,
+#quick-selected-chips:empty,
+.cal-emp-chips-container:empty,
+.cal-selected-chips:empty {
+  display: none;
+  margin-bottom: 0;
+}
+
+/* Selected Participant Chip */
+.cal-emp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--cal-chip-bg, #25355a);
+  border: 1px solid var(--cal-chip-border, #3b82f6);
+  color: var(--cal-chip-text, #93c5fd);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 3px 8px;
+  border-radius: 12px;
+  user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cal-emp-chip:hover {
+  background: #2b3e6b;
+  border-color: #60a5fa;
+}
+
+/* Chip Remove Button */
+.cal-emp-chip .cal-emp-chip-remove,
+.cal-emp-chip .cal-chip-remove,
+.cal-emp-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-left: 2px;
+  color: var(--cal-chip-text, #93c5fd);
+  cursor: pointer;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.75;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.cal-emp-chip .cal-emp-chip-remove:hover,
+.cal-emp-chip .cal-chip-remove:hover,
+.cal-emp-chip button:hover {
+  opacity: 1;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.cal-emp-chip svg,
+.cal-emp-chip i {
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+}
+
+/* Search Box Container */
+.cal-emp-search-box,
+.cal-emp-search-wrap,
+.cal-sidebar-emp-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+/* Search Input */
+.cal-emp-search-input,
+#drag-create-emp-search,
+#quick-emp-search,
+#sidebar-emp-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: #141414;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 30px 6px 10px;
+  font-size: 12.5px;
+  color: var(--obsidian-text, #f8fafc);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.cal-emp-search-input:focus,
+#drag-create-emp-search:focus,
+#quick-emp-search:focus,
+#sidebar-emp-search:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  background: #16161b;
+}
+
+.cal-emp-search-input::placeholder,
+#drag-create-emp-search::placeholder,
+#quick-emp-search::placeholder,
+#sidebar-emp-search::placeholder {
+  color: #71717a;
+  font-size: 12px;
+}
+
+/* Clear Button */
+.cal-search-clear-btn,
+#drag-create-emp-clear,
+#quick-emp-clear,
+#sidebar-emp-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: #71717a;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.cal-search-clear-btn:hover,
+#drag-create-emp-clear:hover,
+#quick-emp-clear:hover,
+#sidebar-emp-clear:hover {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.cal-search-clear-btn svg,
+.cal-search-clear-btn i {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.cal-search-clear-btn[hidden],
+.cal-search-clear-btn.hidden {
+  display: none !important;
+}
+
+/* Autocomplete Dropdown */
+.cal-emp-dropdown,
+#drag-create-emp-dropdown,
+#quick-emp-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--cal-dropdown-bg, #1a1a1f);
+  border: 1px solid var(--cal-dropdown-border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  box-shadow: var(--cal-dropdown-shadow, 0 8px 24px rgba(0, 0, 0, 0.5));
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 1100;
+  padding: 4px;
+  margin: 0;
+  list-style: none;
+  box-sizing: border-box;
+}
+
+.cal-emp-dropdown[hidden],
+.cal-emp-dropdown.hidden {
+  display: none !important;
+}
+
+/* Dropdown Scrollbar */
+.cal-emp-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cal-emp-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cal-emp-dropdown::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
+}
+
+.cal-emp-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* Dropdown Item */
+.cal-emp-dropdown-item,
+.cal-emp-item,
+.cal-emp-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+  font-size: 12px;
+  color: var(--obsidian-text, #f8fafc);
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.cal-emp-dropdown-item:hover,
+.cal-emp-dropdown-item.active,
+.cal-emp-dropdown-item.is-active,
+.cal-emp-item:hover,
+.cal-emp-item.active {
+  background: var(--cal-dropdown-hover, rgba(255, 255, 255, 0.06));
+}
+
+.cal-emp-dropdown-item.selected,
+.cal-emp-dropdown-item.is-selected {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.cal-emp-dropdown-info,
+.cal-emp-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cal-emp-dropdown-name,
+.cal-emp-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-emp-dropdown-role,
+.cal-emp-role,
+.cal-emp-dropdown-meta {
+  font-size: 11px;
+  color: #a1a1aa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-emp-dropdown-status,
+.cal-emp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cal-emp-dropdown-status.free,
+.cal-emp-status-dot.free {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+}
+
+.cal-emp-dropdown-status.busy,
+.cal-emp-status-dot.busy {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+.cal-emp-dropdown-check,
+.cal-emp-check-icon {
+  color: #3b82f6;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-emp-dropdown-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Empty State */
+.cal-emp-dropdown-empty {
+  padding: 12px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #71717a;
 }
 
