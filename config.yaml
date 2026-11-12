@@ -32,14 +32,14 @@ llm:
 
   # Модели для различных задач
   models:
-    # Основная модель: nvidia/nemotron-3.5-super-vl-120b-a12b
-    chat_model: "nvidia/nemotron-3.5-super-vl-120b-a12b"
-    # Быстрая экономичная модель для роутинга и первичной классификации (~0.7с вместо 32с)
-    fast_model: "nvidia/nemotron-3.5-lightning-30b-a3b"
+    # Основная модель: nvidia/nemotron-3-ultra-550b-a55b (выбор и параллельный вызов инструментов + сложный анализ)
+    chat_model: "nvidia/nemotron-3-ultra-550b-a55b"
+    # Быстрая модель для синтеза ответа после инструментов, роутинга и ContextSwitch (~1.1-3.9с)
+    fast_model: "nvidia/nemotron-3.5-bolt-e4b"
     # Модель для вычисления векторных эмбеддингов регламентов
-    embedding_model: "text-embedding-004"
-    # Резервная модель при недоступности основной (например при 503 content safety screening)
-    fallback_model: "nvidia/nemotron-3.5-lightning-30b-a3b"
+    embedding_model: "gemini-embedding-2"
+    # Резервная модель при недоступности основной (Circuit Breaker и повторы)
+    fallback_model: "nvidia/nemotron-3.5-bolt-e4b"
 
   # Гиперпараметры генерации ответов нейросетью
   parameters:
@@ -218,16 +218,32 @@ context_switch:
 # -----------------------------------------------------------------------------
 audio:
   enabled: true
-  provider: "auto"
+audio:
+  enabled: true
+  provider: "auto" # "auto" | "local" | "tsukiko" | "gemini"
   vocabulary_path: "config/vocabulary.yaml"
   engine:
     timeout_seconds: 1800
   gemini:
-    model: "gemini-1.5-flash"
+    model: "gemini-2.5-flash"
   max_file_size_mb: 100
 
 # -----------------------------------------------------------------------------
-# 12. MCP-СЕРВИСЫ И МИКРОСЕРВИСНЫЕ URL (MCP URLS)
+# 12. ПРОАКТИВНЫЕ TELEGRAM-УВЕДОМЛЕНИЯ (РАСПИСАНИЕ И ЗАДАЧИ)
+# -----------------------------------------------------------------------------
+notifications:
+  enabled: true
+  digest_hour_msk: 9
+  pre_meeting_window_minutes: 30
+  task_due_soon_hours: 24
+  task_urgent_hours: 2
+  save_notifications_to_session: true
+  include_empty_morning_digest: true
+  task_max_overdue_days: 30
+  max_task_alerts_per_run_per_employee: 5
+
+# -----------------------------------------------------------------------------
+# 13. MCP-СЕРВИСЫ И МИКРОСЕРВИСНЫЕ URL (MCP URLS)
 # -----------------------------------------------------------------------------
 mcp_urls:
   employee_reader: "http://mcp-employee-reader:8081"
@@ -236,7 +252,7 @@ mcp_urls:
   calendar: "http://mcp-calendar:8084"
 
 # -----------------------------------------------------------------------------
-# 13. ИНТЕГРАЦИЯ КАЛЕНДАРЯ (CALENDAR CONFIG)
+# 14. ИНТЕГРАЦИЯ КАЛЕНДАРЯ (CALENDAR CONFIG)
 # -----------------------------------------------------------------------------
 calendar:
   enabled: true

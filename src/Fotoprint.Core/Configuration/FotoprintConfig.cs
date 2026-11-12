@@ -30,8 +30,22 @@ public class FotoprintConfig
     public AgentConfig Agent { get; set; } = new();
     public ContextSwitchConfig ContextSwitch { get; set; } = new();
     public AudioConfig Audio { get; set; } = new();
+    public NotificationsConfig Notifications { get; set; } = new();
     public McpUrlsConfig McpUrls { get; set; } = new();
     public CalendarConfig Calendar { get; set; } = new();
+}
+
+public class NotificationsConfig
+{
+    public bool Enabled { get; set; } = true;
+    public int DigestHourMsk { get; set; } = 9;
+    public int PreMeetingWindowMinutes { get; set; } = 30;
+    public int TaskDueSoonHours { get; set; } = 24;
+    public int TaskUrgentHours { get; set; } = 2;
+    public bool SaveNotificationsToSession { get; set; } = true;
+    public bool IncludeEmptyMorningDigest { get; set; } = true;
+    public int TaskMaxOverdueDays { get; set; } = 30;
+    public int MaxTaskAlertsPerRunPerEmployee { get; set; } = 5;
 }
 
 public class McpUrlsConfig
@@ -70,7 +84,7 @@ public class LocalEngineAudioConfig
 
 public class GeminiAudioConfig
 {
-    public string Model { get; set; } = "gemini-1.5-flash";
+    public string Model { get; set; } = "gemini-2.5-flash";
 }
 
 public class ContextSwitchConfig
@@ -111,7 +125,7 @@ public class LlmModelsConfig
 {
     public string ChatModel { get; set; } = "gemini-1.5-flash";
     public string FastModel { get; set; } = "gemini-1.5-flash";
-    public string EmbeddingModel { get; set; } = "text-embedding-004";
+    public string EmbeddingModel { get; set; } = "gemini-embedding-2";
     public string FallbackModel { get; set; } = "gemini-1.5-flash";
 }
 

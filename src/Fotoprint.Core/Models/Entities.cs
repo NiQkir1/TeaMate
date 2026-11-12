@@ -14,6 +14,7 @@ public class Employee
     public string Department { get; set; } = string.Empty;
     public string Position { get; set; } = string.Empty;
     public List<string> AccessGroups { get; set; } = new();
+    public bool NotificationsEnabled { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -161,4 +162,63 @@ public class ActionItem
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
+
+public sealed record EmployeeNotificationPreferences
+{
+    public int EmployeeId { get; init; }
+    public long MasterId { get; init; }
+    public bool DigestEnabled { get; init; } = true;
+    public string DigestTimeMsk { get; init; } = "09:00";
+    public bool DigestWeekdaysOnly { get; init; } = true;
+    public bool PreMeetingEnabled { get; init; } = true;
+    public int PreMeetingWindowMinutes { get; init; } = 30;
+    public bool TaskDeadlinesEnabled { get; init; } = true;
+    public int TaskDueSoonHours { get; init; } = 24;
+    public int TaskUrgentHours { get; init; } = 2;
+    public string? QuietHoursStartMsk { get; init; }
+    public string? QuietHoursEndMsk { get; init; }
+    public string PreferredChannel { get; init; } = "telegram";
+    public string? ChannelAddress { get; init; }
+    public DateTime UpdatedAt { get; init; } = DateTime.UtcNow;
+
+    public static EmployeeNotificationPreferences CreateDefault(int employeeId, long masterId, int defaultDigestHourMsk = 9, int defaultPreMeetingMinutes = 30, int defaultDueSoonHours = 24, int defaultUrgentHours = 2) => new()
+    {
+        EmployeeId = employeeId,
+        MasterId = masterId,
+        DigestEnabled = true,
+        DigestTimeMsk = $"{Math.Clamp(defaultDigestHourMsk, 0, 23):D2}:00",
+        DigestWeekdaysOnly = true,
+        PreMeetingEnabled = true,
+        PreMeetingWindowMinutes = Math.Clamp(defaultPreMeetingMinutes, 5, 240),
+        TaskDeadlinesEnabled = true,
+        TaskDueSoonHours = Math.Clamp(defaultDueSoonHours, 1, 168),
+        TaskUrgentHours = Math.Clamp(defaultUrgentHours, 1, 48),
+        PreferredChannel = "telegram"
+    };
+}
+
+public sealed record UpdateNotificationPreferencesPatch(
+    [property: System.Text.Json.Serialization.JsonPropertyName("notifications_enabled")] bool? NotificationsEnabled = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("digest_enabled")] bool? DigestEnabled = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("digest_time_msk")] string? DigestTimeMsk = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("digest_weekdays_only")] bool? DigestWeekdaysOnly = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("pre_meeting_enabled")] bool? PreMeetingEnabled = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("pre_meeting_window_minutes")] int? PreMeetingWindowMinutes = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("task_deadlines_enabled")] bool? TaskDeadlinesEnabled = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("task_due_soon_hours")] int? TaskDueSoonHours = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("task_urgent_hours")] int? TaskUrgentHours = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("quiet_hours_start_msk")] string? QuietHoursStartMsk = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("quiet_hours_end_msk")] string? QuietHoursEndMsk = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("clear_quiet_hours")] bool ClearQuietHours = false,
+    [property: System.Text.Json.Serialization.JsonPropertyName("preferred_channel")] string? PreferredChannel = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("channel_address")] string? ChannelAddress = null);
+
+public sealed record UserIdentityMapping(
+    int Id,
+    int EmployeeId,
+    long MasterId,
+    string Provider,
+    string ExternalUserId,
+    DateTime CreatedAt);
+
 

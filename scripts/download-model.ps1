@@ -45,12 +45,12 @@ if (Test-Path $LocalModelPath) {
 }
 
 if ($FoundPath) {
-    Write-Host "✔ Whisper model found: $FoundPath" -ForegroundColor Green
+    Write-Host "[OK] Whisper model found: $FoundPath" -ForegroundColor Green
     exit 0
 }
 
 if ($CheckOnly) {
-    Write-Host "⚠ Model $ModelName not found in local or system cache." -ForegroundColor Yellow
+    Write-Host "[WARN] Model $ModelName not found in local or system cache." -ForegroundColor Yellow
     exit 0
 }
 
@@ -65,12 +65,19 @@ $HfUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$ModelName"
 $TempPath = "$LocalModelPath.tmp"
 
 try {
-    Invoke-WebRequest -Uri $HfUrl -OutFile $TempPath -UseBasicParsing
+    $ProgressPreference = 'SilentlyContinue'
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        & curl.exe -L --fail -o $TempPath $HfUrl
+        if ($LASTEXITCODE -ne 0) {
+            throw "curl exited with code $LASTEXITCODE"
+        }
+    } else {
+        Invoke-WebRequest -Uri $HfUrl -OutFile $TempPath -UseBasicParsing
+    }
     Move-Item -Path $TempPath -Destination $LocalModelPath -Force
-    Write-Host "✔ Successfully downloaded $ModelName to $LocalModelPath" -ForegroundColor Green
+    Write-Host "[OK] Successfully downloaded $ModelName to $LocalModelPath" -ForegroundColor Green
     exit 0
-}
-catch {
+} catch {
     if (Test-Path $TempPath) {
         Remove-Item -Path $TempPath -Force -ErrorAction SilentlyContinue
     }

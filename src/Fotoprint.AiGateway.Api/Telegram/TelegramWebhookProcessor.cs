@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Fotoprint.Core.Agents;
+using Fotoprint.Core.Audio;
 using Fotoprint.Core.Configuration;
 using Fotoprint.Core.Data;
 using Fotoprint.Core.Resilience;
@@ -35,6 +36,12 @@ public sealed class TelegramWebhookProcessor
         bool IsAuthorized,
         JsonElement? Payload = null,
         string? ErrorMessage = null);
+
+    private sealed record VoiceMediaInfo(
+        string? FileId,
+        string FileName,
+        string? LocalFilePath,
+        string? AudioBase64);
 
     public TelegramWebhookProcessor(
         IServiceScopeFactory scopeFactory,
@@ -79,19 +86,19 @@ public sealed class TelegramWebhookProcessor
 
         if (rawUpdate.TryGetProperty("callback_query", out var cbQuery))
         {
-            return await HandleCallbackQueryAsync(cbQuery, traceId);
+            return await HandleCallbackQueryAsync(cbQuery, traceId, httpContext.RequestAborted);
         }
 
         if (rawUpdate.TryGetProperty("message", out var message) &&
-            TryExtractIncomingMessage(message, out var chatId, out var userId, out var text))
+            TryExtractIncomingMessage(message, out var chatId, out var userId, out var text, out var voiceMedia))
         {
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(text) && voiceMedia == null)
             {
                 return Results.Ok(new { status = "ignored_empty_message", trace_id = traceId });
             }
 
             var updateClone = rawUpdate.Clone();
-            _ = Task.Run(() => ProcessMessageSafelyAsync(chatId, userId, text, updateClone, traceId));
+            _ = Task.Run(() => ProcessMessageSafelyAsync(chatId, userId, text, voiceMedia, updateClone, traceId));
 
             return Results.Ok(new
             {
@@ -103,7 +110,7 @@ public sealed class TelegramWebhookProcessor
         return Results.Ok(new { status = "ignored", trace_id = traceId });
     }
 
-    private async Task<IResult> HandleCallbackQueryAsync(JsonElement cbQuery, string traceId)
+    private async Task<IResult> HandleCallbackQueryAsync(JsonElement cbQuery, string traceId, CancellationToken ct)
     {
         var cbId = cbQuery.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? string.Empty : string.Empty;
         var cbData = cbQuery.TryGetProperty("data", out var dataProp) ? dataProp.GetString() ?? string.Empty : string.Empty;
@@ -122,6 +129,34 @@ public sealed class TelegramWebhookProcessor
             chatIdProp.TryGetInt64(out var parsedChatId))
         {
             chatId = parsedChatId;
+        }
+
+        if (cbData.StartsWith("notify:set:", StringComparison.OrdinalIgnoreCase))
+        {
+            var enable = cbData.EndsWith(":on", StringComparison.OrdinalIgnoreCase);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var repo = scope.ServiceProvider.GetRequiredService<IFotoprintRepository>();
+            var masterId = await ResolveMasterIdAsync(userId, repo, traceId, ct);
+            if (masterId.HasValue)
+            {
+                await repo.SetEmployeeNotificationsEnabledAsync(masterId.Value, enable, ct);
+            }
+
+            if (!string.IsNullOrWhiteSpace(cbId))
+            {
+                var toast = enable ? "🔔 Уведомления включены" : "🔕 Уведомления отключены";
+                await _telegramBot.AnswerCallbackQueryAsync(cbId, toast, showAlert: false);
+            }
+
+            if (chatId.HasValue)
+            {
+                var confirmation = enable
+                    ? "🔔 Проактивные уведомления о расписании и задачах включены."
+                    : "🔕 Проактивные уведомления приостановлены. Чтобы снова включить, нажмите /notifications on.";
+                await _telegramBot.SendMessageAsync(chatId.Value, confirmation, ct: ct);
+            }
+
+            return Results.Ok(new { status = "callback_notifications_updated", enabled = enable, trace_id = traceId });
         }
 
         if (cbData.StartsWith("rate:", StringComparison.OrdinalIgnoreCase))
@@ -182,11 +217,6 @@ public sealed class TelegramWebhookProcessor
                 action: async (attempt, ct) =>
                 {
                     var bitrixClient = _httpFactory.CreateClient("BitrixMcpClient");
-                    bitrixClient.DefaultRequestHeaders.Remove("X-Telegram-Id");
-                    bitrixClient.DefaultRequestHeaders.Add("X-Telegram-Id", userId.ToString());
-                    bitrixClient.DefaultRequestHeaders.Remove("X-Trace-Id");
-                    bitrixClient.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
-
                     var bitrixReq = new
                     {
                         title = "Поручение по протоколу встречи",
@@ -194,7 +224,14 @@ public sealed class TelegramWebhookProcessor
                         deadline = DateTime.UtcNow.AddDays(3).ToString("yyyy-MM-dd")
                     };
 
-                    var response = await bitrixClient.PostAsJsonAsync("tools/create_task", bitrixReq, ct);
+                    using var reqMessage = new HttpRequestMessage(HttpMethod.Post, "tools/create_task")
+                    {
+                        Content = JsonContent.Create(bitrixReq)
+                    };
+                    reqMessage.Headers.TryAddWithoutValidation("X-Telegram-Id", userId.ToString());
+                    reqMessage.Headers.TryAddWithoutValidation("X-Trace-Id", traceId);
+
+                    using var response = await bitrixClient.SendAsync(reqMessage, ct);
                     if (!response.IsSuccessStatusCode)
                     {
                         throw new NodeTransientException(
@@ -243,6 +280,7 @@ public sealed class TelegramWebhookProcessor
         long chatId,
         long userId,
         string text,
+        VoiceMediaInfo? voiceMedia,
         JsonElement rawUpdateClone,
         string traceId)
     {
@@ -256,6 +294,7 @@ public sealed class TelegramWebhookProcessor
             var judgeService = scope.ServiceProvider.GetRequiredService<ILlmJudgeService>();
             var loadBalancer = scope.ServiceProvider.GetRequiredService<ILlmLoadBalancer>();
             var rollbackManager = scope.ServiceProvider.GetRequiredService<IRollbackManager>();
+            var transcriber = scope.ServiceProvider.GetService<IAudioTranscriber>();
 
             // ШАГ 1: Получение MasterId из EmployeeReader или fallback к Postgres
             var masterId = await ResolveMasterIdAsync(userId, repo, traceId, cts.Token);
@@ -269,6 +308,11 @@ public sealed class TelegramWebhookProcessor
             }
 
             var secContext = await repo.GetEmployeeSecurityContextByMasterIdAsync(masterId.Value, cts.Token);
+            if (text.TrimStart().StartsWith("/notifications", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleNotificationsCommandAsync(chatId, masterId.Value, text, repo, cts.Token);
+                return;
+            }
             if (text.TrimStart().StartsWith("/start", StringComparison.OrdinalIgnoreCase))
             {
                 var greeting = BuildStartGreeting(secContext, masterId.Value);
@@ -281,6 +325,25 @@ public sealed class TelegramWebhookProcessor
 
             try
             {
+                if (voiceMedia != null && transcriber != null)
+                {
+                    var voiceText = await TryTranscribeVoiceAsync(voiceMedia, transcriber, traceId, cts.Token);
+                    if (!string.IsNullOrWhiteSpace(voiceText))
+                    {
+                        text = string.IsNullOrWhiteSpace(text)
+                            ? voiceText
+                            : $"{text}\n{voiceText}";
+                    }
+                    else if (string.IsNullOrWhiteSpace(text))
+                    {
+                        await _telegramBot.SendMessageAsync(
+                            chatId,
+                            "⚠️ Не удалось распознать голосовое сообщение. Попробуйте сказать чётче или напишите текстом.",
+                            ct: cts.Token);
+                        return;
+                    }
+                }
+
                 // ШАГ 2: Активный диалог в БД по MasterId
                 var activeSession = await repo.GetOrCreateActiveSessionByMasterIdAsync(masterId.Value, chatId, "telegram", cts.Token);
                 var currentSessionId = activeSession.Id;
@@ -384,47 +447,44 @@ public sealed class TelegramWebhookProcessor
                     raw_update = rawUpdateClone
                 };
 
-                var scheduledResult = await loadBalancer.ScheduleAsync(
-                    taskName: "ForwardToN8nChat",
-                    work: async ct =>
+                var scheduledResult = await rollbackManager.ExecuteWithRollbackAsync<N8nForwardOutcome>(
+                    nodeName: "N8n:FotoprintChat",
+                    action: async (attempt, token) =>
                     {
-                        return await rollbackManager.ExecuteWithRollbackAsync<N8nForwardOutcome>(
-                            nodeName: "N8n:FotoprintChat",
-                            action: async (attempt, token) =>
-                            {
-                                var n8nClient = _httpFactory.CreateClient("N8nClient");
-                                AttachTracingHeaders(n8nClient, traceId, effectiveSessionId, masterId.Value, userId);
+                        var n8nClient = _httpFactory.CreateClient("N8nClient");
+                        using var n8nRequest = new HttpRequestMessage(HttpMethod.Post, "fotoprint-chat")
+                        {
+                            Content = JsonContent.Create(n8nPayload)
+                        };
+                        AttachTracingHeaders(n8nRequest, traceId, effectiveSessionId, masterId.Value, userId);
 
-                                var n8nResponse = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, token);
-                                if (n8nResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-                                {
-                                    var errBody = await n8nResponse.Content.ReadAsStringAsync(token);
-                                    return new N8nForwardOutcome(false, ErrorMessage: errBody);
-                                }
+                        using var n8nResponse = await n8nClient.SendAsync(n8nRequest, token);
+                        if (n8nResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                        {
+                            var errBody = await n8nResponse.Content.ReadAsStringAsync(token);
+                            return new N8nForwardOutcome(false, ErrorMessage: errBody);
+                        }
 
-                                if (!n8nResponse.IsSuccessStatusCode)
-                                {
-                                    throw new NodeTransientException(
-                                        $"n8n вернул код {(int)n8nResponse.StatusCode}: {n8nResponse.ReasonPhrase}",
-                                        (int)n8nResponse.StatusCode);
-                                }
+                        if (!n8nResponse.IsSuccessStatusCode)
+                        {
+                            throw new NodeTransientException(
+                                $"n8n вернул код {(int)n8nResponse.StatusCode}: {n8nResponse.ReasonPhrase}",
+                                (int)n8nResponse.StatusCode);
+                        }
 
-                                var json = await n8nResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
-                                return new N8nForwardOutcome(true, Payload: json);
-                            },
-                            compensatingRollbackAction: async (ex, token) =>
-                            {
-                                await repo.SaveMessageToSessionAsync(
-                                    effectiveSessionId,
-                                    masterId.Value,
-                                    "assistant",
-                                    "⚠️ Узел обработки n8n временно перегружен после 3 попыток. Ваше сообщение сохранено, состояние сессии безопасно зафиксировано.",
-                                    isFrozen: false,
-                                    metadata: new { rollback = true, error = ex.Message, trace_id = traceId },
-                                    ct: token);
-                            },
-                            traceId: traceId,
-                            ct: ct);
+                        var json = await n8nResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
+                        return new N8nForwardOutcome(true, Payload: json);
+                    },
+                    compensatingRollbackAction: async (ex, token) =>
+                    {
+                        await repo.SaveMessageToSessionAsync(
+                            effectiveSessionId,
+                            masterId.Value,
+                            "assistant",
+                            "⚠️ Узел обработки n8n временно перегружен после 3 попыток. Ваше сообщение сохранено, состояние сессии безопасно зафиксировано.",
+                            isFrozen: false,
+                            metadata: new { rollback = true, error = ex.Message, trace_id = traceId },
+                            ct: token);
                     },
                     traceId: traceId,
                     ct: cts.Token);
@@ -567,18 +627,13 @@ public sealed class TelegramWebhookProcessor
         return masterId;
     }
 
-    private void AttachTracingHeaders(HttpClient client, string traceId, Guid sessionId, long masterId, long telegramId)
+    private void AttachTracingHeaders(HttpRequestMessage request, string traceId, Guid sessionId, long masterId, long telegramId)
     {
-        client.DefaultRequestHeaders.Remove("X-Trace-Id");
-        client.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
-        client.DefaultRequestHeaders.Remove("X-Session-Id");
-        client.DefaultRequestHeaders.Add("X-Session-Id", sessionId.ToString());
-        client.DefaultRequestHeaders.Remove("X-Master-Id");
-        client.DefaultRequestHeaders.Add("X-Master-Id", masterId.ToString());
-        client.DefaultRequestHeaders.Remove("X-Telegram-Id");
-        client.DefaultRequestHeaders.Add("X-Telegram-Id", telegramId.ToString());
-        client.DefaultRequestHeaders.Remove("X-Internal-Service-Key");
-        client.DefaultRequestHeaders.Add("X-Internal-Service-Key", _config.Security.InternalServiceSecretKey);
+        request.Headers.TryAddWithoutValidation("X-Trace-Id", traceId);
+        request.Headers.TryAddWithoutValidation("X-Session-Id", sessionId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Master-Id", masterId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Telegram-Id", telegramId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Internal-Service-Key", _config.Security.InternalServiceSecretKey);
     }
 
     private async Task RunTypingHeartbeatAsync(long chatId, CancellationToken ct)
@@ -614,15 +669,101 @@ public sealed class TelegramWebhookProcessor
         }
     }
 
+    private async Task<string?> TryTranscribeVoiceAsync(
+        VoiceMediaInfo media,
+        IAudioTranscriber transcriber,
+        string traceId,
+        CancellationToken ct)
+    {
+        var startAudio = DateTime.UtcNow;
+        TranscriptionResult? result = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(media.LocalFilePath) && File.Exists(media.LocalFilePath))
+            {
+                result = await transcriber.TranscribeFileAsync(media.LocalFilePath, "ru", ct);
+            }
+            else if (!string.IsNullOrWhiteSpace(media.AudioBase64))
+            {
+                var bytes = Convert.FromBase64String(media.AudioBase64);
+                using var ms = new MemoryStream(bytes);
+                result = await transcriber.TranscribeAsync(ms, media.FileName, "ru", ct);
+            }
+            else if (!string.IsNullOrWhiteSpace(media.FileId) && File.Exists(media.FileId))
+            {
+                result = await transcriber.TranscribeFileAsync(media.FileId, "ru", ct);
+            }
+            else if (!string.IsNullOrWhiteSpace(media.FileId) && _botOptions.IsConfigured)
+            {
+                var apiBase = _botOptions.ApiBaseUrl.TrimEnd('/');
+                var client = _httpFactory.CreateClient();
+                var getFileResp = await client.GetAsync(
+                    $"{apiBase}/bot{_botOptions.BotToken}/getFile?file_id={Uri.EscapeDataString(media.FileId)}",
+                    ct);
+                if (getFileResp.IsSuccessStatusCode)
+                {
+                    var fileJson = await getFileResp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+                    if (fileJson.TryGetProperty("ok", out var okProp) && okProp.GetBoolean() &&
+                        fileJson.TryGetProperty("result", out var resProp) &&
+                        resProp.TryGetProperty("file_path", out var fpProp))
+                    {
+                        var tgFilePath = fpProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(tgFilePath))
+                        {
+                            var dlResp = await client.GetAsync($"{apiBase}/file/bot{_botOptions.BotToken}/{tgFilePath}", ct);
+                            if (dlResp.IsSuccessStatusCode)
+                            {
+                                await using var tgStream = await dlResp.Content.ReadAsStreamAsync(ct);
+                                var resolvedName = Path.GetFileName(tgFilePath);
+                                result = await transcriber.TranscribeAsync(
+                                    tgStream,
+                                    string.IsNullOrWhiteSpace(resolvedName) ? media.FileName : resolvedName,
+                                    "ru",
+                                    ct);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Voice transcription error for trace={TraceId}", traceId);
+            await _langfuse.LogEventAsync(traceId, "Telegram:VoiceTranscriptionError", "ERROR", ex.Message, ct: ct);
+        }
+
+        if (result != null)
+        {
+            await _langfuse.CreateSpanAsync(
+                traceId: traceId,
+                name: "Span:Telegram_VoiceTranscription",
+                startTime: startAudio,
+                endTime: DateTime.UtcNow,
+                input: new { file_name = media.FileName, has_file_id = !string.IsNullOrWhiteSpace(media.FileId) },
+                output: new { success = result.Success, provider = result.Provider, text = result.Text },
+                metadata: new { duration_ms = result.DurationMs, error = result.ErrorMessage },
+                ct: ct);
+
+            if (result.Success && !string.IsNullOrWhiteSpace(result.Text))
+            {
+                return result.Text.Trim();
+            }
+        }
+
+        return null;
+    }
+
     private static bool TryExtractIncomingMessage(
         JsonElement message,
         out long chatId,
         out long userId,
-        out string text)
+        out string text,
+        out VoiceMediaInfo? voiceMedia)
     {
         chatId = 0;
         userId = 0;
         text = string.Empty;
+        voiceMedia = null;
 
         if (!message.TryGetProperty("chat", out var chatObj) ||
             !chatObj.TryGetProperty("id", out var chatIdProp) ||
@@ -645,6 +786,35 @@ public sealed class TelegramWebhookProcessor
         else if (message.TryGetProperty("caption", out var capProp) && capProp.ValueKind == JsonValueKind.String)
         {
             text = capProp.GetString() ?? string.Empty;
+        }
+
+        JsonElement mediaElem = default;
+        string? defaultAudioName = null;
+        if (message.TryGetProperty("voice", out var voiceElem) && voiceElem.ValueKind == JsonValueKind.Object)
+        {
+            mediaElem = voiceElem;
+            defaultAudioName = "voice.ogg";
+        }
+        else if (message.TryGetProperty("audio", out var audioElem) && audioElem.ValueKind == JsonValueKind.Object)
+        {
+            mediaElem = audioElem;
+            defaultAudioName = "audio.m4a";
+        }
+
+        if (defaultAudioName != null)
+        {
+            var fileId = mediaElem.TryGetProperty("file_id", out var fidProp) ? fidProp.GetString() : null;
+            var fileName = mediaElem.TryGetProperty("file_name", out var fnProp) && !string.IsNullOrWhiteSpace(fnProp.GetString())
+                ? fnProp.GetString()!
+                : defaultAudioName;
+            var localFilePath = mediaElem.TryGetProperty("local_file_path", out var lfpProp)
+                ? lfpProp.GetString()
+                : (message.TryGetProperty("local_file_path", out var msgLfp) ? msgLfp.GetString() : null);
+            var audioBase64 = mediaElem.TryGetProperty("audio_base64", out var b64Prop)
+                ? b64Prop.GetString()
+                : (message.TryGetProperty("audio_base64", out var msgB64) ? msgB64.GetString() : null);
+
+            voiceMedia = new VoiceMediaInfo(fileId, fileName, localFilePath, audioBase64);
         }
 
         return true;
@@ -677,6 +847,63 @@ public sealed class TelegramWebhookProcessor
         return defaultReply;
     }
 
+    private async Task HandleNotificationsCommandAsync(
+        long chatId,
+        long masterId,
+        string commandText,
+        IFotoprintRepository repo,
+        CancellationToken ct)
+    {
+        var tokens = commandText.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var arg = tokens.Length > 1 ? tokens[1].ToLowerInvariant() : string.Empty;
+
+        if (arg is "on" or "вкл" or "enable" or "1")
+        {
+            await repo.SetEmployeeNotificationsEnabledAsync(masterId, true, ct);
+        }
+        else if (arg is "off" or "выкл" or "disable" or "0")
+        {
+            await repo.SetEmployeeNotificationsEnabledAsync(masterId, false, ct);
+        }
+
+        var secCtx = await repo.GetEmployeeSecurityContextByMasterIdAsync(masterId, ct);
+        var employee = secCtx is not null ? await repo.GetEmployeeByIdAsync(secCtx.EmployeeId, ct) : null;
+        var enabled = employee?.NotificationsEnabled ?? true;
+
+        string msg;
+        if (employee is not null)
+        {
+            var prefs = await repo.GetNotificationPreferencesAsync(employee.Id, masterId, ct);
+            msg = Fotoprint.Core.Notifications.NotificationFormatter.FormatNotificationSettingsSummary(employee, prefs);
+        }
+        else
+        {
+            var statusEmoji = enabled ? "🔔 Включены" : "🔕 Отключены";
+            msg = new StringBuilder()
+                .AppendLine($"Статус проактивных уведомлений: {statusEmoji}")
+                .AppendLine()
+                .AppendLine("Что приходит автоматически (время МСК):")
+                .AppendLine("• Утренняя сводка встреч и задач в 09:00 по будням")
+                .AppendLine("• Напоминания за 30 минут до начала встречи")
+                .AppendLine("• Напоминания о дедлайнах задач (за 24 ч, за 2 ч и по просрочке)")
+                .AppendLine()
+                .Append("Быстрая команда: /notifications on или /notifications off")
+                .ToString();
+        }
+
+        var keyboard = new[]
+        {
+            new[]
+            {
+                enabled
+                    ? new TelegramInlineButton("🔕 Отключить уведомления", "notify:set:off")
+                    : new TelegramInlineButton("🔔 Включить уведомления", "notify:set:on")
+            }
+        };
+
+        await _telegramBot.SendMessageAsync(chatId, msg, inlineKeyboard: keyboard, ct: ct);
+    }
+
     private static string BuildStartGreeting(EmployeeSecurityContext? ctx, long masterId)
     {
         var sb = new StringBuilder();
@@ -702,6 +929,7 @@ public sealed class TelegramWebhookProcessor
         sb.AppendLine("• Какие задачи у меня сейчас в работе в Битрикс24?");
         sb.AppendLine("• Покажи мои встречи в календаре на завтра");
         sb.AppendLine("• Найди информацию в базе знаний и регламентах");
+        sb.AppendLine("• /notifications — управление утренней сводкой и напоминаниями о встречах/задачах");
         return sb.ToString().TrimEnd();
     }
 }

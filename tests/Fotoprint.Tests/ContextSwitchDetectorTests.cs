@@ -152,5 +152,59 @@ public class ContextSwitchDetectorTests
         Assert.Equal("general_chat", r4.SuggestedBranch);
         Assert.Equal("Новая тема", r4.Reason);
     }
+
+    [Fact]
+    public async Task CrossDomain_SharedEntityOrder44102_Returns_NotSwitched()
+    {
+        var mockGemini = new MockGeminiClient(_ => throw new InvalidOperationException("Fast-path should handle this without calling LLM"));
+        var detector = new ContextSwitchDetector(mockGemini, new FotoprintConfig());
+
+        var history = new List<ChatMessage>
+        {
+            new() { Role = "user", Content = "Проверь статус заказа 44102 для Альфа-Маркет в 1С" },
+            new() { Role = "assistant", Content = "Заказ 44102 на этапе вырубки." }
+        };
+
+        var result = await detector.DetectSwitchAsync(history, "А какие задачи в Битрикс открыты по заказу 44102?");
+
+        Assert.False(result.IsSwitched);
+        Assert.Equal("task_management", result.SuggestedBranch);
+    }
+
+    [Fact]
+    public async Task SubTopicSwitch_InsideDocSearch_Returns_Switched()
+    {
+        var mockGemini = new MockGeminiClient(_ => throw new InvalidOperationException("Fast-path should handle this without calling LLM"));
+        var detector = new ContextSwitchDetector(mockGemini, new FotoprintConfig());
+
+        var history = new List<ChatMessage>
+        {
+            new() { Role = "user", Content = "Какая норма плотности краски Black по регламенту ТР-04?" },
+            new() { Role = "assistant", Content = "Плотность Black — 1.45." }
+        };
+
+        var result = await detector.DetectSwitchAsync(history, "Как оплачиваются сверхурочные переработки по трудовому распорядку?");
+
+        Assert.True(result.IsSwitched);
+        Assert.Equal("doc_search", result.SuggestedBranch);
+    }
+
+    [Fact]
+    public async Task NonImperative_CrossDomainSwitch_Returns_Switched()
+    {
+        var mockGemini = new MockGeminiClient(_ => throw new InvalidOperationException("Fast-path should handle this without calling LLM"));
+        var detector = new ContextSwitchDetector(mockGemini, new FotoprintConfig());
+
+        var history = new List<ChatMessage>
+        {
+            new() { Role = "user", Content = "Как оплачиваются сверхурочные часы по внутреннему трудовому распорядку?" },
+            new() { Role = "assistant", Content = "Первые 2 часа оплачиваются x1.5." }
+        };
+
+        var result = await detector.DetectSwitchAsync(history, "Покажи все мои встречи и совещания в календаре на завтра");
+
+        Assert.True(result.IsSwitched);
+        Assert.Equal("meeting_prep", result.SuggestedBranch);
+    }
 }
 

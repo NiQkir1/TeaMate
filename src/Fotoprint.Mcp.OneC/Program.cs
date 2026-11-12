@@ -81,7 +81,7 @@ var tools = new List<McpToolDefinition>
 app.MapGet("/tools/list", () => Results.Ok(new { tools }));
 
 // Tool 1: get_order_status
-app.MapGet("/tools/get_order_status", [RequirePermission("onec:read_orders")] (string order_id) =>
+app.MapGet("/tools/get_order_status", [RequirePermission("onec:read_orders")] [RequireConfirmation(false)] (string order_id) =>
 {
     // Реалистичные моковые производственные данные 1С:УНТ
     var cleanId = order_id.Replace("ЗК-", "").Trim();
@@ -132,7 +132,7 @@ app.MapGet("/tools/get_order_status", [RequirePermission("onec:read_orders")] (s
 });
 
 // Tool 2: get_production_kpis
-app.MapGet("/tools/get_production_kpis", [RequirePermission("onec:read_production_kpis")] (string? date_from, string? date_to, string? department) =>
+app.MapGet("/tools/get_production_kpis", [RequirePermission("onec:read_production_kpis")] [RequireConfirmation(false)] (string? date_from, string? date_to, string? department) =>
 {
     var dept = department ?? "Офсетный цех";
     var kpiData = new

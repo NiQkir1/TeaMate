@@ -49,3 +49,14 @@ public class RequirePermissionAttribute : Attribute
     }
 }
 
+[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false)]
+public class RequireConfirmationAttribute : Attribute
+{
+    public bool Required { get; }
+
+    public RequireConfirmationAttribute(bool required = true)
+    {
+        Required = required;
+    }
+}
+

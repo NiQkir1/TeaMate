@@ -16,9 +16,11 @@ public class FotoprintConfigTests
 
         // 1. Проверка LLM параметров
         Assert.True(config.Llm.Provider is "nvidia" or "gemini");
-        Assert.NotNull(config.Llm.Models.ChatModel);
-        Assert.NotNull(config.Llm.Models.FastModel);
-        Assert.Equal("text-embedding-004", config.Llm.Models.EmbeddingModel);
+        Assert.Equal("nvidia/nemotron-3-ultra-550b-a55b", config.Llm.Models.ChatModel);
+        Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", config.Llm.Models.FastModel);
+        Assert.Equal("nvidia/nemotron-3.5-bolt-e4b", config.Llm.Models.FallbackModel);
+        Assert.NotEqual(config.Llm.Models.ChatModel, config.Llm.Models.FallbackModel);
+        Assert.Equal("gemini-embedding-2", config.Llm.Models.EmbeddingModel);
 
         // 2. Проверка гиперпараметров (температура, токены)
         Assert.Equal(0.2, config.Llm.Parameters.Temperature);
@@ -54,7 +56,7 @@ public class FotoprintConfigTests
         Assert.Equal("auto", config.Audio.Provider);
         Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
         Assert.Equal(1800, config.Audio.Engine.TimeoutSeconds);
-        Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
+        Assert.Equal("gemini-2.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
 
         // 9. Проверка параметров MCP URLs и Календаря (Calendar & McpUrls)
@@ -88,7 +90,7 @@ public class FotoprintConfigTests
         Assert.Equal("auto", config.Audio.Provider);
         Assert.Equal("config/vocabulary.yaml", config.Audio.VocabularyPath);
         Assert.Equal(1800, config.Audio.Engine.TimeoutSeconds);
-        Assert.Equal("gemini-1.5-flash", config.Audio.Gemini.Model);
+        Assert.Equal("gemini-2.5-flash", config.Audio.Gemini.Model);
         Assert.Equal(100, config.Audio.MaxFileSizeMb);
         Assert.NotNull(config.McpUrls);
         Assert.Equal("http://localhost:8084", config.McpUrls.Calendar);

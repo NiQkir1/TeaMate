@@ -140,6 +140,24 @@ public class SecurityInterceptorMiddleware
             context.Items["SecurityContext"] = empContext;
         }
 
+        var confirmAttr = endpoint?.Metadata.GetMetadata<RequireConfirmationAttribute>();
+        if (confirmAttr is { Required: true })
+        {
+            var confirmedHeader = context.Request.Headers["X-User-Confirmed"].ToString();
+            if (!string.Equals(confirmedHeader, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = (int)HttpStatusCode.OK;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(JsonSerializer.Serialize(new
+                {
+                    status = "confirmation_required",
+                    requires_confirmation = true,
+                    message = "Для выполнения этого действия требуется подтверждение пользователя. Напиши точный план действий со всеми параметрами и попроси подтверждение ('Да, подтверждаю' / 'Выполняй')."
+                }));
+                return;
+            }
+        }
+
         await _next(context);
     }
 }

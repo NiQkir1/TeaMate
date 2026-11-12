@@ -9,64 +9,209 @@ using Pgvector.Dapper;
 
 namespace Fotoprint.Core.Data;
 
-public class FotoprintRepository : IFotoprintRepository
+public record TimeSlot
+{
+    public DateTime StartTimeUtc { get; init; }
+    public DateTime EndTimeUtc { get; init; }
+    public string Label { get; init; } = string.Empty;
+}
+
+public interface IFotoprintRepository
+{
+    // Employee & RBAC
+    Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default);
+    Task<EmployeeSecurityContext?> GetEmployeeSecurityContextByMasterIdAsync(long masterId, CancellationToken ct = default);
+    Task<long?> ResolveMasterIdByMessengerAsync(string messengerType, string messengerUserId, CancellationToken ct = default);
+    Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default);
+    Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default);
+
+    // Chat Sessions & Messages (MasterId & UUID SessionId)
+    Task<ChatSession> GetOrCreateActiveSessionByMasterIdAsync(long masterId, long messengerChatId, string messengerType = "telegram", CancellationToken ct = default);
+    Task<ChatSession> SwitchToNewSessionAsync(Guid currentSessionId, long masterId, long messengerChatId, string? newBranch = null, string messengerType = "telegram", CancellationToken ct = default);
+    Task<List<ChatMessage>> GetMessagesBySessionIdAsync(Guid sessionId, int limit = 20, CancellationToken ct = default);
+    Task SaveMessageToSessionAsync(Guid sessionId, long masterId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default);
+    Task<ChatSession> GetOrCreateSessionAsync(long telegramChatId, long? telegramUserId = null, CancellationToken ct = default);
+    Task SaveMessageAsync(Guid sessionId, string contextId, string role, string content, bool isFrozen = false, object? metadata = null, CancellationToken ct = default);
+    Task<List<ChatMessage>> GetRecentMessagesAsync(Guid sessionId, int limit = 20, CancellationToken ct = default);
+    Task FreezeContextAsync(Guid sessionId, string contextId, CancellationToken ct = default);
+
+    // Corporate Documents & Chunks (RAG)
+    Task<Guid> SaveDocumentAsync(string title, string sourceType, string? filePath, string? department, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default);
+    Task SaveDocumentChunksAsync(Guid documentId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, CancellationToken ct = default);
+    Task<List<CorporateDocumentChunk>> GetChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+    Task UpdateChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default) => Task.CompletedTask;
+    Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default);
+    Task<List<CorporateDocumentChunk>> SearchTextChunksAsync(string queryText, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default);
+
+    // Meeting Chunks (Isolated Meeting RAG)
+    Task SaveMeetingChunksAsync(Guid meetingId, Guid? protocolId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default) => Task.CompletedTask;
+    Task<List<CorporateDocumentChunk>> GetMeetingChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+    Task UpdateMeetingChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default) => Task.CompletedTask;
+    Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+    Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default) => Task.FromResult(new List<CorporateDocumentChunk>());
+
+    // Meetings, Notes, Protocols, Action Items & Calendar
+    Task<Guid> CreateMeetingAsync(
+        string title,
+        string? description,
+        DateTime startTime,
+        DateTime? endTime = null,
+        string status = "completed",
+        int? organizerId = null,
+        List<int>? participantIds = null,
+        object? metadata = null,
+        CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
+    Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default);
+    Task<List<Meeting>> GetMeetingsForRangeAsync(DateTime fromUtc, DateTime toUtc, int? employeeId = null, CancellationToken ct = default) => Task.FromResult(new List<Meeting>());
+    Task<List<TimeSlot>> FindFreeSlotsAsync(
+        int organizerId,
+        List<int> participantIds,
+        DateOnly targetDate,
+        int durationMinutes,
+        TimeOnly? workingStart = null,
+        TimeOnly? workingEnd = null,
+        int bufferMinutes = 10,
+        CancellationToken ct = default) => Task.FromResult(new List<TimeSlot>());
+    Task<Meeting?> GetMeetingByIdAsync(Guid meetingId, CancellationToken ct = default);
+    Task<List<MeetingNote>> GetMeetingNotesAsync(Guid meetingId, CancellationToken ct = default);
+    Task SaveMeetingNoteAsync(Guid meetingId, int? authorId, string noteText, string category = "general", CancellationToken ct = default);
+    Task<Guid> SaveMeetingProtocolAsync(Guid meetingId, string title, string summary, List<string> decisions, string? rawTranscript = null, string? docxPath = null, string? pdfPath = null, CancellationToken ct = default);
+    Task<MeetingProtocol?> GetMeetingProtocolAsync(Guid meetingId, CancellationToken ct = default);
+    Task<Guid> CreateActionItemAsync(Guid meetingId, Guid? protocolId, string title, string? description, int? responsibleId, DateTime? deadline, CancellationToken ct = default);
+    Task<List<ActionItem>> GetActionItemsByMeetingAsync(Guid meetingId, CancellationToken ct = default);
+    Task<List<ActionItem>> GetActionItemsByResponsibleAsync(int employeeId, string? statusFilter = null, CancellationToken ct = default);
+    Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default);
+
+    // Проактивные уведомления и настройки каналов (Multi-Channel Notifications)
+    Task EnsureNotificationSchemaAsync(CancellationToken ct = default) => Task.CompletedTask;
+    Task<Employee?> GetEmployeeByTelegramIdAsync(long telegramId, CancellationToken ct = default) => Task.FromResult<Employee?>(null);
+    Task<bool> SetEmployeeNotificationsEnabledAsync(long masterId, bool enabled, CancellationToken ct = default) => Task.FromResult(true);
+    Task<List<Meeting>> GetMeetingsInRangeUtcAsync(DateTime startUtc, DateTime endUtc, CancellationToken ct = default) => Task.FromResult(new List<Meeting>());
+    Task<List<ActionItem>> GetOpenActionItemsAsync(int? employeeId = null, CancellationToken ct = default) => Task.FromResult(new List<ActionItem>());
+    Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId = null,
+        CancellationToken ct = default) => Task.FromResult<Guid?>(Guid.NewGuid());
+
+    Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId,
+        CancellationToken ct,
+        string channelType,
+        string? recipientAddress) =>
+        TryClaimNotificationDeliveryAsync(dedupKey, notificationType, recipientEmployeeId, recipientTelegramId, entityId, ct);
+    Task CompleteNotificationDeliveryAsync(
+        Guid deliveryId,
+        string status,
+        string? errorMessage = null,
+        CancellationToken ct = default) => Task.CompletedTask;
+
+    Task<EmployeeNotificationPreferences> GetNotificationPreferencesAsync(
+        int employeeId,
+        long masterId = 0,
+        CancellationToken ct = default) =>
+        Task.FromResult(EmployeeNotificationPreferences.CreateDefault(employeeId, masterId));
+
+    Task<IReadOnlyDictionary<int, EmployeeNotificationPreferences>> GetAllNotificationPreferencesAsync(
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyDictionary<int, EmployeeNotificationPreferences>>(
+            new Dictionary<int, EmployeeNotificationPreferences>());
+
+    Task<EmployeeNotificationPreferences> UpsertNotificationPreferencesAsync(
+        int employeeId,
+        long masterId,
+        UpdateNotificationPreferencesPatch patch,
+        CancellationToken ct = default)
+    {
+        var defaults = EmployeeNotificationPreferences.CreateDefault(employeeId, masterId);
+        return Task.FromResult(defaults with
+        {
+            DigestEnabled = patch.DigestEnabled ?? defaults.DigestEnabled,
+            DigestTimeMsk = !string.IsNullOrWhiteSpace(patch.DigestTimeMsk)
+                ? Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.DigestTimeMsk, defaults.DigestTimeMsk)
+                : defaults.DigestTimeMsk,
+            DigestWeekdaysOnly = patch.DigestWeekdaysOnly ?? defaults.DigestWeekdaysOnly,
+            PreMeetingEnabled = patch.PreMeetingEnabled ?? defaults.PreMeetingEnabled,
+            PreMeetingWindowMinutes = patch.PreMeetingWindowMinutes ?? defaults.PreMeetingWindowMinutes,
+            TaskDeadlinesEnabled = patch.TaskDeadlinesEnabled ?? defaults.TaskDeadlinesEnabled,
+            TaskDueSoonHours = patch.TaskDueSoonHours ?? defaults.TaskDueSoonHours,
+            TaskUrgentHours = patch.TaskUrgentHours ?? defaults.TaskUrgentHours,
+            QuietHoursStartMsk = patch.ClearQuietHours ? null : (patch.QuietHoursStartMsk ?? defaults.QuietHoursStartMsk),
+            QuietHoursEndMsk = patch.ClearQuietHours ? null : (patch.QuietHoursEndMsk ?? defaults.QuietHoursEndMsk),
+            PreferredChannel = patch.PreferredChannel ?? defaults.PreferredChannel,
+            ChannelAddress = patch.ChannelAddress ?? defaults.ChannelAddress
+        });
+    }
+
+    Task<bool> ResetNotificationDeliveryByDedupKeyAsync(
+        string dedupKey,
+        CancellationToken ct = default) =>
+        Task.FromResult(false);
+
+    Task UpsertUserIdentityAsync(
+        int employeeId,
+        long masterId,
+        string provider,
+        string externalUserId,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
+}
+
+public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisposable
 {
     private readonly string _connectionString;
+    private readonly NpgsqlDataSource _dataSource;
+    private static bool _meetingChunksEnsured;
+    private static readonly SemaphoreSlim _meetingSchemaLock = new(1, 1);
+
+    private sealed class EmployeeContextRow
+    {
+        public int EmployeeId { get; set; }
+        public long MasterId { get; set; }
+        public string FullName { get; set; } = string.Empty;
+        public long TelegramId { get; set; }
+        public string? TelegramUsername { get; set; }
+        public string Department { get; set; } = string.Empty;
+        public string Position { get; set; } = string.Empty;
+        public string? AccessGroupsJson { get; set; }
+    }
 
     static FotoprintRepository()
     {
         DefaultTypeMap.MatchNamesWithUnderscores = true;
         SqlMapper.AddTypeHandler(new VectorTypeHandler());
-        SqlMapper.AddTypeHandler(new JsonListIntTypeHandler());
-        SqlMapper.AddTypeHandler(new JsonListStringTypeHandler());
-    }
-
-    private class JsonListIntTypeHandler : SqlMapper.TypeHandler<List<int>>
-    {
-        public override void SetValue(IDbDataParameter parameter, List<int>? value)
-        {
-            parameter.Value = value == null ? DBNull.Value : JsonSerializer.Serialize(value);
-        }
-
-        public override List<int> Parse(object value)
-        {
-            if (value == null || value is DBNull) return new List<int>();
-            var s = value.ToString();
-            if (string.IsNullOrWhiteSpace(s)) return new List<int>();
-            try { return JsonSerializer.Deserialize<List<int>>(s) ?? new List<int>(); }
-            catch { return new List<int>(); }
-        }
-    }
-
-    private class JsonListStringTypeHandler : SqlMapper.TypeHandler<List<string>>
-    {
-        public override void SetValue(IDbDataParameter parameter, List<string>? value)
-        {
-            parameter.Value = value == null ? DBNull.Value : JsonSerializer.Serialize(value);
-        }
-
-        public override List<string> Parse(object value)
-        {
-            if (value == null || value is DBNull) return new List<string>();
-            var s = value.ToString();
-            if (string.IsNullOrWhiteSpace(s)) return new List<string>();
-            try { return JsonSerializer.Deserialize<List<string>>(s) ?? new List<string>(); }
-            catch { return new List<string>(); }
-        }
+        SqlMapper.AddTypeHandler(new JsonbListTypeHandler<int>());
+        SqlMapper.AddTypeHandler(new JsonbListTypeHandler<string>());
     }
 
     public FotoprintRepository(string connectionString)
     {
         _connectionString = connectionString;
-    }
-
-    private async Task<NpgsqlConnection> CreateConnectionAsync(CancellationToken ct = default)
-    {
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(_connectionString);
         dataSourceBuilder.UseVector();
-        var dataSource = dataSourceBuilder.Build();
-        return await dataSource.OpenConnectionAsync(ct);
+        _dataSource = dataSourceBuilder.Build();
     }
+
+    public void Dispose()
+    {
+        _dataSource.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _dataSource.DisposeAsync();
+        GC.SuppressFinalize(this);
+    }
+
+    private ValueTask<NpgsqlConnection> CreateConnectionAsync(CancellationToken ct = default) =>
+        _dataSource.OpenConnectionAsync(ct);
 
     public async Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default)
     {
@@ -76,7 +221,7 @@ public class FotoprintRepository : IFotoprintRepository
                 e.id AS EmployeeId,
                 e.master_id AS MasterId,
                 TRIM(CONCAT(e.last_name, ' ', e.first_name, ' ', COALESCE(e.middle_name, ''))) AS FullName,
-                e.telegram_id AS TelegramId,
+                COALESCE(e.telegram_id, 0) AS TelegramId,
                 e.telegram_username AS TelegramUsername,
                 e.department AS Department,
                 e.position AS Position,
@@ -88,43 +233,43 @@ public class FotoprintRepository : IFotoprintRepository
             FROM employee_roles er
             JOIN roles r ON er.role_id = r.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.telegram_id = @TelegramId;
+            WHERE e.telegram_id = @TelegramId AND e.is_active = TRUE;
 
             SELECT DISTINCT p.code
             FROM employee_roles er
             JOIN role_permissions rp ON er.role_id = rp.role_id
             JOIN permissions p ON rp.permission_id = p.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.telegram_id = @TelegramId;
+            WHERE e.telegram_id = @TelegramId AND e.is_active = TRUE;
         """;
 
         using var multi = await conn.QueryMultipleAsync(new CommandDefinition(sql, new { TelegramId = telegramId }, cancellationToken: ct));
-        
-        var emp = await multi.ReadFirstOrDefaultAsync<dynamic>();
+
+        var emp = await multi.ReadFirstOrDefaultAsync<EmployeeContextRow>();
         if (emp == null) return null;
 
         var roles = (await multi.ReadAsync<string>()).ToList();
         var permissions = (await multi.ReadAsync<string>()).ToList();
 
         var accessGroups = new List<string>();
-        if (emp.accessgroupsjson != null)
+        if (!string.IsNullOrWhiteSpace(emp.AccessGroupsJson))
         {
             try
             {
-                accessGroups = JsonSerializer.Deserialize<List<string>>((string)emp.accessgroupsjson) ?? new();
+                accessGroups = JsonSerializer.Deserialize<List<string>>(emp.AccessGroupsJson) ?? new();
             }
-            catch { }
+            catch (JsonException) { }
         }
 
         return new EmployeeSecurityContext
         {
-            EmployeeId = (int)emp.employeeid,
-            MasterId = emp.masterid != null ? (long)emp.masterid : 0L,
-            FullName = (string)emp.fullname,
-            TelegramId = (long)emp.telegramid,
-            TelegramUsername = (string?)emp.telegramusername,
-            Department = (string)emp.department,
-            Position = (string)emp.position,
+            EmployeeId = emp.EmployeeId,
+            MasterId = emp.MasterId,
+            FullName = emp.FullName,
+            TelegramId = emp.TelegramId,
+            TelegramUsername = emp.TelegramUsername,
+            Department = emp.Department,
+            Position = emp.Position,
             Roles = roles,
             Permissions = permissions,
             AccessGroups = accessGroups
@@ -151,43 +296,43 @@ public class FotoprintRepository : IFotoprintRepository
             FROM employee_roles er
             JOIN roles r ON er.role_id = r.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.master_id = @MasterId;
+            WHERE e.master_id = @MasterId AND e.is_active = TRUE;
 
             SELECT DISTINCT p.code
             FROM employee_roles er
             JOIN role_permissions rp ON er.role_id = rp.role_id
             JOIN permissions p ON rp.permission_id = p.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.master_id = @MasterId;
+            WHERE e.master_id = @MasterId AND e.is_active = TRUE;
         """;
 
         using var multi = await conn.QueryMultipleAsync(new CommandDefinition(sql, new { MasterId = masterId }, cancellationToken: ct));
-        
-        var emp = await multi.ReadFirstOrDefaultAsync<dynamic>();
+
+        var emp = await multi.ReadFirstOrDefaultAsync<EmployeeContextRow>();
         if (emp == null) return null;
 
         var roles = (await multi.ReadAsync<string>()).ToList();
         var permissions = (await multi.ReadAsync<string>()).ToList();
 
         var accessGroups = new List<string>();
-        if (emp.accessgroupsjson != null)
+        if (!string.IsNullOrWhiteSpace(emp.AccessGroupsJson))
         {
             try
             {
-                accessGroups = JsonSerializer.Deserialize<List<string>>((string)emp.accessgroupsjson) ?? new();
+                accessGroups = JsonSerializer.Deserialize<List<string>>(emp.AccessGroupsJson) ?? new();
             }
-            catch { }
+            catch (JsonException) { }
         }
 
         return new EmployeeSecurityContext
         {
-            EmployeeId = (int)emp.employeeid,
-            MasterId = emp.masterid != null ? (long)emp.masterid : masterId,
-            FullName = (string)emp.fullname,
-            TelegramId = (long)emp.telegramid,
-            TelegramUsername = (string?)emp.telegramusername,
-            Department = (string)emp.department,
-            Position = (string)emp.position,
+            EmployeeId = emp.EmployeeId,
+            MasterId = emp.MasterId != 0 ? emp.MasterId : masterId,
+            FullName = emp.FullName,
+            TelegramId = emp.TelegramId,
+            TelegramUsername = emp.TelegramUsername,
+            Department = emp.Department,
+            Position = emp.Position,
             Roles = roles,
             Permissions = permissions,
             AccessGroups = accessGroups
@@ -196,26 +341,66 @@ public class FotoprintRepository : IFotoprintRepository
 
     public async Task<long?> ResolveMasterIdByMessengerAsync(string messengerType, string messengerUserId, CancellationToken ct = default)
     {
-        await using var conn = await CreateConnectionAsync(ct);
-        if (string.Equals(messengerType, "telegram", StringComparison.OrdinalIgnoreCase) && long.TryParse(messengerUserId, out var tgId))
+        if (string.IsNullOrWhiteSpace(messengerUserId))
         {
-            const string sql = "SELECT master_id FROM employees WHERE telegram_id = @TgId AND is_active = TRUE LIMIT 1;";
-            return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { TgId = tgId }, cancellationToken: ct));
-        }
-        else if (string.Equals(messengerType, "whatsapp", StringComparison.OrdinalIgnoreCase))
-        {
-            const string sql = "SELECT master_id FROM employees WHERE whatsapp_id = @WpId AND is_active = TRUE LIMIT 1;";
-            return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { WpId = messengerUserId }, cancellationToken: ct));
-        }
-        else
-        {
-            if (long.TryParse(messengerUserId, out var directMasterId))
-            {
-                const string sql = "SELECT master_id FROM employees WHERE master_id = @MasterId AND is_active = TRUE LIMIT 1;";
-                return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { MasterId = directMasterId }, cancellationToken: ct));
-            }
             return null;
         }
+
+        await using var conn = await CreateConnectionAsync(ct);
+        var normalizedType = (messengerType ?? "telegram").Trim().ToLowerInvariant();
+        var trimmedUserId = messengerUserId.Trim();
+
+        if (normalizedType == "telegram" && long.TryParse(trimmedUserId, out var tgId))
+        {
+            const string sql = "SELECT master_id FROM employees WHERE telegram_id = @TgId AND is_active = TRUE LIMIT 1;";
+            var foundTg = await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { TgId = tgId }, cancellationToken: ct));
+            if (foundTg.HasValue) return foundTg;
+        }
+        else if (normalizedType == "whatsapp")
+        {
+            const string sql = "SELECT master_id FROM employees WHERE whatsapp_id = @WpId AND is_active = TRUE LIMIT 1;";
+            var foundWp = await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { WpId = trimmedUserId }, cancellationToken: ct));
+            if (foundWp.HasValue) return foundWp;
+        }
+
+        // Проверяем универсальную таблицу внешних идентификаторов (для самописной CRM, SSO, Web и др.)
+        const string identitySql = """
+            SELECT e.master_id
+            FROM user_identities ui
+            JOIN employees e ON e.id = ui.employee_id
+            WHERE LOWER(ui.provider) = @Provider
+              AND ui.external_user_id = @ExternalId
+              AND e.is_active = TRUE
+            LIMIT 1;
+        """;
+        try
+        {
+            var mappedMasterId = await conn.ExecuteScalarAsync<long?>(
+                new CommandDefinition(identitySql, new { Provider = normalizedType, ExternalId = trimmedUserId }, cancellationToken: ct));
+            if (mappedMasterId.HasValue)
+            {
+                return mappedMasterId;
+            }
+        }
+        catch (PostgresException)
+        {
+            // Fallback если таблица user_identities ещё не создана до старта миграции
+        }
+
+        if (long.TryParse(trimmedUserId, out var directId))
+        {
+            const string sql = """
+                SELECT master_id
+                FROM employees
+                WHERE (master_id = @DirectId OR telegram_id = @DirectId OR id = @DirectId)
+                  AND is_active = TRUE
+                ORDER BY CASE WHEN master_id = @DirectId THEN 0 WHEN telegram_id = @DirectId THEN 1 ELSE 2 END
+                LIMIT 1;
+            """;
+            return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { DirectId = directId }, cancellationToken: ct));
+        }
+
+        return null;
     }
 
     public async Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default)
@@ -234,6 +419,7 @@ public class FotoprintRepository : IFotoprintRepository
                 whatsapp_id AS WhatsappId,
                 department AS Department,
                 position AS Position,
+                notifications_enabled AS NotificationsEnabled,
                 is_active AS IsActive,
                 created_at AS CreatedAt,
                 updated_at AS UpdatedAt
@@ -259,6 +445,7 @@ public class FotoprintRepository : IFotoprintRepository
                 whatsapp_id AS WhatsappId,
                 department AS Department,
                 position AS Position,
+                notifications_enabled AS NotificationsEnabled,
                 is_active AS IsActive,
                 created_at AS CreatedAt,
                 updated_at AS UpdatedAt
@@ -499,20 +686,187 @@ public class FotoprintRepository : IFotoprintRepository
         }
     }
 
+    public async Task<List<CorporateDocumentChunk>> GetChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   c.chunk_text AS ChunkText, c.metadata::text AS MetadataJson
+            FROM corporate_document_chunks c
+            WHERE c.embedding IS NULL
+            ORDER BY c.created_at ASC, c.chunk_index ASC
+            LIMIT @Limit;
+        """;
+        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new { Limit = limit }, cancellationToken: ct));
+        return chunks.ToList();
+    }
+
+    public async Task UpdateChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var vec = new Vector(embedding);
+        const string sql = "UPDATE corporate_document_chunks SET embedding = @Embedding WHERE id = @Id;";
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = chunkId, Embedding = vec }, cancellationToken: ct));
+    }
+
+    private static async Task EnsureMeetingChunksSchemaAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        if (_meetingChunksEnsured) return;
+        await _meetingSchemaLock.WaitAsync(ct);
+        try
+        {
+            if (_meetingChunksEnsured) return;
+            const string ddl = """
+                CREATE TABLE IF NOT EXISTS meeting_chunks (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    meeting_id UUID NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+                    protocol_id UUID REFERENCES meeting_protocols(id) ON DELETE SET NULL,
+                    chunk_index INT NOT NULL,
+                    chunk_text TEXT NOT NULL,
+                    embedding vector(1536),
+                    allowed_access_groups JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    metadata JSONB DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_meeting_chunks_meeting_id ON meeting_chunks(meeting_id);
+                CREATE INDEX IF NOT EXISTS idx_meeting_chunks_allowed_groups ON meeting_chunks USING GIN(allowed_access_groups);
+                CREATE INDEX IF NOT EXISTS idx_meeting_chunks_embedding ON meeting_chunks USING hnsw (embedding vector_cosine_ops);
+            """;
+            await conn.ExecuteAsync(new CommandDefinition(ddl, cancellationToken: ct));
+            _meetingChunksEnsured = true;
+        }
+        finally
+        {
+            _meetingSchemaLock.Release();
+        }
+    }
+
+    public async Task SaveMeetingChunksAsync(Guid meetingId, Guid? protocolId, List<string> chunkTexts, List<float[]?> embeddings, List<string> allowedAccessGroups, object? metadata = null, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var groupsJson = JsonSerializer.Serialize(allowedAccessGroups ?? new List<string>());
+        var metaJson = metadata != null ? JsonSerializer.Serialize(metadata) : "{}";
+
+        for (int i = 0; i < chunkTexts.Count; i++)
+        {
+            var text = chunkTexts[i];
+            Vector? vec = embeddings.Count > i && embeddings[i] != null ? new Vector(embeddings[i]!) : null;
+
+            const string sql = """
+                INSERT INTO meeting_chunks (meeting_id, protocol_id, chunk_index, chunk_text, embedding, allowed_access_groups, metadata)
+                VALUES (@MeetingId, @ProtocolId, @ChunkIndex, @ChunkText, @Embedding, @Groups::jsonb, @Metadata::jsonb);
+            """;
+            await conn.ExecuteAsync(new CommandDefinition(sql, new
+            {
+                MeetingId = meetingId,
+                ProtocolId = protocolId,
+                ChunkIndex = i + 1,
+                ChunkText = text,
+                Embedding = vec,
+                Groups = groupsJson,
+                Metadata = metaJson
+            }, cancellationToken: ct));
+        }
+    }
+
+    public async Task<List<CorporateDocumentChunk>> GetMeetingChunksWithoutEmbeddingAsync(int limit = 200, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        const string sql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText, mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            WHERE mc.embedding IS NULL
+            ORDER BY mc.created_at ASC, mc.chunk_index ASC
+            LIMIT @Limit;
+        """;
+        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new { Limit = limit }, cancellationToken: ct));
+        return chunks.ToList();
+    }
+
+    public async Task UpdateMeetingChunkEmbeddingAsync(Guid chunkId, float[] embedding, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var vec = new Vector(embedding);
+        const string sql = "UPDATE meeting_chunks SET embedding = @Embedding WHERE id = @Id;";
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = chunkId, Embedding = vec }, cancellationToken: ct));
+    }
+
+    public static bool IsGeneralCatalogQuery(string? queryText)
+    {
+        var normalizedQuery = (queryText ?? "").Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(normalizedQuery)
+            || normalizedQuery is "*" or "all" or "все" or "раг" or "rag"
+            || normalizedQuery.Contains("что лежит")
+            || normalizedQuery.Contains("что есть")
+            || normalizedQuery.Contains("какие документ")
+            || normalizedQuery.Contains("какие регламент")
+            || normalizedQuery.Contains("список документ")
+            || normalizedQuery.Contains("база знаний")
+            || normalizedQuery.Contains(" в раг")
+            || normalizedQuery.Contains(" в rag");
+    }
+
     public async Task<List<CorporateDocumentChunk>> SearchSimilarChunksAsync(float[] queryEmbedding, List<string> userAccessGroups, int topK = 5, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
         var vec = new Vector(queryEmbedding);
-        var groupsJson = JsonSerializer.Serialize(userAccessGroups);
+        var effectiveGroups = (userAccessGroups != null && userAccessGroups.Count > 0)
+            ? userAccessGroups.Union(new[] { "all" }, StringComparer.OrdinalIgnoreCase).ToList()
+            : new List<string> { "all" };
+        var groupsJson = JsonSerializer.Serialize(effectiveGroups);
 
         const string sql = """
-            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex, c.chunk_text AS ChunkText, c.embedding, c.metadata::text AS MetadataJson
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   COALESCE(NULLIF(c.metadata::text, '{}'), d.metadata::text) AS MetadataJson
             FROM corporate_document_chunks c
-            WHERE (
-                c.allowed_access_groups ? 'all' 
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
+            JOIN corporate_documents d ON d.id = c.document_id
+            WHERE d.source_type <> 'google_meet'
+              AND c.embedding IS NOT NULL
+              AND (
+                  c.allowed_access_groups ? 'all' 
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
             ORDER BY c.embedding <=> @QueryVec
+            LIMIT @TopK;
+        """;
+
+        var chunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(sql, new
+        {
+            QueryVec = vec,
+            Groups = groupsJson,
+            TopK = topK
+        }, cancellationToken: ct));
+
+        return chunks.ToList();
+    }
+
+    public async Task<List<CorporateDocumentChunk>> SearchMeetingSimilarChunksAsync(float[] queryEmbedding, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+    {
+        if (meetingAccessGroups == null || meetingAccessGroups.Count == 0)
+        {
+            return new List<CorporateDocumentChunk>();
+        }
+
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var vec = new Vector(queryEmbedding);
+        var groupsJson = JsonSerializer.Serialize(meetingAccessGroups.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+
+        // Строгая изоляция созвонов в отдельной таблице meeting_chunks: доступ только по master:<id> участника или c-level (Директор), без 'all'
+        const string sql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText,
+                   mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            JOIN meetings m ON m.id = mc.meeting_id
+            WHERE mc.embedding IS NOT NULL
+              AND mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+            ORDER BY mc.embedding <=> @QueryVec
             LIMIT @TopK;
         """;
 
@@ -535,17 +889,7 @@ public class FotoprintRepository : IFotoprintRepository
         var groupsJson = JsonSerializer.Serialize(effectiveGroups);
 
         // Если запрос пустой или общий («что лежит в раг», «все документы», «база знаний») — возвращаем все доступные пользователю регламенты
-        var normalizedQuery = (queryText ?? "").Trim().ToLowerInvariant();
-        bool isGeneralCatalogQuery = string.IsNullOrWhiteSpace(normalizedQuery)
-            || normalizedQuery is "*" or "all" or "все" or "раг" or "rag"
-            || normalizedQuery.Contains("что лежит")
-            || normalizedQuery.Contains("что есть")
-            || normalizedQuery.Contains("какие документ")
-            || normalizedQuery.Contains("какие регламент")
-            || normalizedQuery.Contains("список документ")
-            || normalizedQuery.Contains("база знаний")
-            || normalizedQuery.Contains(" в раг")
-            || normalizedQuery.Contains(" в rag");
+        bool isGeneralCatalogQuery = IsGeneralCatalogQuery(queryText);
 
         const string allAccessibleSql = """
             SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
@@ -553,10 +897,11 @@ public class FotoprintRepository : IFotoprintRepository
                    c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
             JOIN corporate_documents d ON d.id = c.document_id
-            WHERE (
-                c.allowed_access_groups ? 'all'
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
+            WHERE d.source_type <> 'google_meet'
+              AND (
+                  c.allowed_access_groups ? 'all'
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
             ORDER BY d.created_at ASC, c.chunk_index ASC
             LIMIT @TopK;
         """;
@@ -577,11 +922,12 @@ public class FotoprintRepository : IFotoprintRepository
                    c.metadata::text AS MetadataJson
             FROM corporate_document_chunks c
             JOIN corporate_documents d ON d.id = c.document_id
-            WHERE (
-                c.allowed_access_groups ? 'all' 
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
-            AND (c.chunk_text ILIKE '%' || @QueryText || '%' OR d.title ILIKE '%' || @QueryText || '%')
+            WHERE d.source_type <> 'google_meet'
+              AND (
+                  c.allowed_access_groups ? 'all' 
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
+              AND (c.chunk_text ILIKE '%' || @QueryText || '%' OR d.title ILIKE '%' || @QueryText || '%')
             LIMIT @TopK;
         """;
 
@@ -598,6 +944,123 @@ public class FotoprintRepository : IFotoprintRepository
         }
 
         // Фолбэк по отдельным ключевым словам (>= 3 символов), включая корни слов (первые 4-5 букв для русской морфологии)
+        var patterns = BuildSearchPatterns(queryText);
+        if (patterns.Length == 0)
+        {
+            return chunks;
+        }
+
+        const string kwSql = """
+            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
+                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
+                   c.metadata::text AS MetadataJson
+            FROM corporate_document_chunks c
+            JOIN corporate_documents d ON d.id = c.document_id
+            WHERE d.source_type <> 'google_meet'
+              AND (
+                  c.allowed_access_groups ? 'all'
+                  OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              )
+              AND (c.chunk_text ILIKE ANY(@Patterns) OR d.title ILIKE ANY(@Patterns))
+            LIMIT @TopK;
+        """;
+
+        var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
+        {
+            Patterns = patterns,
+            Groups = groupsJson,
+            TopK = topK
+        }, cancellationToken: ct));
+
+        return kwChunks.ToList();
+    }
+
+    public async Task<List<CorporateDocumentChunk>> SearchMeetingTextChunksAsync(string queryText, List<string> meetingAccessGroups, int topK = 5, CancellationToken ct = default)
+    {
+        if (meetingAccessGroups == null || meetingAccessGroups.Count == 0)
+        {
+            return new List<CorporateDocumentChunk>();
+        }
+
+        await using var conn = await CreateConnectionAsync(ct);
+        await EnsureMeetingChunksSchemaAsync(conn, ct);
+        var groupsJson = JsonSerializer.Serialize(meetingAccessGroups.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+
+        if (IsGeneralCatalogQuery(queryText))
+        {
+            const string allSql = """
+                SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                       mc.chunk_text AS ChunkText,
+                       mc.metadata::text AS MetadataJson
+                FROM meeting_chunks mc
+                JOIN meetings m ON m.id = mc.meeting_id
+                WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+                ORDER BY m.start_time DESC, mc.chunk_index ASC
+                LIMIT @TopK;
+            """;
+
+            var recent = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(allSql, new
+            {
+                Groups = groupsJson,
+                TopK = Math.Max(topK, 10)
+            }, cancellationToken: ct));
+            return recent.ToList();
+        }
+
+        const string exactSql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText,
+                   mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            JOIN meetings m ON m.id = mc.meeting_id
+            WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (mc.chunk_text ILIKE '%' || @QueryText || '%' OR m.title ILIKE '%' || @QueryText || '%')
+            ORDER BY m.start_time DESC, mc.chunk_index ASC
+            LIMIT @TopK;
+        """;
+
+        var exact = (await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(exactSql, new
+        {
+            QueryText = queryText,
+            Groups = groupsJson,
+            TopK = topK
+        }, cancellationToken: ct))).ToList();
+
+        if (exact.Count > 0)
+        {
+            return exact;
+        }
+
+        var patterns = BuildSearchPatterns(queryText);
+        if (patterns.Length == 0)
+        {
+            return exact;
+        }
+
+        const string kwSql = """
+            SELECT mc.id, mc.meeting_id AS DocumentId, mc.chunk_index AS ChunkIndex,
+                   mc.chunk_text AS ChunkText,
+                   mc.metadata::text AS MetadataJson
+            FROM meeting_chunks mc
+            JOIN meetings m ON m.id = mc.meeting_id
+            WHERE mc.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
+              AND (mc.chunk_text ILIKE ANY(@Patterns) OR m.title ILIKE ANY(@Patterns))
+            ORDER BY m.start_time DESC, mc.chunk_index ASC
+            LIMIT @TopK;
+        """;
+
+        var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
+        {
+            Patterns = patterns,
+            Groups = groupsJson,
+            TopK = topK
+        }, cancellationToken: ct));
+
+        return kwChunks.ToList();
+    }
+
+    private static string[] BuildSearchPatterns(string? queryText)
+    {
         var rawWords = (queryText ?? "")
             .Split(new[] { ' ', ',', '.', ';', '?', '!', '-', '"', '\'', '«', '»' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(t => t.Length >= 3)
@@ -618,33 +1081,36 @@ public class FotoprintRepository : IFotoprintRepository
             }
         }
 
-        if (patternSet.Count == 0)
-        {
-            return chunks;
-        }
+        return patternSet.ToArray();
+    }
 
-        const string kwSql = """
-            SELECT c.id, c.document_id AS DocumentId, c.chunk_index AS ChunkIndex,
-                   CONCAT('[' || d.title || ' (' || COALESCE(d.department, 'Общий') || ')]: ', c.chunk_text) AS ChunkText,
-                   c.metadata::text AS MetadataJson
-            FROM corporate_document_chunks c
-            JOIN corporate_documents d ON d.id = c.document_id
-            WHERE (
-                c.allowed_access_groups ? 'all'
-                OR c.allowed_access_groups ?| ARRAY(SELECT jsonb_array_elements_text(@Groups::jsonb))
-            )
-            AND (c.chunk_text ILIKE ANY(@Patterns) OR d.title ILIKE ANY(@Patterns))
-            LIMIT @TopK;
+    public async Task<Guid> CreateMeetingAsync(
+        string title,
+        string? description,
+        DateTime startTime,
+        DateTime? endTime = null,
+        string status = "completed",
+        int? organizerId = null,
+        List<int>? participantIds = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var participantsJson = JsonSerializer.Serialize(participantIds ?? new List<int>());
+        const string sql = """
+            INSERT INTO meetings (title, description, start_time, end_time, status, organizer_id, participant_ids)
+            VALUES (@Title, @Description, @StartTime, @EndTime, @Status, @OrganizerId, @Participants::jsonb)
+            RETURNING id;
         """;
-
-        var kwChunks = await conn.QueryAsync<CorporateDocumentChunk>(new CommandDefinition(kwSql, new
+        return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
         {
-            Patterns = patternSet.ToArray(),
-            Groups = groupsJson,
-            TopK = topK
+            Title = title,
+            Description = description,
+            StartTime = startTime,
+            EndTime = endTime,
+            Status = status,
+            OrganizerId = organizerId,
+            Participants = participantsJson
         }, cancellationToken: ct));
-
-        return kwChunks.ToList();
     }
 
     public async Task<Guid> CreateMeetingAsync(
@@ -968,6 +1434,548 @@ public class FotoprintRepository : IFotoprintRepository
         return items.ToList();
     }
 
+    private sealed record MeetingRow(
+        Guid Id,
+        string Title,
+        string? Description,
+        DateTime StartTime,
+        DateTime? EndTime,
+        string Status,
+        int? OrganizerId,
+        string? ParticipantIdsJson,
+        string? CalendarEventId,
+        string? MetadataJson,
+        DateTime CreatedAt,
+        DateTime UpdatedAt);
+
+    public async Task EnsureNotificationSchemaAsync(CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            ALTER TABLE employees
+                ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+            CREATE TABLE IF NOT EXISTS notification_deliveries (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                dedup_key VARCHAR(255) NOT NULL UNIQUE,
+                notification_type VARCHAR(100) NOT NULL,
+                recipient_employee_id INT REFERENCES employees(id) ON DELETE SET NULL,
+                recipient_telegram_id BIGINT NOT NULL DEFAULT 0,
+                channel_type VARCHAR(50) NOT NULL DEFAULT 'telegram',
+                recipient_address VARCHAR(255),
+                entity_id UUID,
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                error_message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                sent_at TIMESTAMPTZ
+            );
+
+            ALTER TABLE notification_deliveries
+                ADD COLUMN IF NOT EXISTS channel_type VARCHAR(50) NOT NULL DEFAULT 'telegram';
+            ALTER TABLE notification_deliveries
+                ADD COLUMN IF NOT EXISTS recipient_address VARCHAR(255);
+
+            CREATE INDEX IF NOT EXISTS idx_notification_deliveries_type_created
+                ON notification_deliveries(notification_type, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_notification_deliveries_telegram_id
+                ON notification_deliveries(recipient_telegram_id);
+
+            CREATE TABLE IF NOT EXISTS employee_notification_preferences (
+                employee_id INT PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
+                master_id BIGINT UNIQUE NOT NULL,
+                digest_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                digest_time_msk VARCHAR(5) NOT NULL DEFAULT '09:00',
+                digest_weekdays_only BOOLEAN NOT NULL DEFAULT TRUE,
+                pre_meeting_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                pre_meeting_window_minutes INT NOT NULL DEFAULT 30,
+                task_deadlines_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                task_due_soon_hours INT NOT NULL DEFAULT 24,
+                task_urgent_hours INT NOT NULL DEFAULT 2,
+                quiet_hours_start_msk VARCHAR(5),
+                quiet_hours_end_msk VARCHAR(5),
+                preferred_channel VARCHAR(50) NOT NULL DEFAULT 'telegram',
+                channel_address VARCHAR(255),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_emp_notif_prefs_master_id
+                ON employee_notification_preferences(master_id);
+
+            CREATE TABLE IF NOT EXISTS user_identities (
+                id SERIAL PRIMARY KEY,
+                employee_id INT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                master_id BIGINT NOT NULL,
+                provider VARCHAR(50) NOT NULL,
+                external_user_id VARCHAR(255) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(provider, external_user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_identities_master_id
+                ON user_identities(master_id);
+        """;
+        await conn.ExecuteAsync(new CommandDefinition(sql, cancellationToken: ct));
+    }
+
+    public async Task<EmployeeNotificationPreferences> GetNotificationPreferencesAsync(
+        int employeeId,
+        long masterId = 0,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT employee_id AS EmployeeId,
+                   master_id AS MasterId,
+                   digest_enabled AS DigestEnabled,
+                   digest_time_msk AS DigestTimeMsk,
+                   digest_weekdays_only AS DigestWeekdaysOnly,
+                   pre_meeting_enabled AS PreMeetingEnabled,
+                   pre_meeting_window_minutes AS PreMeetingWindowMinutes,
+                   task_deadlines_enabled AS TaskDeadlinesEnabled,
+                   task_due_soon_hours AS TaskDueSoonHours,
+                   task_urgent_hours AS TaskUrgentHours,
+                   quiet_hours_start_msk AS QuietHoursStartMsk,
+                   quiet_hours_end_msk AS QuietHoursEndMsk,
+                   preferred_channel AS PreferredChannel,
+                   channel_address AS ChannelAddress,
+                   updated_at AS UpdatedAt
+            FROM employee_notification_preferences
+            WHERE employee_id = @EmployeeId
+            LIMIT 1;
+        """;
+
+        var row = await conn.QueryFirstOrDefaultAsync<EmployeeNotificationPreferences>(
+            new CommandDefinition(sql, new { EmployeeId = employeeId }, cancellationToken: ct));
+
+        if (row != null)
+            return row;
+
+        var resolvedMasterId = masterId;
+        if (resolvedMasterId <= 0)
+        {
+            const string masterSql = "SELECT master_id FROM employees WHERE id = @EmployeeId LIMIT 1;";
+            resolvedMasterId = await conn.QueryFirstOrDefaultAsync<long?>(
+                new CommandDefinition(masterSql, new { EmployeeId = employeeId }, cancellationToken: ct)) ?? 0;
+        }
+
+        return EmployeeNotificationPreferences.CreateDefault(employeeId, resolvedMasterId);
+    }
+
+    public async Task<IReadOnlyDictionary<int, EmployeeNotificationPreferences>> GetAllNotificationPreferencesAsync(
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT employee_id AS EmployeeId,
+                   master_id AS MasterId,
+                   digest_enabled AS DigestEnabled,
+                   digest_time_msk AS DigestTimeMsk,
+                   digest_weekdays_only AS DigestWeekdaysOnly,
+                   pre_meeting_enabled AS PreMeetingEnabled,
+                   pre_meeting_window_minutes AS PreMeetingWindowMinutes,
+                   task_deadlines_enabled AS TaskDeadlinesEnabled,
+                   task_due_soon_hours AS TaskDueSoonHours,
+                   task_urgent_hours AS TaskUrgentHours,
+                   quiet_hours_start_msk AS QuietHoursStartMsk,
+                   quiet_hours_end_msk AS QuietHoursEndMsk,
+                   preferred_channel AS PreferredChannel,
+                   channel_address AS ChannelAddress,
+                   updated_at AS UpdatedAt
+            FROM employee_notification_preferences
+            ORDER BY employee_id;
+        """;
+
+        var rows = await conn.QueryAsync<EmployeeNotificationPreferences>(
+            new CommandDefinition(sql, cancellationToken: ct));
+        return rows.ToDictionary(r => r.EmployeeId);
+    }
+
+    public async Task<EmployeeNotificationPreferences> UpsertNotificationPreferencesAsync(
+        int employeeId,
+        long masterId,
+        UpdateNotificationPreferencesPatch patch,
+        CancellationToken ct = default)
+    {
+        var current = await GetNotificationPreferencesAsync(employeeId, masterId, ct);
+        var effectiveMasterId = masterId > 0 ? masterId : current.MasterId;
+
+        if (effectiveMasterId <= 0)
+        {
+            await using var masterConn = await CreateConnectionAsync(ct);
+            const string masterSql = "SELECT master_id FROM employees WHERE id = @EmployeeId LIMIT 1;";
+            effectiveMasterId = await masterConn.QueryFirstOrDefaultAsync<long?>(
+                new CommandDefinition(masterSql, new { EmployeeId = employeeId }, cancellationToken: ct)) ?? 0;
+        }
+
+        string? nextQuietStart = current.QuietHoursStartMsk;
+        string? nextQuietEnd = current.QuietHoursEndMsk;
+        if (patch.ClearQuietHours)
+        {
+            nextQuietStart = null;
+            nextQuietEnd = null;
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(patch.QuietHoursStartMsk))
+                nextQuietStart = Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.QuietHoursStartMsk, current.QuietHoursStartMsk ?? "22:00");
+            if (!string.IsNullOrWhiteSpace(patch.QuietHoursEndMsk))
+                nextQuietEnd = Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.QuietHoursEndMsk, current.QuietHoursEndMsk ?? "08:00");
+        }
+
+        var nextDigestTime = !string.IsNullOrWhiteSpace(patch.DigestTimeMsk)
+            ? Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.DigestTimeMsk, current.DigestTimeMsk)
+            : current.DigestTimeMsk;
+
+        var preMeetingWindow = Math.Clamp(patch.PreMeetingWindowMinutes ?? current.PreMeetingWindowMinutes, 5, 240);
+        var dueSoonHours = Math.Clamp(patch.TaskDueSoonHours ?? current.TaskDueSoonHours, 1, 168);
+        var urgentHours = Math.Clamp(patch.TaskUrgentHours ?? current.TaskUrgentHours, 1, 72);
+        if (urgentHours > dueSoonHours)
+            urgentHours = dueSoonHours;
+
+        var nextPreferredChannel = !string.IsNullOrWhiteSpace(patch.PreferredChannel)
+            ? patch.PreferredChannel.Trim().ToLowerInvariant()
+            : current.PreferredChannel;
+
+        var updated = new EmployeeNotificationPreferences
+        {
+            EmployeeId = employeeId,
+            MasterId = effectiveMasterId,
+            DigestEnabled = patch.DigestEnabled ?? current.DigestEnabled,
+            DigestTimeMsk = nextDigestTime,
+            DigestWeekdaysOnly = patch.DigestWeekdaysOnly ?? current.DigestWeekdaysOnly,
+            PreMeetingEnabled = patch.PreMeetingEnabled ?? current.PreMeetingEnabled,
+            PreMeetingWindowMinutes = preMeetingWindow,
+            TaskDeadlinesEnabled = patch.TaskDeadlinesEnabled ?? current.TaskDeadlinesEnabled,
+            TaskDueSoonHours = dueSoonHours,
+            TaskUrgentHours = urgentHours,
+            QuietHoursStartMsk = nextQuietStart,
+            QuietHoursEndMsk = nextQuietEnd,
+            PreferredChannel = nextPreferredChannel,
+            ChannelAddress = patch.ChannelAddress ?? current.ChannelAddress,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await using var conn = await CreateConnectionAsync(ct);
+
+        if (patch.NotificationsEnabled.HasValue)
+        {
+            const string toggleSql = """
+                UPDATE employees
+                SET notifications_enabled = @Enabled,
+                    updated_at = NOW()
+                WHERE id = @EmployeeId;
+            """;
+            await conn.ExecuteAsync(
+                new CommandDefinition(toggleSql, new { EmployeeId = employeeId, Enabled = patch.NotificationsEnabled.Value }, cancellationToken: ct));
+        }
+
+        if (effectiveMasterId > 0)
+        {
+            const string upsertSql = """
+                INSERT INTO employee_notification_preferences (
+                    employee_id, master_id, digest_enabled, digest_time_msk, digest_weekdays_only,
+                    pre_meeting_enabled, pre_meeting_window_minutes,
+                    task_deadlines_enabled, task_due_soon_hours, task_urgent_hours,
+                    quiet_hours_start_msk, quiet_hours_end_msk,
+                    preferred_channel, channel_address, updated_at
+                )
+                VALUES (
+                    @EmployeeId, @MasterId, @DigestEnabled, @DigestTimeMsk, @DigestWeekdaysOnly,
+                    @PreMeetingEnabled, @PreMeetingWindowMinutes,
+                    @TaskDeadlinesEnabled, @TaskDueSoonHours, @TaskUrgentHours,
+                    @QuietHoursStartMsk, @QuietHoursEndMsk,
+                    @PreferredChannel, @ChannelAddress, NOW()
+                )
+                ON CONFLICT (employee_id) DO UPDATE SET
+                    master_id = EXCLUDED.master_id,
+                    digest_enabled = EXCLUDED.digest_enabled,
+                    digest_time_msk = EXCLUDED.digest_time_msk,
+                    digest_weekdays_only = EXCLUDED.digest_weekdays_only,
+                    pre_meeting_enabled = EXCLUDED.pre_meeting_enabled,
+                    pre_meeting_window_minutes = EXCLUDED.pre_meeting_window_minutes,
+                    task_deadlines_enabled = EXCLUDED.task_deadlines_enabled,
+                    task_due_soon_hours = EXCLUDED.task_due_soon_hours,
+                    task_urgent_hours = EXCLUDED.task_urgent_hours,
+                    quiet_hours_start_msk = EXCLUDED.quiet_hours_start_msk,
+                    quiet_hours_end_msk = EXCLUDED.quiet_hours_end_msk,
+                    preferred_channel = EXCLUDED.preferred_channel,
+                    channel_address = EXCLUDED.channel_address,
+                    updated_at = NOW();
+            """;
+            await conn.ExecuteAsync(new CommandDefinition(upsertSql, updated, cancellationToken: ct));
+        }
+
+        return updated;
+    }
+
+    public async Task<bool> ResetNotificationDeliveryByDedupKeyAsync(string dedupKey, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(dedupKey))
+            return false;
+
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = "DELETE FROM notification_deliveries WHERE dedup_key = @DedupKey;";
+        var affected = await conn.ExecuteAsync(
+            new CommandDefinition(sql, new { DedupKey = dedupKey.Trim() }, cancellationToken: ct));
+        return affected > 0;
+    }
+
+    public async Task UpsertUserIdentityAsync(
+        int employeeId,
+        long masterId,
+        string provider,
+        string externalUserId,
+        CancellationToken ct = default)
+    {
+        if (masterId <= 0 || string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(externalUserId))
+            return;
+
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            INSERT INTO user_identities (employee_id, master_id, provider, external_user_id)
+            VALUES (@EmployeeId, @MasterId, @Provider, @ExternalUserId)
+            ON CONFLICT (provider, external_user_id) DO UPDATE SET
+                employee_id = EXCLUDED.employee_id,
+                master_id = EXCLUDED.master_id;
+        """;
+        await conn.ExecuteAsync(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    EmployeeId = employeeId,
+                    MasterId = masterId,
+                    Provider = provider.Trim().ToLowerInvariant(),
+                    ExternalUserId = externalUserId.Trim()
+                },
+                cancellationToken: ct));
+    }
+
+    public async Task<Employee?> GetEmployeeByTelegramIdAsync(long telegramId, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT
+                id AS Id,
+                master_id AS MasterId,
+                first_name AS FirstName,
+                last_name AS LastName,
+                middle_name AS MiddleName,
+                email AS Email,
+                telegram_id AS TelegramId,
+                telegram_username AS TelegramUsername,
+                whatsapp_id AS WhatsappId,
+                department AS Department,
+                position AS Position,
+                notifications_enabled AS NotificationsEnabled,
+                is_active AS IsActive,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM employees
+            WHERE telegram_id = @TelegramId
+            ORDER BY is_active DESC, id ASC
+            LIMIT 1;
+        """;
+        return await conn.QueryFirstOrDefaultAsync<Employee>(
+            new CommandDefinition(sql, new { TelegramId = telegramId }, cancellationToken: ct));
+    }
+
+    public async Task<bool> SetEmployeeNotificationsEnabledAsync(long masterId, bool enabled, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            UPDATE employees
+            SET notifications_enabled = @Enabled,
+                updated_at = NOW()
+            WHERE master_id = @MasterId;
+        """;
+        var affected = await conn.ExecuteAsync(
+            new CommandDefinition(sql, new { MasterId = masterId, Enabled = enabled }, cancellationToken: ct));
+        return affected > 0;
+    }
+
+    public async Task<List<Meeting>> GetMeetingsInRangeUtcAsync(DateTime startUtc, DateTime endUtc, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT
+                id AS Id,
+                title AS Title,
+                description AS Description,
+                start_time AS StartTime,
+                end_time AS EndTime,
+                status AS Status,
+                organizer_id AS OrganizerId,
+                participant_ids::text AS ParticipantIdsJson,
+                calendar_event_id AS CalendarEventId,
+                metadata::text AS MetadataJson,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM meetings
+            WHERE status = 'scheduled'
+              AND start_time >= @StartUtc
+              AND start_time <= @EndUtc
+            ORDER BY start_time ASC;
+        """;
+
+        var rows = await conn.QueryAsync<MeetingRow>(new CommandDefinition(sql, new
+        {
+            StartUtc = DateTime.SpecifyKind(startUtc, DateTimeKind.Utc),
+            EndUtc = DateTime.SpecifyKind(endUtc, DateTimeKind.Utc)
+        }, cancellationToken: ct));
+
+        return rows.Select(row => new Meeting
+        {
+            Id = row.Id,
+            Title = row.Title,
+            Description = row.Description,
+            StartTime = row.StartTime,
+            EndTime = row.EndTime,
+            Status = row.Status,
+            OrganizerId = row.OrganizerId,
+            ParticipantIds = ParseParticipantIds(row.ParticipantIdsJson),
+            CalendarEventId = row.CalendarEventId,
+            MetadataJson = row.MetadataJson ?? "{}",
+            CreatedAt = row.CreatedAt,
+            UpdatedAt = row.UpdatedAt
+        }).ToList();
+    }
+
+    public async Task<List<ActionItem>> GetOpenActionItemsAsync(int? employeeId = null, CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var sql = """
+            SELECT
+                id AS Id,
+                meeting_id AS MeetingId,
+                protocol_id AS ProtocolId,
+                title AS Title,
+                description AS Description,
+                responsible_id AS ResponsibleId,
+                deadline AS Deadline,
+                status AS Status,
+                bitrix24_task_id AS Bitrix24TaskId,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM action_items
+            WHERE responsible_id IS NOT NULL
+              AND LOWER(status) NOT IN ('cancelled', 'completed', 'done', 'closed')
+        """;
+
+        if (employeeId.HasValue)
+        {
+            sql += "\n  AND responsible_id = @EmployeeId";
+        }
+
+        sql += "\nORDER BY deadline ASC NULLS LAST, created_at ASC;";
+
+        var items = await conn.QueryAsync<ActionItem>(
+            new CommandDefinition(sql, new { EmployeeId = employeeId }, cancellationToken: ct));
+        return items.ToList();
+    }
+
+    public Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId = null,
+        CancellationToken ct = default) =>
+        TryClaimNotificationDeliveryAsync(dedupKey, notificationType, recipientEmployeeId, recipientTelegramId, entityId, ct, "telegram", null);
+
+    public async Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId,
+        CancellationToken ct,
+        string channelType,
+        string? recipientAddress)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            INSERT INTO notification_deliveries (
+                dedup_key,
+                notification_type,
+                recipient_employee_id,
+                recipient_telegram_id,
+                channel_type,
+                recipient_address,
+                entity_id,
+                status
+            )
+            VALUES (
+                @DedupKey,
+                @NotificationType,
+                @RecipientEmployeeId,
+                @RecipientTelegramId,
+                @ChannelType,
+                @RecipientAddress,
+                @EntityId,
+                'pending'
+            )
+            ON CONFLICT (dedup_key) DO UPDATE
+            SET status = 'pending',
+                created_at = NOW(),
+                error_message = NULL
+            WHERE notification_deliveries.status = 'pending'
+              AND notification_deliveries.created_at < NOW() - INTERVAL '10 minutes'
+            RETURNING id;
+        """;
+
+        return await conn.QueryFirstOrDefaultAsync<Guid?>(new CommandDefinition(sql, new
+        {
+            DedupKey = dedupKey,
+            NotificationType = notificationType,
+            RecipientEmployeeId = recipientEmployeeId,
+            RecipientTelegramId = recipientTelegramId,
+            ChannelType = string.IsNullOrWhiteSpace(channelType) ? "telegram" : channelType.Trim().ToLowerInvariant(),
+            RecipientAddress = recipientAddress ?? (recipientTelegramId > 0 ? recipientTelegramId.ToString() : null),
+            EntityId = entityId
+        }, cancellationToken: ct));
+    }
+
+    public async Task CompleteNotificationDeliveryAsync(
+        Guid deliveryId,
+        string status,
+        string? errorMessage = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            UPDATE notification_deliveries
+            SET status = @Status,
+                error_message = @ErrorMessage,
+                sent_at = CASE WHEN @Status = 'sent' THEN NOW() ELSE sent_at END
+            WHERE id = @Id;
+        """;
+
+        await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            Id = deliveryId,
+            Status = status,
+            ErrorMessage = errorMessage
+        }, cancellationToken: ct));
+    }
+
+    private static List<int> ParseParticipantIds(string? participantIdsJson)
+    {
+        if (string.IsNullOrWhiteSpace(participantIdsJson))
+        {
+            return new List<int>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<int>>(participantIdsJson) ?? new List<int>();
+        }
+        catch (JsonException)
+        {
+            return new List<int>();
+        }
+    }
+
     public async Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default)
     {
         await using var conn = await CreateConnectionAsync(ct);
@@ -979,6 +1987,30 @@ public class FotoprintRepository : IFotoprintRepository
             WHERE id = @Id;
         """;
         await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = actionItemId, Status = status, BitrixTaskId = bitrix24TaskId }, cancellationToken: ct));
+    }
+}
+
+internal sealed class JsonbListTypeHandler<T> : SqlMapper.TypeHandler<List<T>>
+{
+    public override void SetValue(System.Data.IDbDataParameter parameter, List<T>? value)
+    {
+        parameter.Value = value == null ? "[]" : JsonSerializer.Serialize(value);
+    }
+
+    public override List<T> Parse(object value)
+    {
+        if (value is null or DBNull) return new List<T>();
+        if (value is List<T> typed) return typed;
+        var json = value.ToString();
+        if (string.IsNullOrWhiteSpace(json)) return new List<T>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<T>>(json) ?? new List<T>();
+        }
+        catch
+        {
+            return new List<T>();
+        }
     }
 }
 

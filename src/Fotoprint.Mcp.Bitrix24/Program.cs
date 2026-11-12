@@ -196,9 +196,25 @@ static object BuildMockCrmDeal(string dealQuery)
     };
 }
 
-// Tool 1: get_user_tasks
-app.MapGet("/tools/get_user_tasks", [RequirePermission("bitrix24:read_tasks")] async (int employee_id, string? status_filter, IFotoprintRepository repo) =>
+// Tool 1: get_user_tasks (строго свои задачи или любые для Директора)
+app.MapGet("/tools/get_user_tasks", [RequirePermission("bitrix24:read_tasks")] [RequireConfirmation(false)] async (int employee_id, string? status_filter, IFotoprintRepository repo, ILangfuseClient langfuse, HttpContext ctx) =>
 {
+    var secContext = ctx.Items["SecurityContext"] as EmployeeSecurityContext;
+    if (secContext != null && !secContext.IsExecutive && employee_id != secContext.EmployeeId)
+    {
+        var traceId = ctx.Request.Headers.TryGetValue("X-Trace-Id", out var tr) ? tr.ToString() : langfuse.GenerateTraceId();
+        var reason = $"IDOR-блокировка: сотрудник #{secContext.EmployeeId} ({secContext.FullName}) попытался прочитать задачи сотрудника #{employee_id}.";
+        await langfuse.LogSecurityAlertAsync(traceId, secContext.TelegramId, "get_user_tasks", "bitrix24:read_other_user_tasks", reason, ctx.RequestAborted);
+        return Results.Json(new
+        {
+            error = "Access Denied",
+            status = 403,
+            message = "Доступ запрещен: вы можете просматривать только свои собственные задачи (чтение чужих задач доступно только Директору).",
+            requested_employee_id = employee_id,
+            your_employee_id = secContext.EmployeeId
+        }, statusCode: 403);
+    }
+
     var dbFilter = string.Equals(status_filter, "overdue", StringComparison.OrdinalIgnoreCase) ? null : status_filter;
     var tasks = await repo.GetActionItemsByResponsibleAsync(employee_id, dbFilter);
 
@@ -230,7 +246,7 @@ app.MapGet("/tools/get_user_tasks", [RequirePermission("bitrix24:read_tasks")] a
 });
 
 // Tool 2: create_task
-app.MapPost("/tools/create_task", [RequirePermission("bitrix24:create_tasks")] async (CreateTaskRequest req, IFotoprintRepository repo, ILangfuseClient langfuse, HttpContext ctx) =>
+app.MapPost("/tools/create_task", [RequirePermission("bitrix24:create_tasks")] [RequireConfirmation(true)] async (CreateTaskRequest req, IFotoprintRepository repo, ILangfuseClient langfuse, HttpContext ctx) =>
 {
     var bitrixId = Random.Shared.Next(1050, 9999);
     var actionItemId = Guid.NewGuid();
@@ -274,7 +290,7 @@ app.MapPost("/tools/create_task", [RequirePermission("bitrix24:create_tasks")] a
 });
 
 // Tool 3: get_crm_deal_info
-app.MapGet("/tools/get_crm_deal_info", [RequirePermission("bitrix24:read_tasks")] (string deal_query) =>
+app.MapGet("/tools/get_crm_deal_info", [RequirePermission("bitrix24:read_tasks")] [RequireConfirmation(false)] (string deal_query) =>
 {
     return Results.Ok(BuildMockCrmDeal(deal_query));
 });
@@ -309,11 +325,22 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
 
     if (toolName == "get_user_tasks")
     {
-        int employeeId = 1;
+        int employeeId = empContext?.EmployeeId ?? 1;
         if (request.Params?.Arguments != null && request.Params.Arguments.TryGetValue("employee_id", out var empObj))
         {
             if (empObj is JsonElement je && je.TryGetInt32(out var eid)) employeeId = eid;
             else if (int.TryParse(empObj?.ToString(), out var parsedEid)) employeeId = parsedEid;
+        }
+
+        if (empContext != null && !empContext.IsExecutive && employeeId != empContext.EmployeeId)
+        {
+            var denyReason = $"IDOR-блокировка (/tools/call): сотрудник #{empContext.EmployeeId} попытался прочитать задачи #{employeeId}.";
+            await langfuse.LogSecurityAlertAsync(traceId, telegramId, toolName, "bitrix24:read_other_user_tasks", denyReason, ctx.RequestAborted);
+            return Results.Json(new McpJsonRpcResponse
+            {
+                Id = request.Id,
+                Error = new McpError { Code = 403, Message = "Доступ запрещен: можно читать только свои задачи." }
+            }, statusCode: 403);
         }
 
         var tasks = await repo.GetActionItemsByResponsibleAsync(employeeId);
@@ -326,6 +353,21 @@ app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepositor
 
     if (toolName == "create_task")
     {
+        var confirmedHeader = ctx.Request.Headers["X-User-Confirmed"].ToString();
+        if (!string.Equals(confirmedHeader, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Ok(new McpJsonRpcResponse
+            {
+                Id = request.Id,
+                Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
+                {
+                    status = "confirmation_required",
+                    requires_confirmation = true,
+                    message = "Требуется подтверждение пользователя (X-User-Confirmed: true) для создания задачи."
+                }))
+            });
+        }
+
         var title = request.Params?.Arguments?.GetValueOrDefault("title")?.ToString() ?? "Поручение по встрече";
         var bitrixId = Random.Shared.Next(1050, 9999);
 

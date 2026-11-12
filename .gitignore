@@ -1,41 +1,35 @@
-# .NET build artifacts
+# .NET
 bin/
 obj/
-out/
 *.user
 *.suo
-*.userosscache
-*.sln.docstates
 .vs/
-.vscode/
+
+# JetBrains Rider
 .idea/
-TestResults/
-*.trx
-*.coverage
+*.sln.iml
 
-# Environment & secrets
+# Visual Studio Code
+.vscode/
+
+# Environment and secrets
 .env
-.env.*
-!.env.example
-*.pfx
-*.key
-*.pem
-.agents/
+*.local.yaml
+*.local.json
 
-# Docker / local volumes / caches
-pgdata/
-clickhouse_data/
-minio_data/
-n8n_data/
-nuget_cache/
+# Audio and temporary uploads
+temp/
+audio_uploads/
+*.wav
+*.mp3
+*.m4a
+*.ogg
 
-# Node / Python
-node_modules/
+# Python cache (if any evaluation scripts used)
 __pycache__/
 *.pyc
-.venv/
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 desktop.ini
@@ -47,5 +41,3 @@ tools/tsukiko/
 
 # Whisper models
 models/*.bin
-
-

@@ -112,11 +112,12 @@ public class AudioEngineResolver : IAudioEngineResolver
         // 1. Explicit customSearchRoot (scoped search, e.g. for isolated unit tests)
         if (!string.IsNullOrWhiteSpace(customSearchRoot))
         {
-            var candidates = isWindows
-                ? new[] { Path.Combine(customSearchRoot, relWinFfmpeg), Path.Combine(customSearchRoot, "ffmpeg.exe") }
-                : new[] { Path.Combine(customSearchRoot, relMacFfmpeg), Path.Combine(customSearchRoot, "ffmpeg") };
+            var winCandidates = new[] { Path.Combine(customSearchRoot, relWinFfmpeg), Path.Combine(customSearchRoot, "ffmpeg.exe") };
+            var macCandidates = new[] { Path.Combine(customSearchRoot, relMacFfmpeg), Path.Combine(customSearchRoot, "ffmpeg") };
+            var primaryCandidates = isWindows ? winCandidates : macCandidates;
+            var secondaryCandidates = isWindows ? macCandidates : winCandidates;
 
-            foreach (var candidate in candidates)
+            foreach (var candidate in primaryCandidates.Concat(secondaryCandidates))
             {
                 if (File.Exists(candidate))
                 {
