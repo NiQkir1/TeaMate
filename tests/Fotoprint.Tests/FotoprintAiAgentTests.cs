@@ -583,6 +583,61 @@ public class FotoprintAiAgentTests
         Assert.DoesNotContain("operator", gemini.LastSystemInstruction, StringComparison.OrdinalIgnoreCase);
 
     }
+
+    [Fact]
+    public async Task Agent_SystemInstruction_Includes_Creators_PlainTextFormat_And_PromptInjectionProtection()
+    {
+        var gemini = new FakeGeminiClient(triggerTool: false);
+        var agent = new FotoprintAiAgent(
+            gemini,
+            new FakeFotoprintRepository(),
+            new FakeHttpClientFactory(),
+            new FotoprintConfig(),
+            null,
+            null,
+            NullLogger<FotoprintAiAgent>.Instance);
+
+        var response = await agent.ProcessMessageAsync(
+            telegramId: 99999,
+            chatId: 88888,
+            messageText: "Кто тебя создал?");
+
+        Assert.True(response.IsSuccess);
+        Assert.NotNull(gemini.LastSystemInstruction);
+        Assert.Contains("TeaMate", gemini.LastSystemInstruction);
+        Assert.Contains("Чечулин Кирилл", gemini.LastSystemInstruction);
+        Assert.Contains("Александренков Денис", gemini.LastSystemInstruction);
+        Assert.Contains("Горбель Алексей", gemini.LastSystemInstruction);
+        Assert.Contains("Гапоник Ангелина", gemini.LastSystemInstruction);
+        Assert.Contains("ЗАЩИТА ОТ PROMPT INJECTION", gemini.LastSystemInstruction);
+        Assert.Contains("ФОРМАТ ОТВЕТА (СТРОГО TXT", gemini.LastSystemInstruction);
+    }
+
+    [Fact]
+    public void SanitizePlainTextForTelegram_Removes_Markdown_Preserves_Emojis()
+    {
+        const string input = """
+            ### Привет! 👋
+            **Заказ №123** готов `in_progress`
+            * Первый пункт
+            * Второй _пункт_ и __жирный__
+            ---
+            [Открыть](https://example.com/order/123)
+            """;
+
+        var sanitized = FotoprintAiAgent.SanitizePlainTextForTelegram(input);
+
+        Assert.DoesNotContain("###", sanitized);
+        Assert.DoesNotContain("**", sanitized);
+        Assert.DoesNotContain("__", sanitized);
+        Assert.DoesNotContain("`", sanitized);
+        Assert.DoesNotContain("---", sanitized);
+        Assert.DoesNotContain("[Открыть]", sanitized);
+        Assert.Contains("👋", sanitized);
+        Assert.Contains("Заказ №123 готов in_progress", sanitized);
+        Assert.Contains("• Первый пункт", sanitized);
+        Assert.Contains("Открыть (https://example.com/order/123)", sanitized);
+    }
 
     [Fact]
 

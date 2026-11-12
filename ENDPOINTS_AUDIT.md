@@ -23,6 +23,10 @@
 
 ### 1.2. Микросервисы `Fotoprint.Mcp.*` (6 ручек)
 
+> [!NOTE]
+> Бизнес-ручки с моками внешних систем (`/tools/get_order_status`, `/tools/get_production_kpis`, `/tools/get_user_tasks`, `/tools/create_task`, `/tools/get_crm_deal_info`, `/tools/schedule_meeting`) **не входят** в этот список и **оставляются** в проекте — они демонстрируют работу MCP-коннекторов с 1С и Битрикс24 при отсутствии прямого доступа к боевым API (с полным прохождением RBAC и `[RequireConfirmation]`).  
+> К удалению ниже относятся только неиспользуемые дублирующие JSON-RPC/SSE обёртки. *(Исключение: если планируется подключать сторонние MCP-клиенты вроде Claude Desktop или Cursor по SSE/JSON-RPC, то `/sse`, `/message` и `/tools/call` нужно не удалять, а унифицировать.)*
+
 | № | Сервис | Метод и маршрут | Файл и строки | Почему нужно удалить | Рекомендация |
 |---|---|---|---|---|---|
 | 7 | `Mcp.EmployeeReader` | `GET /sse` | `src/Fotoprint.Mcp.EmployeeReader/Program.cs:50-59` | Черновая тестовая заглушка SSE-транспорта (`event: endpoint\ndata: /message`), которая сразу закрывает соединение и нигде не используется. | **Удалить** |
@@ -79,66 +83,66 @@
 
 ### 2.2. `Fotoprint.Mcp.EmployeeReader` (внутренний порт `8081`)
 
-| Метод | Маршрут | Файл | Защита / Авторизация | Где используется | Статус |
-|---|---|---|---|---|---|
-| `GET` | `/health` | `Program.cs:42` | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
-| `GET` | `/sse` | `Program.cs:50` | `InternalServiceAuthMiddleware` | **Не используется** (тестовая заглушка) | **Удалить** |
-| `GET` | `/tools/list` | `Program.cs:95` | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
-| `GET` | `/tools/get_employee_security_context` | `Program.cs:129` | `InternalServiceAuthMiddleware` | `SecurityValidator`, `n8n` (`01`, `06`) | Оставить |
-| `GET` | `/tools/resolve_master_id` | `Program.cs:135` | `InternalServiceAuthMiddleware` | `n8n` (`08_meeting_recall_rag_and_export.json:57`) | Оставить |
-| `POST` | `/tools/call` | `Program.cs:161` | `InternalServiceAuthMiddleware` | **Не используется** (дубликат) | **Удалить** |
-| `POST` | `/message` | `Program.cs:245` | `InternalServiceAuthMiddleware` | **Не используется** (тестовая заглушка) | **Удалить** |
+| Метод | Маршрут | Файл | Реализация | Защита / Авторизация | Где используется | Статус |
+|---|---|---|---|---|---|---|
+| `GET` | `/health` | `Program.cs:42` | Служебная | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
+| `GET` | `/sse` | `Program.cs:50` | Заглушка (SSE) | `InternalServiceAuthMiddleware` | **Не используется** | **Удалить** |
+| `GET` | `/tools/list` | `Program.cs:95` | Каталог схем MCP | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
+| `GET` | `/tools/get_employee_security_context` | `Program.cs:129` | Реальная БД (PostgreSQL + кэш) | `InternalServiceAuthMiddleware` | `SecurityValidator`, `n8n` (`01`, `06`) | Оставить |
+| `GET` | `/tools/resolve_master_id` | `Program.cs:135` | Реальная БД (PostgreSQL + кэш) | `InternalServiceAuthMiddleware` | `n8n` (`08_meeting_recall_rag_and_export.json:57`) | Оставить |
+| `POST` | `/tools/call` | `Program.cs:161` | Дубликат (JSON-RPC) | `InternalServiceAuthMiddleware` | **Не используется** | **Удалить** |
+| `POST` | `/message` | `Program.cs:245` | Заглушка (JSON-RPC) | `InternalServiceAuthMiddleware` | **Не используется** | **Удалить** |
 
 ---
 
 ### 2.3. `Fotoprint.Mcp.OneC` (внутренний порт `8082`)
 
-| Метод | Маршрут | Файл | Защита / Авторизация | Где используется | Статус |
-|---|---|---|---|---|---|
-| `GET` | `/health` | `Program.cs:40` | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
-| `GET` | `/tools/list` | `Program.cs:81` | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
-| `GET` | `/tools/get_order_status` | `Program.cs:84` | `onec:read_orders` | `FotoprintAiAgent` и `n8n` (`04_live_meeting_copilot.json:56`) | Оставить |
-| `GET` | `/tools/get_production_kpis` | `Program.cs:135` | `onec:read_production_kpis` | `FotoprintAiAgent` и `n8n` (`06_executive_summary.json:72`) | Оставить |
-| `POST` | `/tools/call` | `Program.cs:163` | Ручная валидация | **Не используется** (дубликат) | **Удалить** |
+| Метод | Маршрут | Файл | Реализация | Защита / Авторизация | Где используется | Статус |
+|---|---|---|---|---|---|---|
+| `GET` | `/health` | `Program.cs:40` | Служебная | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
+| `GET` | `/tools/list` | `Program.cs:81` | Каталог схем MCP | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
+| `GET` | `/tools/get_order_status` | `Program.cs:84` | **Демо-мок внешней 1С** | `onec:read_orders` | `FotoprintAiAgent` и `n8n` (`04_live_meeting_copilot.json:56`) | Оставить |
+| `GET` | `/tools/get_production_kpis` | `Program.cs:135` | **Демо-мок внешней 1С** | `onec:read_production_kpis` | `FotoprintAiAgent` и `n8n` (`06_executive_summary.json:72`) | Оставить |
+| `POST` | `/tools/call` | `Program.cs:163` | Дубликат (JSON-RPC) | Ручная валидация | **Не используется** | **Удалить** |
 
 ---
 
 ### 2.4. `Fotoprint.Mcp.Bitrix24` (внутренний порт `8083`)
 
-| Метод | Маршрут | Файл | Защита / Авторизация | Где используется | Статус |
-|---|---|---|---|---|---|
-| `GET` | `/health` | `Program.cs:45` | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
-| `GET` | `/tools/list` | `Program.cs:104` | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
-| `GET` | `/tools/get_user_tasks` | `Program.cs:200` | `bitrix24:read_tasks` + защита от IDOR | `FotoprintAiAgent` | Оставить |
-| `POST` | `/tools/create_task` | `Program.cs:249` | `bitrix24:create_tasks` + `[RequireConfirmation(true)]` | `FotoprintAiAgent` и `TelegramWebhookProcessor` | Оставить |
-| `GET` | `/tools/get_crm_deal_info` | `Program.cs:293` | `bitrix24:read_tasks` | `FotoprintAiAgent` | Оставить |
-| `POST` | `/tools/call` | `Program.cs:299` | Ручная валидация | **Не используется** (дубликат) | **Удалить** |
+| Метод | Маршрут | Файл | Реализация | Защита / Авторизация | Где используется | Статус |
+|---|---|---|---|---|---|---|
+| `GET` | `/health` | `Program.cs:45` | Служебная | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
+| `GET` | `/tools/list` | `Program.cs:104` | Каталог схем MCP | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
+| `GET` | `/tools/get_user_tasks` | `Program.cs:200` | **Гибрид: БД (`action_items`) + демо-мок Б24** | `bitrix24:read_tasks` + защита от IDOR | `FotoprintAiAgent` | Оставить |
+| `POST` | `/tools/create_task` | `Program.cs:249` | **Гибрид: БД (`action_items`) + демо-мок Б24** | `bitrix24:create_tasks` + `[RequireConfirmation(true)]` | `FotoprintAiAgent` и `TelegramWebhookProcessor` | Оставить |
+| `GET` | `/tools/get_crm_deal_info` | `Program.cs:293` | **Демо-мок внешней Б24** | `bitrix24:read_tasks` | `FotoprintAiAgent` | Оставить |
+| `POST` | `/tools/call` | `Program.cs:299` | Дубликат (JSON-RPC) | Ручная валидация | **Не используется** | **Удалить** |
 
 ---
 
 ### 2.5. `Fotoprint.Mcp.Calendar` (внутренний порт `8084`)
 
-| Метод | Маршрут | Файл | Защита / Авторизация | Где используется | Статус |
-|---|---|---|---|---|---|
-| `GET` | `/health` | `Program.cs:54` | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
-| `GET` | `/tools/list` | `Program.cs:181` | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
-| `GET` | `/tools/get_upcoming_meetings` | `Program.cs:191` | `calendar:read_meetings` + RBAC фильтр участников | `FotoprintAiAgent` и `n8n` (`07_google_meet_post_processing.json:42`) | Оставить |
-| `GET` | `/tools/get_meeting_history` | `Program.cs:236` | `calendar:read_meetings` + RBAC фильтр участников | `FotoprintAiAgent` | Оставить |
-| `POST` | `/tools/find_free_slots` | `Program.cs:302` | `calendar:read_meetings` | `FotoprintAiAgent` | Оставить |
-| `POST` | `/tools/create_meeting` | `Program.cs:348` | `calendar:read_meetings` + защита от IDOR | `AiGateway` (`/api/calendar/confirm`) | Оставить |
-| `GET` | `/tools/get_calendar_events` | `Program.cs:420` | `calendar:read_meetings` + RBAC `scope=all` | `AiGateway` (`/api/calendar/events`) | Оставить |
-| `POST` | `/tools/schedule_meeting` | `Program.cs:484` | `calendar:read_meetings` + `[RequireConfirmation(true)]` | `FotoprintAiAgent` | Оставить |
-| `GET` | `/tools/search_meeting_rag` | `Program.cs:510` | `calendar:read_meetings` + RBAC по `MasterId` | `FotoprintAiAgent` | Оставить |
-| `POST` | `/tools/call` | `Program.cs:617` | Ручная валидация | **Не используется** (дубликат) | **Удалить** |
+| Метод | Маршрут | Файл | Реализация | Защита / Авторизация | Где используется | Статус |
+|---|---|---|---|---|---|---|
+| `GET` | `/health` | `Program.cs:54` | Служебная | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
+| `GET` | `/tools/list` | `Program.cs:181` | Каталог схем MCP | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
+| `GET` | `/tools/get_upcoming_meetings` | `Program.cs:191` | Реальная БД + fallback мок при пустой БД | `calendar:read_meetings` + RBAC фильтр участников | `FotoprintAiAgent` и `n8n` (`07_google_meet_post_processing.json:42`) | Оставить |
+| `GET` | `/tools/get_meeting_history` | `Program.cs:236` | Реальная БД + fallback мок при пустой БД | `calendar:read_meetings` + RBAC фильтр участников | `FotoprintAiAgent` | Оставить |
+| `POST` | `/tools/find_free_slots` | `Program.cs:302` | Реальная БД (PostgreSQL) | `calendar:read_meetings` | `FotoprintAiAgent` | Оставить |
+| `POST` | `/tools/create_meeting` | `Program.cs:348` | Реальная БД + мок отправки оповещений | `calendar:read_meetings` + защита от IDOR | `AiGateway` (`/api/calendar/confirm`) | Оставить |
+| `GET` | `/tools/get_calendar_events` | `Program.cs:420` | Реальная БД (PostgreSQL) | `calendar:read_meetings` + RBAC `scope=all` | `AiGateway` (`/api/calendar/events`) | Оставить |
+| `POST` | `/tools/schedule_meeting` | `Program.cs:484` | **Демо-мок календаря** (генерация ID + Langfuse) | `calendar:read_meetings` + `[RequireConfirmation(true)]` | `FotoprintAiAgent` | Оставить |
+| `GET` | `/tools/search_meeting_rag` | `Program.cs:510` | Реальная БД (`meeting_chunks` + `pgvector`) | `calendar:read_meetings` + RBAC по `MasterId` | `FotoprintAiAgent` | Оставить |
+| `POST` | `/tools/call` | `Program.cs:617` | Дубликат (JSON-RPC) | Ручная валидация | **Не используется** | **Удалить** |
 
 ---
 
 ### 2.6. `Fotoprint.Mcp.KnowledgeBase` (внутренний порт `8086`)
 
-| Метод | Маршрут | Файл | Защита / Авторизация | Где используется | Статус |
-|---|---|---|---|---|---|
-| `GET` | `/health` | `Program.cs:57` | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
-| `GET` | `/tools/list` | `Program.cs:101` | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
-| `GET` | `/tools/search_typography_regulations` | `Program.cs:104` | `rag:search_department` + RBAC `AccessGroups` | `FotoprintAiAgent` | Оставить |
-| `POST` | `/tools/index_corporate_document` | `Program.cs:188` | `rag:search_all` + `[RequireConfirmation(true)]` | `FotoprintAiAgent` | Оставить |
+| Метод | Маршрут | Файл | Реализация | Защита / Авторизация | Где используется | Статус |
+|---|---|---|---|---|---|---|
+| `GET` | `/health` | `Program.cs:57` | Служебная | `InternalServiceAuthMiddleware` | Проверка состояния сервиса | Оставить |
+| `GET` | `/tools/list` | `Program.cs:101` | Каталог схем MCP | `InternalServiceAuthMiddleware` | Реестр MCP-инструментов сервиса | Оставить |
+| `GET` | `/tools/search_typography_regulations` | `Program.cs:104` | Реальная БД (`corporate_document_chunks` + `pgvector`) | `rag:search_department` + RBAC `AccessGroups` | `FotoprintAiAgent` | Оставить |
+| `POST` | `/tools/index_corporate_document` | `Program.cs:188` | Реальная БД (`corporate_documents` + `pgvector`) | `rag:search_all` + `[RequireConfirmation(true)]` | `FotoprintAiAgent` | Оставить |
 
