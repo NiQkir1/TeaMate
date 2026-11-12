@@ -35,6 +35,8 @@ builder.Services.AddHttpClient("CalendarMcpClient", c =>
 {
     c.BaseAddress = new Uri(calendarMcpUrl);
     c.Timeout = TimeSpan.FromSeconds(30);
+    var key = appConfig.Security?.InternalServiceSecretKey ?? "fotoprint-internal-service-secret-token-2026";
+    c.DefaultRequestHeaders.TryAddWithoutValidation("X-Internal-Service-Key", key);
 });
 builder.Services.AddSingleton<IFotoprintRepository>(_ => new FotoprintRepository(connectionString));
 builder.Services.AddSingleton<IDocumentParser, DocumentParser>();
@@ -2165,6 +2167,7 @@ app.MapGet("/api/calendar/events", async (
     var targetUrl = $"tools/get_calendar_events{queryString}";
 
     var req = new HttpRequestMessage(HttpMethod.Get, targetUrl);
+    req.Headers.TryAddWithoutValidation("X-Internal-Service-Key", config.Security?.InternalServiceSecretKey ?? "fotoprint-internal-service-secret-token-2026");
     if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
         req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
     if (httpContext.Request.Headers.TryGetValue("X-Trace-Id", out var trId))
@@ -2184,6 +2187,7 @@ app.MapPost("/api/calendar/confirm", async (
 {
     var client = httpFactory.CreateClient("CalendarMcpClient");
     var req = new HttpRequestMessage(HttpMethod.Post, "tools/create_meeting");
+    req.Headers.TryAddWithoutValidation("X-Internal-Service-Key", config.Security?.InternalServiceSecretKey ?? "fotoprint-internal-service-secret-token-2026");
     if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
         req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
     if (httpContext.Request.Headers.TryGetValue("X-Trace-Id", out var trId))
@@ -2207,6 +2211,7 @@ app.MapPost("/api/calendar/slots", async (
 {
     var client = httpFactory.CreateClient("CalendarMcpClient");
     var req = new HttpRequestMessage(HttpMethod.Post, "tools/find_free_slots");
+    req.Headers.TryAddWithoutValidation("X-Internal-Service-Key", config.Security?.InternalServiceSecretKey ?? "fotoprint-internal-service-secret-token-2026");
     if (httpContext.Request.Headers.TryGetValue("X-Telegram-Id", out var tgId))
         req.Headers.TryAddWithoutValidation("X-Telegram-Id", tgId.ToString());
     if (httpContext.Request.Headers.TryGetValue("X-Trace-Id", out var trId))
