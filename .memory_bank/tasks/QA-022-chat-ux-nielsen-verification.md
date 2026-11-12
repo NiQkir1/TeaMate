@@ -1,7 +1,7 @@
-# Task QA-020: Verification of Chat Workspace & Header UX Redesign (Nielsen 10 Checklist)
+# Task QA-022: Verification of Chat Workspace & Header UX Redesign (Nielsen 10 Checklist)
 
 - **Scope & Assigned Worktree**: QA Verifier & Design Auditor (`qa-worker`)
-- **Dependencies**: `020A`, `020B`, `020C`, `020D`
+- **Dependencies**: `022A`, `022B`, `022C`, `022D`
 - **Focus**: End-to-end verification of Nielsen Heuristics, layout integrity, multi-theme consistency, and zero-regression on `#calendar-window-view`.
 
 ---

@@ -1,4 +1,4 @@
-# Task 020C: Floating Composer Capsule & Single-Line Smart Chips Bar
+# Task 022C: Floating Composer Capsule & Single-Line Smart Chips Bar
 
 - **Scope & Assigned Worktree**: Frontend Interactions Developer (`coder-worker`)
 - **File Boundaries**:

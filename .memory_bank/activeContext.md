@@ -1,12 +1,12 @@
 # Active Context
 
 - **Current Epics**:
+  - **Stage 14**: Copilot Chat Workspace & Header UX Redesign (Nielsen 10 Overhaul — `022A`, `022B`, `022C`, `022D`, `QA-022`) [IN PROGRESS].
   - **Stage 10**: Smart Tokenized Employee / Client Search (`018A, 018B, 018C, QA-018`).
   - **Stage 11**: Calendar Views `Day`, `Month`, `Year` + `#cal-view-select` Fix (`019A, 019B, QA-019`).
-  - **Stage 12**: Startup Hackathon Presentation (9 slides, `ТЗ_Хакатон_Единая_система_управления_компанией.pdf` — `020A, 020B, 020C, QA-020`).
-- **Stage 12 Plan (`020A`, `020B`, `020C`, `QA-020`)**:
-  - **Contract**: `.memory_bank/contracts/hackathon_presentation_contract.md`
-  - **Narrative**: 100% ТЗ compliance opening → multi-theme UI, voice STT, MoM, TickTick calendar & smart search → RBAC (`employee_reader` read-only for LLM, manager-only grant), prompt-injection/anti-spam & mandatory user confirmation → honest AI & structured errors → Langfuse audit + Grafana logs & incident alerts → metrics & pilot roadmap.
-  - **Skills**: `mermaid-diagrams`, `chart-visualization`/`antv-g2-chart`, `frontend-slides`, `pro-slides`, `pptx` (Anthropic official), `ppt-design-skill`, `high-quality-slides`.
-- **Next Step**:
-  - Dispatch `020A` first (or Stage 10/11 tasks) upon user confirmation, followed by parallel `020B` + `020C` → `QA-020`.
+- **Stage 14 In-Flight Dispatch**:
+  - **Contract**: `.memory_bank/contracts/copilot_chat_ux_contract.md`
+  - **Worker 1**: Frontend UI & DOM Architect (`022A, 022B, 022C`) in `infra/nginx/html/index.html` and `theme-core.css`.
+  - **Worker 2**: UI Theme Specialist (`022D`) in `theme-obsidian.css`, `theme-liquid-glass.css`, and `theme-amber.css`.
+  - Strict zero-overlap boundary guaranteed.
+  - Followed by `QA-022` verification.

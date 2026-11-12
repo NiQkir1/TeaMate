@@ -1,4 +1,4 @@
-# Task 020B: Welcome Hero & Interactive Bento Quick-Start Grid
+# Task 022B: Welcome Hero & Interactive Bento Quick-Start Grid
 
 - **Scope & Assigned Worktree**: Frontend UX Designer & Component Developer (`coder-worker`)
 - **File Boundaries**:

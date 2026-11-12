@@ -1,4 +1,4 @@
-# Task 020D: Multi-Theme Styling for Header, Hero & Composer (3 Themes)
+# Task 022D: Multi-Theme Styling for Header, Hero & Composer (3 Themes)
 
 - **Scope & Assigned Worktree**: UI Theme & Styling Specialist (`coder-worker`)
 - **File Boundaries**:
