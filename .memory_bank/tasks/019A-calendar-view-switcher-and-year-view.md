@@ -1,4 +1,4 @@
-# Task 019A: Fix Calendar View Switcher (`Week`, `3 Days`, `Day`) & Implement Year View
+# Task 019A: Implement Calendar Views (`Day`, `Month`, `Year`) & Fix `#cal-view-select`
 
 - **Scope & Assigned Worktree**: Branch `feature/ticktick-calendar-ui` (Frontend Calendar Logic & Core Layout)
 - **File Boundaries**:
@@ -11,55 +11,58 @@
 ## Implementation Guidelines
 
 1. **HTML Updates (`infra/nginx/html/index.html`)**:
-   - In `#cal-view-select`, add `<option value="year">Год</option>` alongside `week` (`Неделя`), `3days` (`3 дня`), and `day` (`День`).
-   - Inside `#cal-workspace-body`, add `<div id="cal-year-grid" class="cal-year-grid" style="display: none;"></div>`.
+   - Update `#cal-view-select` options to:
+     - `<option value="day">День</option>`
+     - `<option value="week" selected>Неделя</option>`
+     - `<option value="month">Месяц</option>`
+     - `<option value="year">Год</option>`
+   - Inside `#cal-workspace-body`, add:
+     - `<div id="cal-month-grid" class="cal-month-grid" style="display: none;"></div>`
+     - `<div id="cal-year-grid" class="cal-year-grid" style="display: none;"></div>`
 
 2. **Core CSS Updates (`infra/nginx/html/themes/theme-core.css`)**:
    - Replace hardcoded `grid-template-columns: repeat(7, 1fr);` on `.cal-week-columns-header`, `.cal-allday-cells-container`, and `.cal-grid-columns` with:
      ```css
      grid-template-columns: repeat(var(--cal-grid-cols, 7), minmax(0, 1fr));
      ```
-   - Add responsive structural styles for `.cal-year-grid` (4 columns on desktop `repeat(4, minmax(0, 1fr))`, 3 columns on `<= 1200px`, 2 columns on `<= 820px`, scrollable `overflow-y: auto`), `.cal-year-month-card`, `.cal-year-month-title`, `.cal-year-weekdays`, `.cal-year-days-grid`, `.cal-year-day-cell`, `.cal-year-event-dot`, using CSS variables `--cal-year-card-bg`, `--cal-year-card-border`, `--cal-year-card-hover`, `--cal-year-event-dot`, `--cal-year-today-bg` with sensible fallbacks.
+   - Add structural layout CSS for **Month View**:
+     - `.cal-month-grid` (flex column, `flex: 1`, `overflow: hidden`), `.cal-month-weekdays` (7-col header), `.cal-month-cells` (`grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: repeat(6, minmax(0, 1fr)); flex: 1`), `.cal-month-cell` (border-right/bottom hairlines, `overflow: hidden`, hover state, `.other-month` dimmed), `.cal-month-cell-header` (day number + `.cal-month-week-num` on Mondays), `.cal-month-events-list`, `.cal-month-event-pill` (compact row with icon, title, right-aligned time), `.cal-month-more-badge` (`+N`).
+   - Add structural layout CSS for **Year View**:
+     - `.cal-year-grid` (`grid-template-columns: repeat(4, minmax(0, 1fr))` on desktop, `3` cols `<= 1200px`, `2` cols `<= 820px`, `overflow-y: auto`), `.cal-year-month-card`, `.cal-year-month-title`, `.cal-year-weekdays` (`grid-template-columns: 20px repeat(7, 1fr)`), `.cal-year-week-row` (`grid-template-columns: 20px repeat(7, 1fr)`), `.cal-year-week-num`, `.cal-year-day-cell` (`data-density="1|2|3"` heatmap shading, `.is-today`, `.other-month`).
 
 3. **JavaScript Engine (`infra/nginx/html/index.html`)**:
    - Add `let currentCalendarViewMode = 'week';`.
    - Update `changeCalendarView(viewMode)`:
-     - Validate against `['week', '3days', 'day', 'year']`.
-     - Update `currentCalendarViewMode` and `#cal-view-select.value`.
-     - Call `closeDragCreatePopover()`.
-     - When switching to `3days` or `day`, ensure `selectedCalendarDate` is valid and used as the view anchor; when switching to `year`, call `refreshCalendarEvents()` so full-year events are fetched.
-     - Re-render the active view (`renderWeekViewGrid()` or `renderYearViewGrid()`).
-   - Update `renderWeekViewGrid()`:
-     - When `currentCalendarViewMode === 'year'`, hide `.cal-week-header`, `.cal-allday-strip`, `.cal-timegrid-scroll`, show `#cal-year-grid`, and call `renderYearViewGrid()`.
-     - Otherwise show `.cal-week-header`, `.cal-allday-strip`, `.cal-timegrid-scroll`, hide `#cal-year-grid`.
-     - Compute `numCols` (`7` for `week`, `3` for `3days`, `1` for `day`) and set `workspaceBody.style.setProperty('--cal-grid-cols', String(numCols))`.
-     - Set anchor start date: `currentWeekStart` for `week`, `selectedCalendarDate` for `3days` and `day`.
-     - Loop `for (let i = 0; i < numCols; i++)` to render day headers, all-day cells, and 24h day columns (preserving `setupDayColDrag(colDiv, isoDate)` and `layoutDayTimedEvents`).
-     - Update `#cal-now-dot` horizontal offset using `numCols`: `calc(56px + ${todayColIdx} * ((100% - 56px) / ${numCols}))`.
-     - Update `#current-month-label` to `${MONTH_NAMES[anchor.getMonth()]} ${anchor.getFullYear()}`.
-   - Implement `renderYearViewGrid()`:
-     - Render 12 `.cal-year-month-card` elements for `currentCalendarDate.getFullYear()`.
-     - Update `#current-month-label` to `${year} г.`.
-     - Highlight `todayStr` (`2026-11-12` or real today if matched) and `selectedCalendarDate`.
-     - Mark days with visible events (`isEventVisible(ev)`) using `.has-events` and `.cal-year-event-dot` + `title` showing event count.
-     - Clicking a `.cal-year-day-cell` sets `selectedCalendarDate`, `currentCalendarDate`, `currentWeekStart` to that date and calls `changeCalendarView('day')`.
-     - Clicking `.cal-year-month-title` sets `selectedCalendarDate`, `currentCalendarDate`, `currentWeekStart` to the 1st of that month and calls `changeCalendarView('week')`.
-   - Update `changeWeek(delta)` (keep function name for `onclick="changeWeek(-1/1)"` compatibility):
-     - `week`: shift `currentWeekStart` by `delta * 7` days.
-     - `3days`: shift `selectedCalendarDate` and `currentWeekStart` by `delta * 3` days.
-     - `day`: shift `selectedCalendarDate` and `currentWeekStart` by `delta * 1` day.
-     - `year`: shift `currentCalendarDate` and `selectedCalendarDate` by `delta * 1` year.
-     - Re-render mini-month, active main view, and refresh events if month/year changed.
+     - Validate `['day', 'week', 'month', 'year']`.
+     - Set `currentCalendarViewMode = viewMode`, sync `#cal-view-select.value`, call `closeDragCreatePopover()`.
+     - If `viewMode === 'year'` or `'month'`, call `refreshCalendarEvents()` so full-year/month events are available.
+     - Render active view via `renderActiveCalendarView()` (or inside `renderWeekViewGrid()`).
+   - Update `renderWeekViewGrid()` (and add `renderMonthViewGrid()` + `renderYearViewGrid()`):
+     - Toggle visibility of `.cal-week-header`, `.cal-allday-strip`, `.cal-timegrid-scroll`, `#cal-month-grid`, and `#cal-year-grid` based on `currentCalendarViewMode`.
+     - **Day (`day`) & Week (`week`)**:
+       - `numCols = (currentCalendarViewMode === 'day') ? 1 : 7`.
+       - Set `--cal-grid-cols` on `#cal-workspace-body` to `String(numCols)`.
+       - Anchor start date: `selectedCalendarDate` for `day`, `currentWeekStart` for `week`.
+       - Loop `i = 0 .. numCols - 1` (preserving `setupDayColDrag(colDiv, isoDate)` and `layoutDayTimedEvents`).
+       - Update `#cal-now-dot` left position using `numCols`: `calc(56px + ${todayColIdx} * ((100% - 56px) / ${numCols}))`.
+     - **Month (`month`)**:
+       - Render 7 weekday headers + 42 `.cal-month-cell` cells (Monday-first) for `currentCalendarDate`'s month/year.
+       - Show `W<nn>` in Monday cells, compact `.cal-month-event-pill` items (up to 5 per cell + `+N` badge), click event pill -> `openEventPopover()`, click day number / `+N` -> `day` view, click empty cell -> `openQuickAddModal(isoDate, 10, 0)`.
+     - **Year (`year`)**:
+       - Set `#current-month-label` to `${year}`.
+       - Render 12 `.cal-year-month-card` cards with left week-number column (`1`..`52`), 7 weekday initials, and 6 week rows of `.cal-year-day-cell`.
+       - Compute visible event count per `YYYY-MM-DD` (`isEventVisible(ev)`) to assign `data-density="0|1|2|3"` and tooltip `${count} событий`.
+       - Click day cell -> `day` view on that date; click month title -> `month` view for that month.
+   - Update `changeWeek(delta)`:
+     - `day`: `±1` day; `week`: `±7` days; `month`: `±1` month; `year`: `±1` year.
    - Update `refreshCalendarEvents()`:
-     - When `currentCalendarViewMode === 'year'`, request `start_date=${year}-01-01` and `end_date=${year}-12-31`.
-   - Update `goToToday()`:
-     - Preserve or reset dates to `2026-11-12`, re-render whichever view mode is active (`year` or time-grid).
+     - When `currentCalendarViewMode === 'year'`, fetch `start_date=${year}-01-01` .. `end_date=${year}-12-31`.
+   - Also ensure `onCalendarFilterChange()` re-renders whichever view (`day`, `week`, `month`, `year`) is active.
 
 ---
 
 ## Acceptance Criteria
 
-- Selecting `Неделя`, `3 дня`, `День`, or `Год` in `#cal-view-select` immediately switches the main calendar workspace to 7 columns, 3 columns, 1 column, or 12-month Year View respectively.
-- `Prev` (`#cal-prev-btn`) and `Next` (`#cal-next-btn`) step by 7 days, 3 days, 1 day, or 1 year according to the active mode.
-- Drag-to-create and event inspector popover continue to work in `week`, `3days`, and `day` modes.
-- Clicking any day in Year View drills down to `day` view on that exact date; clicking a month title drills down to `week` view.
+- `#cal-view-select` switches cleanly between `День` (1-col time-grid), `Неделя` (7-col time-grid), `Месяц` (7×6 grid with week numbers and event pills), and `Год` (4×3 12-month heatmap grid with week numbers).
+- Prev/Next navigation steps by 1 day, 7 days, 1 month, or 1 year depending on active mode.
+- Drag-to-create works in both `День` and `Неделя`; event popover works in `День`, `Неделя`, and `Месяц`; Year View heatmap reflects event density and drills down to `День` / `Месяц`.

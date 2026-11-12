@@ -1,4 +1,4 @@
-# Task QA-019: Verification of Calendar View Switcher (`Week`, `3 Days`, `Day`, `Year`) & 3 Themes
+# Task QA-019: Verification of Calendar Views (`Day`, `Week`, `Month`, `Year`) & 3 Themes
 
 - **Scope & Assigned Worktree**: Branch `feature/ticktick-calendar-ui` (QA Verifier)
 - **Dependencies**: `019A`, `019B`
@@ -10,23 +10,21 @@
 ## Verification Checklist
 
 1. **View Mode Switching (`#cal-view-select`)**:
-   - `week`: Verify `.cal-day-col` count === `7`, `.cal-day-header-col` count === `7`, `--cal-grid-cols` === `7`.
-   - `3days`: Verify `.cal-day-col` count === `3`, `.cal-day-header-col` count === `3`, `--cal-grid-cols` === `3`.
-   - `day`: Verify `.cal-day-col` count === `1`, `.cal-day-header-col` count === `1`, `--cal-grid-cols` === `1`.
-   - `year`: Verify `#cal-year-grid` is visible, `.cal-timegrid-scroll` is hidden, and exactly `12` `.cal-year-month-card` elements are rendered.
+   - `day`: Verify `.cal-day-col` count === `1`, `.cal-day-header-col` count === `1`, `--cal-grid-cols` === `1`, full-width events, and `#cal-now-dot` on left edge of column.
+   - `week`: Verify `.cal-day-col` count === `7`, `--cal-grid-cols` === `7` (no regression).
+   - `month`: Verify `#cal-month-grid` is visible, `42` `.cal-month-cell` elements rendered (7×6), Monday cells show `W44`–`W49`, event pills show title + time, and `+N` overflow badge appears if >5 events.
+   - `year`: Verify `#cal-year-grid` is visible, `12` `.cal-year-month-card` elements rendered, each week row has left week-number (`1`..`52`), Nov 12 has `.is-today` and `data-density` > 0.
 2. **Navigation (`#cal-prev-btn`, `#cal-next-btn`, `#cal-today-btn`)**:
-   - In `3days`: `Next` advances start date by 3 days; `Prev` steps back 3 days.
-   - In `day`: `Next` advances by 1 day; `Prev` steps back 1 day.
-   - In `year`: `Next` switches `2026 г.` -> `2027 г.`; `Prev` returns to `2026 г.`.
-3. **Year View Drill-Down & Event Indicators**:
-   - Verify Nov 12, 2026 has `.has-events` / `.cal-year-event-dot` and `.is-today`.
-   - Clicking a day cell in `#cal-year-grid` switches `#cal-view-select` to `day` on that date.
-   - Clicking a month title in `#cal-year-grid` switches `#cal-view-select` to `week`.
-4. **Interactions & Current-Time Line**:
-   - Verify `#cal-now-dot` stays aligned with Today's column in `week`, `3days`, and `day` views.
-   - Verify drag-to-create opens `#cal-drag-create-popover` cleanly in `day` and `3days` views.
-5. **Multi-Theme & Regression Check**:
-   - Verify `year`, `day`, `3days`, and `week` views across `obsidian`, `liquid-glass`, and `amber` themes with zero console errors and no horizontal overflow.
+   - `day`: `Next` / `Prev` steps `±1` day.
+   - `week`: `Next` / `Prev` steps `±7` days.
+   - `month`: `Next` / `Prev` steps `±1` month.
+   - `year`: `Next` / `Prev` steps `±1` year (`2026` -> `2027` -> `2026`).
+3. **Interactive Drill-Down & Creation**:
+   - In `day`: drag-to-create opens `#cal-drag-create-popover` cleanly.
+   - In `month`: clicking an event pill opens `#cal-event-popover`; clicking a day number switches to `day` view.
+   - In `year`: clicking a day cell switches to `day` view on that date; clicking a month title switches to `month` view.
+4. **Multi-Theme & Regression Check**:
+   - Capture/verify `day`, `month`, and `year` views across `obsidian`, `liquid-glass`, and `amber` themes with zero console errors and no horizontal overflow.
    - Run existing tests in `tests/` to ensure no regressions.
 
 ---
