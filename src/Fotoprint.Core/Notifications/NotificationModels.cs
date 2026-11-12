@@ -15,6 +15,8 @@ public static class NotificationStatuses
     public const string NotConfigured = "not_configured";
     public const string InvalidRecipient = "invalid_recipient";
     public const string ValidationError = "validation_error";
+    public const string SkippedScheduleTime = "skipped_schedule_time";
+    public const string SkippedQuietHours = "skipped_quiet_hours";
 }
 
 public static class NotificationTypes
@@ -53,7 +55,8 @@ public sealed record DispatchPreMeetingCommand(
 public sealed record DispatchMorningDigestCommand(
     int? EmployeeId = null,
     bool? SkipIfEmpty = null,
-    bool DryRun = false);
+    bool DryRun = false,
+    bool EnforceScheduleTime = false);
 
 public sealed record DispatchTaskDeadlinesCommand(
     int? EmployeeId = null,

@@ -12,8 +12,8 @@
         "rule": {
           "interval": [
             {
-              "field": "cronExpression",
-              "expression": "0 9 * * 1-5"
+              "field": "minutes",
+              "minutesInterval": 5
             }
           ]
         }
@@ -39,7 +39,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={}",
+        "jsonBody": "={\"enforce_schedule_time\": true}",
         "options": {
           "timeout": 30000
         }

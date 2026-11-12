@@ -55,7 +55,7 @@ public interface IFotoprintRepository
     Task<List<ActionItem>> GetActionItemsByResponsibleAsync(int employeeId, string? statusFilter = null, CancellationToken ct = default);
     Task UpdateActionItemStatusAsync(Guid actionItemId, string status, int? bitrix24TaskId = null, CancellationToken ct = default);
 
-    // Проактивные уведомления (Telegram Notifications)
+    // Проактивные уведомления и настройки каналов (Multi-Channel Notifications)
     Task EnsureNotificationSchemaAsync(CancellationToken ct = default);
     Task<Employee?> GetEmployeeByTelegramIdAsync(long telegramId, CancellationToken ct = default);
     Task<bool> SetEmployeeNotificationsEnabledAsync(long masterId, bool enabled, CancellationToken ct = default);
@@ -68,16 +68,90 @@ public interface IFotoprintRepository
         long recipientTelegramId,
         Guid? entityId = null,
         CancellationToken ct = default);
+
+    Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId,
+        CancellationToken ct,
+        string channelType,
+        string? recipientAddress) =>
+        TryClaimNotificationDeliveryAsync(dedupKey, notificationType, recipientEmployeeId, recipientTelegramId, entityId, ct);
     Task CompleteNotificationDeliveryAsync(
         Guid deliveryId,
         string status,
         string? errorMessage = null,
         CancellationToken ct = default);
+
+    Task<EmployeeNotificationPreferences> GetNotificationPreferencesAsync(
+        int employeeId,
+        long masterId = 0,
+        CancellationToken ct = default) =>
+        Task.FromResult(EmployeeNotificationPreferences.CreateDefault(employeeId, masterId));
+
+    Task<IReadOnlyDictionary<int, EmployeeNotificationPreferences>> GetAllNotificationPreferencesAsync(
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyDictionary<int, EmployeeNotificationPreferences>>(
+            new Dictionary<int, EmployeeNotificationPreferences>());
+
+    Task<EmployeeNotificationPreferences> UpsertNotificationPreferencesAsync(
+        int employeeId,
+        long masterId,
+        UpdateNotificationPreferencesPatch patch,
+        CancellationToken ct = default)
+    {
+        var defaults = EmployeeNotificationPreferences.CreateDefault(employeeId, masterId);
+        return Task.FromResult(defaults with
+        {
+            DigestEnabled = patch.DigestEnabled ?? defaults.DigestEnabled,
+            DigestTimeMsk = !string.IsNullOrWhiteSpace(patch.DigestTimeMsk)
+                ? Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.DigestTimeMsk, defaults.DigestTimeMsk)
+                : defaults.DigestTimeMsk,
+            DigestWeekdaysOnly = patch.DigestWeekdaysOnly ?? defaults.DigestWeekdaysOnly,
+            PreMeetingEnabled = patch.PreMeetingEnabled ?? defaults.PreMeetingEnabled,
+            PreMeetingWindowMinutes = patch.PreMeetingWindowMinutes ?? defaults.PreMeetingWindowMinutes,
+            TaskDeadlinesEnabled = patch.TaskDeadlinesEnabled ?? defaults.TaskDeadlinesEnabled,
+            TaskDueSoonHours = patch.TaskDueSoonHours ?? defaults.TaskDueSoonHours,
+            TaskUrgentHours = patch.TaskUrgentHours ?? defaults.TaskUrgentHours,
+            QuietHoursStartMsk = patch.ClearQuietHours ? null : (patch.QuietHoursStartMsk ?? defaults.QuietHoursStartMsk),
+            QuietHoursEndMsk = patch.ClearQuietHours ? null : (patch.QuietHoursEndMsk ?? defaults.QuietHoursEndMsk),
+            PreferredChannel = patch.PreferredChannel ?? defaults.PreferredChannel,
+            ChannelAddress = patch.ChannelAddress ?? defaults.ChannelAddress
+        });
+    }
+
+    Task<bool> ResetNotificationDeliveryByDedupKeyAsync(
+        string dedupKey,
+        CancellationToken ct = default) =>
+        Task.FromResult(false);
+
+    Task UpsertUserIdentityAsync(
+        int employeeId,
+        long masterId,
+        string provider,
+        string externalUserId,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
 }
 
-public class FotoprintRepository : IFotoprintRepository
+public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisposable
 {
     private readonly string _connectionString;
+    private readonly NpgsqlDataSource _dataSource;
+
+    private sealed class EmployeeContextRow
+    {
+        public int EmployeeId { get; set; }
+        public long MasterId { get; set; }
+        public string FullName { get; set; } = string.Empty;
+        public long TelegramId { get; set; }
+        public string? TelegramUsername { get; set; }
+        public string Department { get; set; } = string.Empty;
+        public string Position { get; set; } = string.Empty;
+        public string? AccessGroupsJson { get; set; }
+    }
 
     static FotoprintRepository()
     {
@@ -88,15 +162,25 @@ public class FotoprintRepository : IFotoprintRepository
     public FotoprintRepository(string connectionString)
     {
         _connectionString = connectionString;
-    }
-
-    private async Task<NpgsqlConnection> CreateConnectionAsync(CancellationToken ct = default)
-    {
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(_connectionString);
         dataSourceBuilder.UseVector();
-        var dataSource = dataSourceBuilder.Build();
-        return await dataSource.OpenConnectionAsync(ct);
+        _dataSource = dataSourceBuilder.Build();
     }
+
+    public void Dispose()
+    {
+        _dataSource.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _dataSource.DisposeAsync();
+        GC.SuppressFinalize(this);
+    }
+
+    private ValueTask<NpgsqlConnection> CreateConnectionAsync(CancellationToken ct = default) =>
+        _dataSource.OpenConnectionAsync(ct);
 
     public async Task<EmployeeSecurityContext?> GetEmployeeSecurityContextAsync(long telegramId, CancellationToken ct = default)
     {
@@ -106,7 +190,7 @@ public class FotoprintRepository : IFotoprintRepository
                 e.id AS EmployeeId,
                 e.master_id AS MasterId,
                 TRIM(CONCAT(e.last_name, ' ', e.first_name, ' ', COALESCE(e.middle_name, ''))) AS FullName,
-                e.telegram_id AS TelegramId,
+                COALESCE(e.telegram_id, 0) AS TelegramId,
                 e.telegram_username AS TelegramUsername,
                 e.department AS Department,
                 e.position AS Position,
@@ -118,43 +202,43 @@ public class FotoprintRepository : IFotoprintRepository
             FROM employee_roles er
             JOIN roles r ON er.role_id = r.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.telegram_id = @TelegramId;
+            WHERE e.telegram_id = @TelegramId AND e.is_active = TRUE;
 
             SELECT DISTINCT p.code
             FROM employee_roles er
             JOIN role_permissions rp ON er.role_id = rp.role_id
             JOIN permissions p ON rp.permission_id = p.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.telegram_id = @TelegramId;
+            WHERE e.telegram_id = @TelegramId AND e.is_active = TRUE;
         """;
 
         using var multi = await conn.QueryMultipleAsync(new CommandDefinition(sql, new { TelegramId = telegramId }, cancellationToken: ct));
-        
-        var emp = await multi.ReadFirstOrDefaultAsync<dynamic>();
+
+        var emp = await multi.ReadFirstOrDefaultAsync<EmployeeContextRow>();
         if (emp == null) return null;
 
         var roles = (await multi.ReadAsync<string>()).ToList();
         var permissions = (await multi.ReadAsync<string>()).ToList();
 
         var accessGroups = new List<string>();
-        if (emp.accessgroupsjson != null)
+        if (!string.IsNullOrWhiteSpace(emp.AccessGroupsJson))
         {
             try
             {
-                accessGroups = JsonSerializer.Deserialize<List<string>>((string)emp.accessgroupsjson) ?? new();
+                accessGroups = JsonSerializer.Deserialize<List<string>>(emp.AccessGroupsJson) ?? new();
             }
-            catch { }
+            catch (JsonException) { }
         }
 
         return new EmployeeSecurityContext
         {
-            EmployeeId = (int)emp.employeeid,
-            MasterId = emp.masterid != null ? (long)emp.masterid : 0L,
-            FullName = (string)emp.fullname,
-            TelegramId = (long)emp.telegramid,
-            TelegramUsername = (string?)emp.telegramusername,
-            Department = (string)emp.department,
-            Position = (string)emp.position,
+            EmployeeId = emp.EmployeeId,
+            MasterId = emp.MasterId,
+            FullName = emp.FullName,
+            TelegramId = emp.TelegramId,
+            TelegramUsername = emp.TelegramUsername,
+            Department = emp.Department,
+            Position = emp.Position,
             Roles = roles,
             Permissions = permissions,
             AccessGroups = accessGroups
@@ -181,43 +265,43 @@ public class FotoprintRepository : IFotoprintRepository
             FROM employee_roles er
             JOIN roles r ON er.role_id = r.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.master_id = @MasterId;
+            WHERE e.master_id = @MasterId AND e.is_active = TRUE;
 
             SELECT DISTINCT p.code
             FROM employee_roles er
             JOIN role_permissions rp ON er.role_id = rp.role_id
             JOIN permissions p ON rp.permission_id = p.id
             JOIN employees e ON er.employee_id = e.id
-            WHERE e.master_id = @MasterId;
+            WHERE e.master_id = @MasterId AND e.is_active = TRUE;
         """;
 
         using var multi = await conn.QueryMultipleAsync(new CommandDefinition(sql, new { MasterId = masterId }, cancellationToken: ct));
-        
-        var emp = await multi.ReadFirstOrDefaultAsync<dynamic>();
+
+        var emp = await multi.ReadFirstOrDefaultAsync<EmployeeContextRow>();
         if (emp == null) return null;
 
         var roles = (await multi.ReadAsync<string>()).ToList();
         var permissions = (await multi.ReadAsync<string>()).ToList();
 
         var accessGroups = new List<string>();
-        if (emp.accessgroupsjson != null)
+        if (!string.IsNullOrWhiteSpace(emp.AccessGroupsJson))
         {
             try
             {
-                accessGroups = JsonSerializer.Deserialize<List<string>>((string)emp.accessgroupsjson) ?? new();
+                accessGroups = JsonSerializer.Deserialize<List<string>>(emp.AccessGroupsJson) ?? new();
             }
-            catch { }
+            catch (JsonException) { }
         }
 
         return new EmployeeSecurityContext
         {
-            EmployeeId = (int)emp.employeeid,
-            MasterId = emp.masterid != null ? (long)emp.masterid : masterId,
-            FullName = (string)emp.fullname,
-            TelegramId = (long)emp.telegramid,
-            TelegramUsername = (string?)emp.telegramusername,
-            Department = (string)emp.department,
-            Position = (string)emp.position,
+            EmployeeId = emp.EmployeeId,
+            MasterId = emp.MasterId != 0 ? emp.MasterId : masterId,
+            FullName = emp.FullName,
+            TelegramId = emp.TelegramId,
+            TelegramUsername = emp.TelegramUsername,
+            Department = emp.Department,
+            Position = emp.Position,
             Roles = roles,
             Permissions = permissions,
             AccessGroups = accessGroups
@@ -226,26 +310,66 @@ public class FotoprintRepository : IFotoprintRepository
 
     public async Task<long?> ResolveMasterIdByMessengerAsync(string messengerType, string messengerUserId, CancellationToken ct = default)
     {
-        await using var conn = await CreateConnectionAsync(ct);
-        if (string.Equals(messengerType, "telegram", StringComparison.OrdinalIgnoreCase) && long.TryParse(messengerUserId, out var tgId))
+        if (string.IsNullOrWhiteSpace(messengerUserId))
         {
-            const string sql = "SELECT master_id FROM employees WHERE telegram_id = @TgId AND is_active = TRUE LIMIT 1;";
-            return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { TgId = tgId }, cancellationToken: ct));
-        }
-        else if (string.Equals(messengerType, "whatsapp", StringComparison.OrdinalIgnoreCase))
-        {
-            const string sql = "SELECT master_id FROM employees WHERE whatsapp_id = @WpId AND is_active = TRUE LIMIT 1;";
-            return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { WpId = messengerUserId }, cancellationToken: ct));
-        }
-        else
-        {
-            if (long.TryParse(messengerUserId, out var directMasterId))
-            {
-                const string sql = "SELECT master_id FROM employees WHERE master_id = @MasterId AND is_active = TRUE LIMIT 1;";
-                return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { MasterId = directMasterId }, cancellationToken: ct));
-            }
             return null;
         }
+
+        await using var conn = await CreateConnectionAsync(ct);
+        var normalizedType = (messengerType ?? "telegram").Trim().ToLowerInvariant();
+        var trimmedUserId = messengerUserId.Trim();
+
+        if (normalizedType == "telegram" && long.TryParse(trimmedUserId, out var tgId))
+        {
+            const string sql = "SELECT master_id FROM employees WHERE telegram_id = @TgId AND is_active = TRUE LIMIT 1;";
+            var foundTg = await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { TgId = tgId }, cancellationToken: ct));
+            if (foundTg.HasValue) return foundTg;
+        }
+        else if (normalizedType == "whatsapp")
+        {
+            const string sql = "SELECT master_id FROM employees WHERE whatsapp_id = @WpId AND is_active = TRUE LIMIT 1;";
+            var foundWp = await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { WpId = trimmedUserId }, cancellationToken: ct));
+            if (foundWp.HasValue) return foundWp;
+        }
+
+        // Проверяем универсальную таблицу внешних идентификаторов (для самописной CRM, SSO, Web и др.)
+        const string identitySql = """
+            SELECT e.master_id
+            FROM user_identities ui
+            JOIN employees e ON e.id = ui.employee_id
+            WHERE LOWER(ui.provider) = @Provider
+              AND ui.external_user_id = @ExternalId
+              AND e.is_active = TRUE
+            LIMIT 1;
+        """;
+        try
+        {
+            var mappedMasterId = await conn.ExecuteScalarAsync<long?>(
+                new CommandDefinition(identitySql, new { Provider = normalizedType, ExternalId = trimmedUserId }, cancellationToken: ct));
+            if (mappedMasterId.HasValue)
+            {
+                return mappedMasterId;
+            }
+        }
+        catch (PostgresException)
+        {
+            // Fallback если таблица user_identities ещё не создана до старта миграции
+        }
+
+        if (long.TryParse(trimmedUserId, out var directId))
+        {
+            const string sql = """
+                SELECT master_id
+                FROM employees
+                WHERE (master_id = @DirectId OR telegram_id = @DirectId OR id = @DirectId)
+                  AND is_active = TRUE
+                ORDER BY CASE WHEN master_id = @DirectId THEN 0 WHEN telegram_id = @DirectId THEN 1 ELSE 2 END
+                LIMIT 1;
+            """;
+            return await conn.ExecuteScalarAsync<long?>(new CommandDefinition(sql, new { DirectId = directId }, cancellationToken: ct));
+        }
+
+        return null;
     }
 
     public async Task<Employee?> GetEmployeeByIdAsync(int id, CancellationToken ct = default)
@@ -842,7 +966,9 @@ public class FotoprintRepository : IFotoprintRepository
                 dedup_key VARCHAR(255) NOT NULL UNIQUE,
                 notification_type VARCHAR(100) NOT NULL,
                 recipient_employee_id INT REFERENCES employees(id) ON DELETE SET NULL,
-                recipient_telegram_id BIGINT NOT NULL,
+                recipient_telegram_id BIGINT NOT NULL DEFAULT 0,
+                channel_type VARCHAR(50) NOT NULL DEFAULT 'telegram',
+                recipient_address VARCHAR(255),
                 entity_id UUID,
                 status VARCHAR(30) NOT NULL DEFAULT 'pending',
                 error_message TEXT,
@@ -850,12 +976,285 @@ public class FotoprintRepository : IFotoprintRepository
                 sent_at TIMESTAMPTZ
             );
 
+            ALTER TABLE notification_deliveries
+                ADD COLUMN IF NOT EXISTS channel_type VARCHAR(50) NOT NULL DEFAULT 'telegram';
+            ALTER TABLE notification_deliveries
+                ADD COLUMN IF NOT EXISTS recipient_address VARCHAR(255);
+
             CREATE INDEX IF NOT EXISTS idx_notification_deliveries_type_created
                 ON notification_deliveries(notification_type, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_notification_deliveries_telegram_id
                 ON notification_deliveries(recipient_telegram_id);
+
+            CREATE TABLE IF NOT EXISTS employee_notification_preferences (
+                employee_id INT PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
+                master_id BIGINT UNIQUE NOT NULL,
+                digest_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                digest_time_msk VARCHAR(5) NOT NULL DEFAULT '09:00',
+                digest_weekdays_only BOOLEAN NOT NULL DEFAULT TRUE,
+                pre_meeting_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                pre_meeting_window_minutes INT NOT NULL DEFAULT 30,
+                task_deadlines_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                task_due_soon_hours INT NOT NULL DEFAULT 24,
+                task_urgent_hours INT NOT NULL DEFAULT 2,
+                quiet_hours_start_msk VARCHAR(5),
+                quiet_hours_end_msk VARCHAR(5),
+                preferred_channel VARCHAR(50) NOT NULL DEFAULT 'telegram',
+                channel_address VARCHAR(255),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_emp_notif_prefs_master_id
+                ON employee_notification_preferences(master_id);
+
+            CREATE TABLE IF NOT EXISTS user_identities (
+                id SERIAL PRIMARY KEY,
+                employee_id INT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                master_id BIGINT NOT NULL,
+                provider VARCHAR(50) NOT NULL,
+                external_user_id VARCHAR(255) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(provider, external_user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_identities_master_id
+                ON user_identities(master_id);
         """;
         await conn.ExecuteAsync(new CommandDefinition(sql, cancellationToken: ct));
+    }
+
+    public async Task<EmployeeNotificationPreferences> GetNotificationPreferencesAsync(
+        int employeeId,
+        long masterId = 0,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT employee_id AS EmployeeId,
+                   master_id AS MasterId,
+                   digest_enabled AS DigestEnabled,
+                   digest_time_msk AS DigestTimeMsk,
+                   digest_weekdays_only AS DigestWeekdaysOnly,
+                   pre_meeting_enabled AS PreMeetingEnabled,
+                   pre_meeting_window_minutes AS PreMeetingWindowMinutes,
+                   task_deadlines_enabled AS TaskDeadlinesEnabled,
+                   task_due_soon_hours AS TaskDueSoonHours,
+                   task_urgent_hours AS TaskUrgentHours,
+                   quiet_hours_start_msk AS QuietHoursStartMsk,
+                   quiet_hours_end_msk AS QuietHoursEndMsk,
+                   preferred_channel AS PreferredChannel,
+                   channel_address AS ChannelAddress,
+                   updated_at AS UpdatedAt
+            FROM employee_notification_preferences
+            WHERE employee_id = @EmployeeId
+            LIMIT 1;
+        """;
+
+        var row = await conn.QueryFirstOrDefaultAsync<EmployeeNotificationPreferences>(
+            new CommandDefinition(sql, new { EmployeeId = employeeId }, cancellationToken: ct));
+
+        if (row != null)
+            return row;
+
+        var resolvedMasterId = masterId;
+        if (resolvedMasterId <= 0)
+        {
+            const string masterSql = "SELECT master_id FROM employees WHERE id = @EmployeeId LIMIT 1;";
+            resolvedMasterId = await conn.QueryFirstOrDefaultAsync<long?>(
+                new CommandDefinition(masterSql, new { EmployeeId = employeeId }, cancellationToken: ct)) ?? 0;
+        }
+
+        return EmployeeNotificationPreferences.CreateDefault(employeeId, resolvedMasterId);
+    }
+
+    public async Task<IReadOnlyDictionary<int, EmployeeNotificationPreferences>> GetAllNotificationPreferencesAsync(
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            SELECT employee_id AS EmployeeId,
+                   master_id AS MasterId,
+                   digest_enabled AS DigestEnabled,
+                   digest_time_msk AS DigestTimeMsk,
+                   digest_weekdays_only AS DigestWeekdaysOnly,
+                   pre_meeting_enabled AS PreMeetingEnabled,
+                   pre_meeting_window_minutes AS PreMeetingWindowMinutes,
+                   task_deadlines_enabled AS TaskDeadlinesEnabled,
+                   task_due_soon_hours AS TaskDueSoonHours,
+                   task_urgent_hours AS TaskUrgentHours,
+                   quiet_hours_start_msk AS QuietHoursStartMsk,
+                   quiet_hours_end_msk AS QuietHoursEndMsk,
+                   preferred_channel AS PreferredChannel,
+                   channel_address AS ChannelAddress,
+                   updated_at AS UpdatedAt
+            FROM employee_notification_preferences
+            ORDER BY employee_id;
+        """;
+
+        var rows = await conn.QueryAsync<EmployeeNotificationPreferences>(
+            new CommandDefinition(sql, cancellationToken: ct));
+        return rows.ToDictionary(r => r.EmployeeId);
+    }
+
+    public async Task<EmployeeNotificationPreferences> UpsertNotificationPreferencesAsync(
+        int employeeId,
+        long masterId,
+        UpdateNotificationPreferencesPatch patch,
+        CancellationToken ct = default)
+    {
+        var current = await GetNotificationPreferencesAsync(employeeId, masterId, ct);
+        var effectiveMasterId = masterId > 0 ? masterId : current.MasterId;
+
+        if (effectiveMasterId <= 0)
+        {
+            await using var masterConn = await CreateConnectionAsync(ct);
+            const string masterSql = "SELECT master_id FROM employees WHERE id = @EmployeeId LIMIT 1;";
+            effectiveMasterId = await masterConn.QueryFirstOrDefaultAsync<long?>(
+                new CommandDefinition(masterSql, new { EmployeeId = employeeId }, cancellationToken: ct)) ?? 0;
+        }
+
+        string? nextQuietStart = current.QuietHoursStartMsk;
+        string? nextQuietEnd = current.QuietHoursEndMsk;
+        if (patch.ClearQuietHours)
+        {
+            nextQuietStart = null;
+            nextQuietEnd = null;
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(patch.QuietHoursStartMsk))
+                nextQuietStart = Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.QuietHoursStartMsk, current.QuietHoursStartMsk ?? "22:00");
+            if (!string.IsNullOrWhiteSpace(patch.QuietHoursEndMsk))
+                nextQuietEnd = Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.QuietHoursEndMsk, current.QuietHoursEndMsk ?? "08:00");
+        }
+
+        var nextDigestTime = !string.IsNullOrWhiteSpace(patch.DigestTimeMsk)
+            ? Notifications.NotificationTimeHelper.NormalizeTimeMsk(patch.DigestTimeMsk, current.DigestTimeMsk)
+            : current.DigestTimeMsk;
+
+        var preMeetingWindow = Math.Clamp(patch.PreMeetingWindowMinutes ?? current.PreMeetingWindowMinutes, 5, 240);
+        var dueSoonHours = Math.Clamp(patch.TaskDueSoonHours ?? current.TaskDueSoonHours, 1, 168);
+        var urgentHours = Math.Clamp(patch.TaskUrgentHours ?? current.TaskUrgentHours, 1, 72);
+        if (urgentHours > dueSoonHours)
+            urgentHours = dueSoonHours;
+
+        var nextPreferredChannel = !string.IsNullOrWhiteSpace(patch.PreferredChannel)
+            ? patch.PreferredChannel.Trim().ToLowerInvariant()
+            : current.PreferredChannel;
+
+        var updated = new EmployeeNotificationPreferences
+        {
+            EmployeeId = employeeId,
+            MasterId = effectiveMasterId,
+            DigestEnabled = patch.DigestEnabled ?? current.DigestEnabled,
+            DigestTimeMsk = nextDigestTime,
+            DigestWeekdaysOnly = patch.DigestWeekdaysOnly ?? current.DigestWeekdaysOnly,
+            PreMeetingEnabled = patch.PreMeetingEnabled ?? current.PreMeetingEnabled,
+            PreMeetingWindowMinutes = preMeetingWindow,
+            TaskDeadlinesEnabled = patch.TaskDeadlinesEnabled ?? current.TaskDeadlinesEnabled,
+            TaskDueSoonHours = dueSoonHours,
+            TaskUrgentHours = urgentHours,
+            QuietHoursStartMsk = nextQuietStart,
+            QuietHoursEndMsk = nextQuietEnd,
+            PreferredChannel = nextPreferredChannel,
+            ChannelAddress = patch.ChannelAddress ?? current.ChannelAddress,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await using var conn = await CreateConnectionAsync(ct);
+
+        if (patch.NotificationsEnabled.HasValue)
+        {
+            const string toggleSql = """
+                UPDATE employees
+                SET notifications_enabled = @Enabled,
+                    updated_at = NOW()
+                WHERE id = @EmployeeId;
+            """;
+            await conn.ExecuteAsync(
+                new CommandDefinition(toggleSql, new { EmployeeId = employeeId, Enabled = patch.NotificationsEnabled.Value }, cancellationToken: ct));
+        }
+
+        if (effectiveMasterId > 0)
+        {
+            const string upsertSql = """
+                INSERT INTO employee_notification_preferences (
+                    employee_id, master_id, digest_enabled, digest_time_msk, digest_weekdays_only,
+                    pre_meeting_enabled, pre_meeting_window_minutes,
+                    task_deadlines_enabled, task_due_soon_hours, task_urgent_hours,
+                    quiet_hours_start_msk, quiet_hours_end_msk,
+                    preferred_channel, channel_address, updated_at
+                )
+                VALUES (
+                    @EmployeeId, @MasterId, @DigestEnabled, @DigestTimeMsk, @DigestWeekdaysOnly,
+                    @PreMeetingEnabled, @PreMeetingWindowMinutes,
+                    @TaskDeadlinesEnabled, @TaskDueSoonHours, @TaskUrgentHours,
+                    @QuietHoursStartMsk, @QuietHoursEndMsk,
+                    @PreferredChannel, @ChannelAddress, NOW()
+                )
+                ON CONFLICT (employee_id) DO UPDATE SET
+                    master_id = EXCLUDED.master_id,
+                    digest_enabled = EXCLUDED.digest_enabled,
+                    digest_time_msk = EXCLUDED.digest_time_msk,
+                    digest_weekdays_only = EXCLUDED.digest_weekdays_only,
+                    pre_meeting_enabled = EXCLUDED.pre_meeting_enabled,
+                    pre_meeting_window_minutes = EXCLUDED.pre_meeting_window_minutes,
+                    task_deadlines_enabled = EXCLUDED.task_deadlines_enabled,
+                    task_due_soon_hours = EXCLUDED.task_due_soon_hours,
+                    task_urgent_hours = EXCLUDED.task_urgent_hours,
+                    quiet_hours_start_msk = EXCLUDED.quiet_hours_start_msk,
+                    quiet_hours_end_msk = EXCLUDED.quiet_hours_end_msk,
+                    preferred_channel = EXCLUDED.preferred_channel,
+                    channel_address = EXCLUDED.channel_address,
+                    updated_at = NOW();
+            """;
+            await conn.ExecuteAsync(new CommandDefinition(upsertSql, updated, cancellationToken: ct));
+        }
+
+        return updated;
+    }
+
+    public async Task<bool> ResetNotificationDeliveryByDedupKeyAsync(string dedupKey, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(dedupKey))
+            return false;
+
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = "DELETE FROM notification_deliveries WHERE dedup_key = @DedupKey;";
+        var affected = await conn.ExecuteAsync(
+            new CommandDefinition(sql, new { DedupKey = dedupKey.Trim() }, cancellationToken: ct));
+        return affected > 0;
+    }
+
+    public async Task UpsertUserIdentityAsync(
+        int employeeId,
+        long masterId,
+        string provider,
+        string externalUserId,
+        CancellationToken ct = default)
+    {
+        if (masterId <= 0 || string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(externalUserId))
+            return;
+
+        await using var conn = await CreateConnectionAsync(ct);
+        const string sql = """
+            INSERT INTO user_identities (employee_id, master_id, provider, external_user_id)
+            VALUES (@EmployeeId, @MasterId, @Provider, @ExternalUserId)
+            ON CONFLICT (provider, external_user_id) DO UPDATE SET
+                employee_id = EXCLUDED.employee_id,
+                master_id = EXCLUDED.master_id;
+        """;
+        await conn.ExecuteAsync(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    EmployeeId = employeeId,
+                    MasterId = masterId,
+                    Provider = provider.Trim().ToLowerInvariant(),
+                    ExternalUserId = externalUserId.Trim()
+                },
+                cancellationToken: ct));
     }
 
     public async Task<Employee?> GetEmployeeByTelegramIdAsync(long telegramId, CancellationToken ct = default)
@@ -981,13 +1380,24 @@ public class FotoprintRepository : IFotoprintRepository
         return items.ToList();
     }
 
-    public async Task<Guid?> TryClaimNotificationDeliveryAsync(
+    public Task<Guid?> TryClaimNotificationDeliveryAsync(
         string dedupKey,
         string notificationType,
         int? recipientEmployeeId,
         long recipientTelegramId,
         Guid? entityId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        TryClaimNotificationDeliveryAsync(dedupKey, notificationType, recipientEmployeeId, recipientTelegramId, entityId, ct, "telegram", null);
+
+    public async Task<Guid?> TryClaimNotificationDeliveryAsync(
+        string dedupKey,
+        string notificationType,
+        int? recipientEmployeeId,
+        long recipientTelegramId,
+        Guid? entityId,
+        CancellationToken ct,
+        string channelType,
+        string? recipientAddress)
     {
         await using var conn = await CreateConnectionAsync(ct);
         const string sql = """
@@ -996,6 +1406,8 @@ public class FotoprintRepository : IFotoprintRepository
                 notification_type,
                 recipient_employee_id,
                 recipient_telegram_id,
+                channel_type,
+                recipient_address,
                 entity_id,
                 status
             )
@@ -1004,6 +1416,8 @@ public class FotoprintRepository : IFotoprintRepository
                 @NotificationType,
                 @RecipientEmployeeId,
                 @RecipientTelegramId,
+                @ChannelType,
+                @RecipientAddress,
                 @EntityId,
                 'pending'
             )
@@ -1022,6 +1436,8 @@ public class FotoprintRepository : IFotoprintRepository
             NotificationType = notificationType,
             RecipientEmployeeId = recipientEmployeeId,
             RecipientTelegramId = recipientTelegramId,
+            ChannelType = string.IsNullOrWhiteSpace(channelType) ? "telegram" : channelType.Trim().ToLowerInvariant(),
+            RecipientAddress = recipientAddress ?? (recipientTelegramId > 0 ? recipientTelegramId.ToString() : null),
             EntityId = entityId
         }, cancellationToken: ct));
     }

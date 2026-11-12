@@ -217,11 +217,6 @@ public sealed class TelegramWebhookProcessor
                 action: async (attempt, ct) =>
                 {
                     var bitrixClient = _httpFactory.CreateClient("BitrixMcpClient");
-                    bitrixClient.DefaultRequestHeaders.Remove("X-Telegram-Id");
-                    bitrixClient.DefaultRequestHeaders.Add("X-Telegram-Id", userId.ToString());
-                    bitrixClient.DefaultRequestHeaders.Remove("X-Trace-Id");
-                    bitrixClient.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
-
                     var bitrixReq = new
                     {
                         title = "Поручение по протоколу встречи",
@@ -229,7 +224,14 @@ public sealed class TelegramWebhookProcessor
                         deadline = DateTime.UtcNow.AddDays(3).ToString("yyyy-MM-dd")
                     };
 
-                    var response = await bitrixClient.PostAsJsonAsync("tools/create_task", bitrixReq, ct);
+                    using var reqMessage = new HttpRequestMessage(HttpMethod.Post, "tools/create_task")
+                    {
+                        Content = JsonContent.Create(bitrixReq)
+                    };
+                    reqMessage.Headers.TryAddWithoutValidation("X-Telegram-Id", userId.ToString());
+                    reqMessage.Headers.TryAddWithoutValidation("X-Trace-Id", traceId);
+
+                    using var response = await bitrixClient.SendAsync(reqMessage, ct);
                     if (!response.IsSuccessStatusCode)
                     {
                         throw new NodeTransientException(
@@ -450,9 +452,13 @@ public sealed class TelegramWebhookProcessor
                     action: async (attempt, token) =>
                     {
                         var n8nClient = _httpFactory.CreateClient("N8nClient");
-                        AttachTracingHeaders(n8nClient, traceId, effectiveSessionId, masterId.Value, userId);
+                        using var n8nRequest = new HttpRequestMessage(HttpMethod.Post, "fotoprint-chat")
+                        {
+                            Content = JsonContent.Create(n8nPayload)
+                        };
+                        AttachTracingHeaders(n8nRequest, traceId, effectiveSessionId, masterId.Value, userId);
 
-                        var n8nResponse = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, token);
+                        using var n8nResponse = await n8nClient.SendAsync(n8nRequest, token);
                         if (n8nResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                         {
                             var errBody = await n8nResponse.Content.ReadAsStringAsync(token);
@@ -621,18 +627,13 @@ public sealed class TelegramWebhookProcessor
         return masterId;
     }
 
-    private void AttachTracingHeaders(HttpClient client, string traceId, Guid sessionId, long masterId, long telegramId)
+    private void AttachTracingHeaders(HttpRequestMessage request, string traceId, Guid sessionId, long masterId, long telegramId)
     {
-        client.DefaultRequestHeaders.Remove("X-Trace-Id");
-        client.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
-        client.DefaultRequestHeaders.Remove("X-Session-Id");
-        client.DefaultRequestHeaders.Add("X-Session-Id", sessionId.ToString());
-        client.DefaultRequestHeaders.Remove("X-Master-Id");
-        client.DefaultRequestHeaders.Add("X-Master-Id", masterId.ToString());
-        client.DefaultRequestHeaders.Remove("X-Telegram-Id");
-        client.DefaultRequestHeaders.Add("X-Telegram-Id", telegramId.ToString());
-        client.DefaultRequestHeaders.Remove("X-Internal-Service-Key");
-        client.DefaultRequestHeaders.Add("X-Internal-Service-Key", _config.Security.InternalServiceSecretKey);
+        request.Headers.TryAddWithoutValidation("X-Trace-Id", traceId);
+        request.Headers.TryAddWithoutValidation("X-Session-Id", sessionId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Master-Id", masterId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Telegram-Id", telegramId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Internal-Service-Key", _config.Security.InternalServiceSecretKey);
     }
 
     private async Task RunTypingHeartbeatAsync(long chatId, CancellationToken ct)
@@ -869,17 +870,26 @@ public sealed class TelegramWebhookProcessor
         var employee = secCtx is not null ? await repo.GetEmployeeByIdAsync(secCtx.EmployeeId, ct) : null;
         var enabled = employee?.NotificationsEnabled ?? true;
 
-        var statusEmoji = enabled ? "🔔 Включены" : "🔕 Отключены";
-        var msg = new StringBuilder()
-            .AppendLine($"Статус проактивных уведомлений: {statusEmoji}")
-            .AppendLine()
-            .AppendLine("Что приходит автоматически (время МСК):")
-            .AppendLine("• Утренняя сводка встреч и задач в 09:00 по будням")
-            .AppendLine("• Напоминания за 30 минут до начала встречи")
-            .AppendLine("• Напоминания о дедлайнах задач (за 24 ч, за 2 ч и по просрочке)")
-            .AppendLine()
-            .Append("Быстрая команда: /notifications on или /notifications off")
-            .ToString();
+        string msg;
+        if (employee is not null)
+        {
+            var prefs = await repo.GetNotificationPreferencesAsync(employee.Id, masterId, ct);
+            msg = Fotoprint.Core.Notifications.NotificationFormatter.FormatNotificationSettingsSummary(employee, prefs);
+        }
+        else
+        {
+            var statusEmoji = enabled ? "🔔 Включены" : "🔕 Отключены";
+            msg = new StringBuilder()
+                .AppendLine($"Статус проактивных уведомлений: {statusEmoji}")
+                .AppendLine()
+                .AppendLine("Что приходит автоматически (время МСК):")
+                .AppendLine("• Утренняя сводка встреч и задач в 09:00 по будням")
+                .AppendLine("• Напоминания за 30 минут до начала встречи")
+                .AppendLine("• Напоминания о дедлайнах задач (за 24 ч, за 2 ч и по просрочке)")
+                .AppendLine()
+                .Append("Быстрая команда: /notifications on или /notifications off")
+                .ToString();
+        }
 
         var keyboard = new[]
         {

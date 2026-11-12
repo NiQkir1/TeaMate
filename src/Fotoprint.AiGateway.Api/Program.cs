@@ -457,14 +457,15 @@ app.MapPost("/api/agent/chat", async (
         action: async (attempt, retryToken) =>
         {
             var n8nClient = httpFactory.CreateClient("N8nClient");
-            n8nClient.DefaultRequestHeaders.Remove("X-Trace-Id");
-            n8nClient.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
-            n8nClient.DefaultRequestHeaders.Remove("X-Telegram-Id");
-            n8nClient.DefaultRequestHeaders.Add("X-Telegram-Id", req.TelegramId.ToString());
-            n8nClient.DefaultRequestHeaders.Remove("X-Internal-Service-Key");
-            n8nClient.DefaultRequestHeaders.Add("X-Internal-Service-Key", config.Security.InternalServiceSecretKey);
+            using var n8nReq = new HttpRequestMessage(HttpMethod.Post, "fotoprint-chat")
+            {
+                Content = JsonContent.Create(n8nPayload)
+            };
+            n8nReq.Headers.TryAddWithoutValidation("X-Trace-Id", traceId);
+            n8nReq.Headers.TryAddWithoutValidation("X-Telegram-Id", req.TelegramId.ToString());
+            n8nReq.Headers.TryAddWithoutValidation("X-Internal-Service-Key", config.Security.InternalServiceSecretKey);
 
-            var resp = await n8nClient.PostAsJsonAsync("fotoprint-chat", n8nPayload, retryToken);
+            using var resp = await n8nClient.SendAsync(n8nReq, retryToken);
             if (resp.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
                 var errJson = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: retryToken);
@@ -602,6 +603,95 @@ app.MapPost("/api/agent/chat", async (
     });
 
     return Results.Ok(body);
+});
+
+// Универсальная канально-независимая точка входа чата (для будущей самописной CRM, Web-виджета, Telegram и др.)
+app.MapPost("/api/chat/ingress", async (
+    HttpContext httpContext,
+    [FromBody] ChannelChatIngressRequest req,
+    IFotoprintRepository repo,
+    IFotoprintAgent agent,
+    ILangfuseClient langfuse,
+    FotoprintConfig config,
+    CancellationToken ct) =>
+{
+    if (!InternalServiceAuthMiddleware.IsAuthorized(httpContext.Request, config))
+    {
+        return Results.Unauthorized();
+    }
+
+    var channel = string.IsNullOrWhiteSpace(req.Channel) ? "crm" : req.Channel.Trim().ToLowerInvariant();
+    var externalUserId = req.ExternalUserId?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(externalUserId) || string.IsNullOrWhiteSpace(req.Message))
+    {
+        return Results.BadRequest(new { ok = false, error = "external_user_id and message are required." });
+    }
+
+    var traceId = !string.IsNullOrWhiteSpace(req.TraceId) ? req.TraceId! : langfuse.GenerateTraceId();
+    var masterId = await repo.ResolveMasterIdByMessengerAsync(channel, externalUserId, ct);
+
+    EmployeeSecurityContext? secCtx = null;
+    if (masterId.HasValue)
+    {
+        secCtx = await repo.GetEmployeeSecurityContextByMasterIdAsync(masterId.Value, ct);
+    }
+
+    if (secCtx == null)
+    {
+        return Results.Json(new
+        {
+            ok = false,
+            error = "User is not registered or inactive in Fotoprint RBAC.",
+            channel,
+            external_user_id = externalUserId,
+            trace_id = traceId
+        }, statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    var chatIdNum = req.ChatId ?? secCtx.TelegramId;
+    var activeSession = await repo.GetOrCreateActiveSessionByMasterIdAsync(secCtx.MasterId, chatIdNum, channel, ct);
+    await repo.SaveMessageToSessionAsync(
+        sessionId: activeSession.Id,
+        masterId: secCtx.MasterId,
+        role: "user",
+        content: req.Message,
+        isFrozen: false,
+        metadata: new { trace_id = traceId, channel, external_user_id = externalUserId },
+        ct: ct);
+
+    var response = await agent.ProcessMessageAsync(
+        telegramId: secCtx.TelegramId,
+        chatId: chatIdNum,
+        messageText: req.Message,
+        traceId: traceId,
+        ct: ct);
+
+    if (!string.IsNullOrWhiteSpace(response.AnswerText))
+    {
+        await repo.SaveMessageToSessionAsync(
+            sessionId: activeSession.Id,
+            masterId: secCtx.MasterId,
+            role: "assistant",
+            content: response.AnswerText,
+            isFrozen: false,
+            metadata: new { trace_id = traceId, channel, tools = response.ToolsInvoked },
+            ct: ct);
+    }
+
+    return Results.Ok(new
+    {
+        ok = response.IsSuccess,
+        channel,
+        external_user_id = externalUserId,
+        employee_id = secCtx.EmployeeId,
+        master_id = secCtx.MasterId,
+        session_id = activeSession.Id,
+        answer = response.AnswerText,
+        tools_invoked = response.ToolsInvoked,
+        total_llm_calls = response.TotalLlmCalls,
+        total_tokens = response.TotalTokensUsed,
+        trace_id = traceId
+    });
 });
 
 // ============================================================================
@@ -1214,3 +1304,9 @@ public record ContextMessageDto(string Role, string Content);
 public record RagSearchRequest(string Query, List<string> UserAccessGroups, int TopK = 5);
 public record GeminiPromptRequest(string Prompt, string? SystemInstruction = null, double? Temperature = null, int? MaxOutputTokens = null);
 public record AgentChatRequest(long TelegramId, long ChatId, string Message, string? TraceId = null);
+public record ChannelChatIngressRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("channel")] string Channel,
+    [property: System.Text.Json.Serialization.JsonPropertyName("external_user_id")] string ExternalUserId,
+    [property: System.Text.Json.Serialization.JsonPropertyName("message")] string Message,
+    [property: System.Text.Json.Serialization.JsonPropertyName("chat_id")] long? ChatId = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("trace_id")] string? TraceId = null);

@@ -497,4 +497,60 @@ public class FotoprintAiAgentTests
         public Task LogSecurityAlertAsync(string traceId, long telegramId, string toolOrAction, string requiredPermission, string reason, CancellationToken ct = default) => Task.CompletedTask;
         public Task LogScoreAsync(string traceId, string name, double value, string? comment = null, string? observationId = null, CancellationToken ct = default) => Task.CompletedTask;
     }
+
+    [Fact]
+    public async Task Agent_UpdatesNotificationScheduleFromChat_WithoutRequiringConfirmation()
+    {
+        var gemini = new UpdateNotificationsFakeGeminiClient();
+        var repo = new FakeFotoprintRepository();
+        var httpFactory = new FakeHttpClientFactory();
+        var config = new FotoprintConfig();
+
+        var agent = new FotoprintAiAgent(gemini, repo, httpFactory, config, null, null, NullLogger<FotoprintAiAgent>.Instance);
+
+        var res = await agent.ProcessMessageAsync(
+            telegramId: 100001,
+            chatId: 55555,
+            messageText: "Перенеси мою утреннюю сводку на 08:30 и напоминай о встречах за 15 минут");
+
+        Assert.True(res.IsSuccess);
+        Assert.Contains("update_notification_settings", res.ToolsInvoked);
+        Assert.Contains("08:30", res.AnswerText);
+
+        var serializedContents = JsonSerializer.Serialize(gemini.LastContents);
+        Assert.Contains("updated", serializedContents);
+        Assert.Contains("08:30", serializedContents);
+        Assert.Contains("15", serializedContents);
+    }
+
+    private class UpdateNotificationsFakeGeminiClient : IGeminiClient
+    {
+        public List<object>? LastContents { get; private set; }
+        private int _turn;
+
+        public Task<GeminiGenerateResponse> GenerateContentAsync(string prompt, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => Task.FromResult(new GeminiGenerateResponse(true, "ok", "STOP", 1, 1, 2, 1, null));
+
+        public Task<GeminiTurnResponse> ChatTurnAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+        {
+            _turn++;
+            LastContents = contents.ToList();
+            if (_turn == 1)
+            {
+                var argsJson = JsonSerializer.SerializeToElement(new
+                {
+                    digest_time_msk = "08:30",
+                    pre_meeting_window_minutes = 15
+                });
+                var call = new GeminiFunctionCall("update_notification_settings", argsJson, "call_notif_1");
+                return Task.FromResult(new GeminiTurnResponse(true, null, call, "tool_calls", 40, 15, 55, 1, null, new[] { call }));
+            }
+            return Task.FromResult(new GeminiTurnResponse(true, "Готово! Утренняя сводка перенесена на 08:30 МСК, а напоминания о встречах — за 15 минут.", null, "stop", 60, 20, 80, 1, null));
+        }
+
+        public Task<GeminiTurnResponse> ChatTurnNoThinkingAsync(List<object> contents, object? tools = null, string? systemInstruction = null, double? temperature = null, int? maxOutputTokens = null, string? traceId = null, CancellationToken ct = default)
+            => ChatTurnAsync(contents, tools, systemInstruction, temperature, maxOutputTokens, traceId, ct);
+
+        public GeminiCallStats GetStats() => new(2, 2, 60, 58, 2.0, DateTime.UtcNow, 0);
+    }
 }

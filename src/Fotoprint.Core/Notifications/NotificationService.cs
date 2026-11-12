@@ -45,7 +45,9 @@ public interface INotificationService
 public sealed class NotificationService : INotificationService
 {
     private readonly IFotoprintRepository _repo;
-    private readonly ITelegramBotClient _telegramBot;
+    private readonly INotificationDataProvider _dataProvider;
+    private readonly ITelegramBotClient? _telegramBot;
+    private readonly IReadOnlyDictionary<string, INotificationChannel> _channels;
     private readonly ILangfuseClient _langfuse;
     private readonly FotoprintConfig _config;
     private readonly TimeProvider _timeProvider;
@@ -58,13 +60,48 @@ public sealed class NotificationService : INotificationService
         FotoprintConfig config,
         TimeProvider? timeProvider = null,
         ILogger<NotificationService>? logger = null)
+        : this(
+            repo,
+            new RepositoryNotificationDataProvider(repo),
+            new INotificationChannel[] { new TelegramNotificationChannel(telegramBot) },
+            langfuse,
+            config,
+            timeProvider,
+            logger,
+            telegramBot)
+    {
+    }
+
+    public NotificationService(
+        IFotoprintRepository repo,
+        INotificationDataProvider dataProvider,
+        IEnumerable<INotificationChannel> channels,
+        ILangfuseClient langfuse,
+        FotoprintConfig config,
+        TimeProvider? timeProvider = null,
+        ILogger<NotificationService>? logger = null,
+        ITelegramBotClient? telegramBot = null)
     {
         _repo = repo ?? throw new ArgumentNullException(nameof(repo));
-        _telegramBot = telegramBot ?? throw new ArgumentNullException(nameof(telegramBot));
+        _dataProvider = dataProvider ?? throw new ArgumentNullException(nameof(dataProvider));
+        _telegramBot = telegramBot;
         _langfuse = langfuse ?? throw new ArgumentNullException(nameof(langfuse));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<NotificationService>.Instance;
+
+        var channelMap = new Dictionary<string, INotificationChannel>(StringComparer.OrdinalIgnoreCase);
+        if (channels != null)
+        {
+            foreach (var ch in channels)
+            {
+                if (ch != null && !string.IsNullOrWhiteSpace(ch.ChannelType))
+                {
+                    channelMap[ch.ChannelType.Trim()] = ch;
+                }
+            }
+        }
+        _channels = channelMap;
     }
 
     public async Task<NotificationBatchResult> SendTargetedNotificationAsync(
@@ -154,29 +191,61 @@ public sealed class NotificationService : INotificationService
             return BuildBatchResult(NotificationTypes.MorningDigest, targetDateStr, []);
         }
 
-        var employees = await _repo.GetAllEmployeesAsync(ct);
-        var todaysMeetings = await _repo.GetMeetingsInRangeUtcAsync(dayStartUtc, dayEndUtc.AddTicks(-1), ct);
-        var openTasks = await _repo.GetOpenActionItemsAsync(command.EmployeeId, ct);
+        var employees = await _dataProvider.GetAllEmployeesAsync(ct);
+        var prefsMap = await _dataProvider.GetAllNotificationPreferencesAsync(ct);
+        var todaysMeetings = await _dataProvider.GetMeetingsInRangeUtcAsync(dayStartUtc, dayEndUtc.AddTicks(-1), ct);
+        var openTasks = await _dataProvider.GetOpenActionItemsAsync(command.EmployeeId, ct);
 
         var skipIfEmpty = command.SkipIfEmpty ?? !_config.Notifications.IncludeEmptyMorningDigest;
         var results = new List<NotificationDeliveryItemResult>();
 
         foreach (var employee in FilterTargetEmployees(employees, command.EmployeeId))
         {
-            if (!employee.TelegramId.HasValue || employee.TelegramId.Value <= 0)
+            var prefs = prefsMap.TryGetValue(employee.Id, out var p)
+                ? p
+                : await _dataProvider.GetNotificationPreferencesAsync(employee.Id, employee.MasterId, ct);
+
+            if (!HasDeliverableTarget(employee, prefs))
             {
                 continue;
             }
 
-            if (!employee.NotificationsEnabled)
+            var tgId = employee.TelegramId ?? 0;
+            var dedupKey = NotificationTimeHelper.BuildMorningDigestDedupKey(localDate, employee.Id);
+            if (!employee.NotificationsEnabled || (!prefs.DigestEnabled && (!command.EmployeeId.HasValue || command.EnforceScheduleTime)))
             {
                 results.Add(new NotificationDeliveryItemResult(
                     employee.Id,
-                    employee.TelegramId.Value,
+                    tgId,
                     NotificationTypes.MorningDigest,
-                    NotificationTimeHelper.BuildMorningDigestDedupKey(localDate, employee.Id),
+                    dedupKey,
                     null,
                     NotificationStatuses.NotificationsDisabled));
+                continue;
+            }
+
+            if (command.EnforceScheduleTime &&
+                NotificationTimeHelper.IsQuietHoursActive(nowUtc, tz, prefs.QuietHoursStartMsk, prefs.QuietHoursEndMsk))
+            {
+                results.Add(new NotificationDeliveryItemResult(
+                    employee.Id,
+                    tgId,
+                    NotificationTypes.MorningDigest,
+                    dedupKey,
+                    null,
+                    NotificationStatuses.SkippedQuietHours));
+                continue;
+            }
+
+            if (command.EnforceScheduleTime && !NotificationTimeHelper.IsMorningDigestDueNow(nowUtc, tz, prefs))
+            {
+                results.Add(new NotificationDeliveryItemResult(
+                    employee.Id,
+                    tgId,
+                    NotificationTypes.MorningDigest,
+                    dedupKey,
+                    null,
+                    NotificationStatuses.SkippedScheduleTime));
                 continue;
             }
 
@@ -187,12 +256,11 @@ public sealed class NotificationService : INotificationService
                 .Where(t => t.ResponsibleId == employee.Id)
                 .ToList();
 
-            var dedupKey = NotificationTimeHelper.BuildMorningDigestDedupKey(localDate, employee.Id);
             if (skipIfEmpty && empMeetings.Count == 0 && empTasks.Count == 0)
             {
                 results.Add(new NotificationDeliveryItemResult(
                     employee.Id,
-                    employee.TelegramId.Value,
+                    tgId,
                     NotificationTypes.MorningDigest,
                     dedupKey,
                     null,
@@ -210,7 +278,7 @@ public sealed class NotificationService : INotificationService
 
             var delivered = await DeliverWithDeduplicationAsync(
                 employee,
-                employee.TelegramId.Value,
+                tgId,
                 text,
                 NotificationTypes.MorningDigest,
                 dedupKey,
@@ -219,7 +287,9 @@ public sealed class NotificationService : INotificationService
                 command.DryRun,
                 null,
                 null,
-                ct);
+                ct,
+                prefs.PreferredChannel,
+                prefs.ChannelAddress);
 
             results.Add(delivered);
         }
@@ -242,24 +312,31 @@ public sealed class NotificationService : INotificationService
             return BuildBatchResult(NotificationTypes.PreMeeting, localDate, []);
         }
 
-        var windowMinutes = command.WindowMinutes
-            ?? (_config.Notifications.PreMeetingWindowMinutes > 0
-                ? _config.Notifications.PreMeetingWindowMinutes
-                : _config.Meetings.PreMeetingWindowMinutes);
-        windowMinutes = Math.Clamp(windowMinutes, 1, 1440);
+        var defaultWindowMinutes = _config.Notifications.PreMeetingWindowMinutes > 0
+            ? _config.Notifications.PreMeetingWindowMinutes
+            : _config.Meetings.PreMeetingWindowMinutes;
+        defaultWindowMinutes = Math.Clamp(defaultWindowMinutes, 1, 1440);
+
+        var employees = await _dataProvider.GetAllEmployeesAsync(ct);
+        var prefsMap = await _dataProvider.GetAllNotificationPreferencesAsync(ct);
+
+        var maxQueryWindowMinutes = command.WindowMinutes.HasValue
+            ? Math.Clamp(command.WindowMinutes.Value, 1, 1440)
+            : prefsMap.Values.Select(p => Math.Clamp(p.PreMeetingWindowMinutes, 1, 1440))
+                .Append(defaultWindowMinutes)
+                .Max();
 
         var rangeStartUtc = nowUtc.UtcDateTime.AddMinutes(-2);
-        var rangeEndUtc = nowUtc.UtcDateTime.AddMinutes(windowMinutes);
+        var rangeEndUtc = nowUtc.UtcDateTime.AddMinutes(maxQueryWindowMinutes);
 
-        var meetings = await _repo.GetMeetingsInRangeUtcAsync(rangeStartUtc, rangeEndUtc, ct);
+        var meetings = await _dataProvider.GetMeetingsInRangeUtcAsync(rangeStartUtc, rangeEndUtc, ct);
         if (meetings.Count == 0)
         {
             return BuildBatchResult(NotificationTypes.PreMeeting, localDate, []);
         }
 
-        var employees = await _repo.GetAllEmployeesAsync(ct);
         var employeeMap = employees.ToDictionary(e => e.Id);
-        var openTasks = await _repo.GetOpenActionItemsAsync(command.EmployeeId, ct);
+        var openTasks = await _dataProvider.GetOpenActionItemsAsync(command.EmployeeId, ct);
         var results = new List<NotificationDeliveryItemResult>();
 
         foreach (var meeting in meetings)
@@ -277,23 +354,56 @@ public sealed class NotificationService : INotificationService
                     continue;
                 }
 
-                if (!employeeMap.TryGetValue(recipientId, out var employee) ||
-                    !employee.TelegramId.HasValue ||
-                    employee.TelegramId.Value <= 0)
+                if (!employeeMap.TryGetValue(recipientId, out var employee))
+                {
+                    continue;
+                }
+
+                var prefs = prefsMap.TryGetValue(employee.Id, out var p)
+                    ? p
+                    : await _dataProvider.GetNotificationPreferencesAsync(employee.Id, employee.MasterId, ct);
+
+                if (!HasDeliverableTarget(employee, prefs))
+                {
+                    continue;
+                }
+
+                var tgId = employee.TelegramId ?? 0;
+                var empWindowMinutes = command.WindowMinutes.HasValue
+                    ? Math.Clamp(command.WindowMinutes.Value, 1, 1440)
+                    : (prefsMap.ContainsKey(employee.Id) || prefs.PreMeetingWindowMinutes != 30
+                        ? Math.Clamp(prefs.PreMeetingWindowMinutes, 1, 1440)
+                        : defaultWindowMinutes);
+
+                var meetingStartUtc = NotificationTimeHelper.EnsureUtc(meeting.StartTime);
+                if (meetingStartUtc > nowUtc.UtcDateTime.AddMinutes(empWindowMinutes))
                 {
                     continue;
                 }
 
                 var dedupKey = NotificationTimeHelper.BuildPreMeetingDedupKey(meeting.Id, meeting.StartTime, employee.Id);
-                if (!employee.NotificationsEnabled)
+                if (!employee.NotificationsEnabled || (!prefs.PreMeetingEnabled && !command.EmployeeId.HasValue))
                 {
                     results.Add(new NotificationDeliveryItemResult(
                         employee.Id,
-                        employee.TelegramId.Value,
+                        tgId,
                         NotificationTypes.PreMeeting,
                         dedupKey,
                         meeting.Id,
                         NotificationStatuses.NotificationsDisabled));
+                    continue;
+                }
+
+                if (!command.EmployeeId.HasValue &&
+                    NotificationTimeHelper.IsQuietHoursActive(nowUtc, tz, prefs.QuietHoursStartMsk, prefs.QuietHoursEndMsk))
+                {
+                    results.Add(new NotificationDeliveryItemResult(
+                        employee.Id,
+                        tgId,
+                        NotificationTypes.PreMeeting,
+                        dedupKey,
+                        meeting.Id,
+                        NotificationStatuses.SkippedQuietHours));
                     continue;
                 }
 
@@ -308,7 +418,7 @@ public sealed class NotificationService : INotificationService
 
                 var delivered = await DeliverWithDeduplicationAsync(
                     employee,
-                    employee.TelegramId.Value,
+                    tgId,
                     text,
                     NotificationTypes.PreMeeting,
                     dedupKey,
@@ -317,7 +427,9 @@ public sealed class NotificationService : INotificationService
                     command.DryRun,
                     null,
                     null,
-                    ct);
+                    ct,
+                    prefs.PreferredChannel,
+                    prefs.ChannelAddress);
 
                 results.Add(delivered);
             }
@@ -341,26 +453,31 @@ public sealed class NotificationService : INotificationService
             return BuildBatchResult(NotificationTypes.TaskDeadline, localDate, []);
         }
 
-        var employees = await _repo.GetAllEmployeesAsync(ct);
+        var employees = await _dataProvider.GetAllEmployeesAsync(ct);
+        var prefsMap = await _dataProvider.GetAllNotificationPreferencesAsync(ct);
         var employeeMap = employees.ToDictionary(e => e.Id);
-        var openTasks = await _repo.GetOpenActionItemsAsync(command.EmployeeId, ct);
+        var openTasks = await _dataProvider.GetOpenActionItemsAsync(command.EmployeeId, ct);
         var maxPerEmployee = Math.Max(1, _config.Notifications.MaxTaskAlertsPerRunPerEmployee);
         var results = new List<NotificationDeliveryItemResult>();
 
         var evaluatedByEmployee = openTasks
-            .Where(t => t.ResponsibleId.HasValue && employeeMap.TryGetValue(t.ResponsibleId.Value, out var emp) && emp.TelegramId is > 0)
+            .Where(t => t.ResponsibleId.HasValue && employeeMap.ContainsKey(t.ResponsibleId.Value))
             .Select(task =>
             {
                 var emp = employeeMap[task.ResponsibleId!.Value];
+                prefsMap.TryGetValue(emp.Id, out var empPrefs);
+                var urgentHours = empPrefs is not null ? empPrefs.TaskUrgentHours : _config.Notifications.TaskUrgentHours;
+                var dueSoonHours = empPrefs is not null ? empPrefs.TaskDueSoonHours : _config.Notifications.TaskDueSoonHours;
+
                 var (tier, dedupKey) = NotificationTimeHelper.EvaluateTaskDeadline(
                     task,
                     emp.Id,
                     nowUtc,
                     tz,
-                    _config.Notifications.TaskUrgentHours,
-                    _config.Notifications.TaskDueSoonHours,
+                    urgentHours,
+                    dueSoonHours,
                     _config.Notifications.TaskMaxOverdueDays);
-                return (Employee: emp, Task: task, Tier: tier, DedupKey: dedupKey);
+                return (Employee: emp, Prefs: empPrefs, Task: task, Tier: tier, DedupKey: dedupKey);
             })
             .Where(x => x.Tier != TaskDeadlineTier.None && !string.IsNullOrWhiteSpace(x.DedupKey))
             .OrderByDescending(x => x.Tier == TaskDeadlineTier.DueUrgent ? 3 : x.Tier == TaskDeadlineTier.DueSoon ? 2 : 1)
@@ -375,15 +492,36 @@ public sealed class NotificationService : INotificationService
             foreach (var item in group)
             {
                 var employee = item.Employee;
-                if (!employee.NotificationsEnabled)
+                var prefs = item.Prefs ?? await _dataProvider.GetNotificationPreferencesAsync(employee.Id, employee.MasterId, ct);
+
+                if (!HasDeliverableTarget(employee, prefs))
+                {
+                    continue;
+                }
+
+                var tgId = employee.TelegramId ?? 0;
+                if (!employee.NotificationsEnabled || (!prefs.TaskDeadlinesEnabled && !command.EmployeeId.HasValue))
                 {
                     results.Add(new NotificationDeliveryItemResult(
                         employee.Id,
-                        employee.TelegramId!.Value,
+                        tgId,
                         NotificationTypes.TaskDeadline,
                         item.DedupKey,
                         item.Task.Id,
                         NotificationStatuses.NotificationsDisabled));
+                    continue;
+                }
+
+                if (!command.EmployeeId.HasValue &&
+                    NotificationTimeHelper.IsQuietHoursActive(nowUtc, tz, prefs.QuietHoursStartMsk, prefs.QuietHoursEndMsk))
+                {
+                    results.Add(new NotificationDeliveryItemResult(
+                        employee.Id,
+                        tgId,
+                        NotificationTypes.TaskDeadline,
+                        item.DedupKey,
+                        item.Task.Id,
+                        NotificationStatuses.SkippedQuietHours));
                     continue;
                 }
 
@@ -401,7 +539,7 @@ public sealed class NotificationService : INotificationService
 
                 var delivered = await DeliverWithDeduplicationAsync(
                     employee,
-                    employee.TelegramId!.Value,
+                    tgId,
                     text,
                     NotificationTypes.TaskDeadline,
                     item.DedupKey,
@@ -410,7 +548,9 @@ public sealed class NotificationService : INotificationService
                     command.DryRun,
                     null,
                     null,
-                    ct);
+                    ct,
+                    prefs.PreferredChannel,
+                    prefs.ChannelAddress);
 
                 results.Add(delivered);
 
@@ -435,7 +575,9 @@ public sealed class NotificationService : INotificationService
         bool dryRun,
         string? parseMode,
         IReadOnlyList<IReadOnlyList<TelegramInlineButton>>? inlineKeyboard,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? preferredChannel = null,
+        string? channelAddress = null)
     {
         var effectiveDedupKey = string.IsNullOrWhiteSpace(dedupKey)
             ? $"manual:{Guid.NewGuid():N}"
@@ -453,7 +595,11 @@ public sealed class NotificationService : INotificationService
                 PreviewText: text);
         }
 
-        if (!_telegramBot.IsConfigured)
+        var desiredChannelType = string.IsNullOrWhiteSpace(preferredChannel) ? "telegram" : preferredChannel.Trim().ToLowerInvariant();
+        var channel = ResolveChannel(desiredChannelType);
+        var useDirectTelegramBot = string.Equals(desiredChannelType, "telegram", StringComparison.OrdinalIgnoreCase) && _telegramBot != null;
+        var isConfigured = useDirectTelegramBot ? _telegramBot!.IsConfigured : (channel?.IsConfigured ?? false);
+        if (!isConfigured)
         {
             return new NotificationDeliveryItemResult(
                 employee?.Id,
@@ -462,8 +608,13 @@ public sealed class NotificationService : INotificationService
                 effectiveDedupKey,
                 entityId,
                 NotificationStatuses.NotConfigured,
-                "Telegram bot token is not configured.");
+                $"Notification channel '{desiredChannelType}' is not configured.");
         }
+
+        var effectiveChannelType = useDirectTelegramBot ? "telegram" : (channel?.ChannelType ?? desiredChannelType);
+        var effectiveAddress = !string.IsNullOrWhiteSpace(channelAddress)
+            ? channelAddress
+            : (telegramId > 0 ? telegramId.ToString() : null);
 
         var deliveryId = await _repo.TryClaimNotificationDeliveryAsync(
             effectiveDedupKey,
@@ -471,7 +622,9 @@ public sealed class NotificationService : INotificationService
             employee?.Id,
             telegramId,
             entityId,
-            ct);
+            ct,
+            effectiveChannelType,
+            effectiveAddress);
 
         if (!deliveryId.HasValue)
         {
@@ -487,12 +640,31 @@ public sealed class NotificationService : INotificationService
         TelegramApiResponse sendResult;
         try
         {
-            sendResult = await _telegramBot.SendMessageAsync(
-                telegramId,
-                text,
-                inlineKeyboard,
-                parseMode,
-                ct);
+            if (useDirectTelegramBot)
+            {
+                sendResult = await _telegramBot!.SendMessageAsync(
+                    telegramId,
+                    text,
+                    inlineKeyboard,
+                    parseMode,
+                    ct);
+            }
+            else if (channel != null)
+            {
+                var target = new NotificationDeliveryTarget(
+                    EmployeeId: employee?.Id ?? 0,
+                    MasterId: employee?.MasterId ?? 0,
+                    TelegramId: telegramId,
+                    ChannelAddress: effectiveAddress,
+                    NotificationType: notificationType,
+                    EntityId: entityId);
+                await channel.SendAsync(target, text, parseMode, ct);
+                sendResult = new TelegramApiResponse(true);
+            }
+            else
+            {
+                sendResult = new TelegramApiResponse(false, ErrorCode: 503, Description: "No notification channel configured.");
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -627,6 +799,36 @@ public sealed class NotificationService : INotificationService
         }
     }
 
+    private bool HasDeliverableTarget(Employee employee, EmployeeNotificationPreferences prefs)
+    {
+        if (!string.IsNullOrWhiteSpace(prefs.PreferredChannel) &&
+            !string.Equals(prefs.PreferredChannel, "telegram", StringComparison.OrdinalIgnoreCase) &&
+            _channels.TryGetValue(prefs.PreferredChannel.Trim(), out var ch) &&
+            ch.IsConfigured)
+        {
+            return true;
+        }
+
+        return employee.TelegramId.HasValue && employee.TelegramId.Value > 0;
+    }
+
+    private INotificationChannel? ResolveChannel(string? preferredChannel)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredChannel) &&
+            _channels.TryGetValue(preferredChannel.Trim(), out var matched) &&
+            matched.IsConfigured)
+        {
+            return matched;
+        }
+
+        if (_channels.TryGetValue("telegram", out var tgChannel))
+        {
+            return tgChannel;
+        }
+
+        return _channels.Values.FirstOrDefault();
+    }
+
     private static IEnumerable<Employee> FilterTargetEmployees(IReadOnlyList<Employee> employees, int? employeeId) =>
         employeeId.HasValue
             ? employees.Where(e => e.Id == employeeId.Value)
@@ -639,7 +841,10 @@ public sealed class NotificationService : INotificationService
     {
         var sent = results.Count(r => r.Status == NotificationStatuses.Sent);
         var dup = results.Count(r => r.Status == NotificationStatuses.DuplicateSkipped);
-        var disabled = results.Count(r => r.Status == NotificationStatuses.NotificationsDisabled);
+        var disabled = results.Count(r =>
+            r.Status is NotificationStatuses.NotificationsDisabled
+                or NotificationStatuses.SkippedQuietHours
+                or NotificationStatuses.SkippedScheduleTime);
         var empty = results.Count(r => r.Status == NotificationStatuses.SkippedEmpty);
         var failed = results.Count(r =>
             r.Status is NotificationStatuses.Failed

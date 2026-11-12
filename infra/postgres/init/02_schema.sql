@@ -205,7 +205,7 @@ CREATE INDEX IF NOT EXISTS idx_action_items_meeting_id ON action_items(meeting_i
 CREATE INDEX IF NOT EXISTS idx_action_items_responsible ON action_items(responsible_id);
 
 -- ============================================================================
--- 5. ДОСТАВКА И ДЕДУПЛИКАЦИЯ ПРОАКТИВНЫХ УВЕДОМЛЕНИЙ TELEGRAM
+-- 5. ДОСТАВКА И ДЕДУПЛИКАЦИЯ ПРОАКТИВНЫХ УВЕДОМЛЕНИЙ И НАСТРОЙКИ КАНАЛОВ
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS notification_deliveries (
@@ -213,7 +213,9 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     dedup_key VARCHAR(255) NOT NULL UNIQUE,
     notification_type VARCHAR(100) NOT NULL, -- 'pre_meeting', 'morning_digest', 'task_deadline', 'manual'
     recipient_employee_id INT REFERENCES employees(id) ON DELETE SET NULL,
-    recipient_telegram_id BIGINT NOT NULL,
+    recipient_telegram_id BIGINT NOT NULL DEFAULT 0,
+    channel_type VARCHAR(50) NOT NULL DEFAULT 'telegram', -- 'telegram', 'crm_chat', 'web', 'webhook'
+    recipient_address VARCHAR(255),
     entity_id UUID,
     status VARCHAR(30) NOT NULL DEFAULT 'pending', -- 'pending', 'sent', 'failed', 'skipped'
     error_message TEXT,
@@ -225,4 +227,36 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_type_created
     ON notification_deliveries(notification_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_telegram_id
     ON notification_deliveries(recipient_telegram_id);
+
+CREATE TABLE IF NOT EXISTS employee_notification_preferences (
+    employee_id INT PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
+    master_id BIGINT UNIQUE NOT NULL,
+    digest_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    digest_time_msk VARCHAR(5) NOT NULL DEFAULT '09:00',
+    digest_weekdays_only BOOLEAN NOT NULL DEFAULT TRUE,
+    pre_meeting_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    pre_meeting_window_minutes INT NOT NULL DEFAULT 30,
+    task_deadlines_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    task_due_soon_hours INT NOT NULL DEFAULT 24,
+    task_urgent_hours INT NOT NULL DEFAULT 2,
+    quiet_hours_start_msk VARCHAR(5),
+    quiet_hours_end_msk VARCHAR(5),
+    preferred_channel VARCHAR(50) NOT NULL DEFAULT 'telegram',
+    channel_address VARCHAR(255),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_identities (
+    id SERIAL PRIMARY KEY,
+    employee_id INT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    master_id BIGINT NOT NULL,
+    provider VARCHAR(50) NOT NULL, -- 'telegram', 'whatsapp', 'crm', 'web', 'sso'
+    external_user_id VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (provider, external_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_identities_master_id
+    ON user_identities(master_id);
+
 

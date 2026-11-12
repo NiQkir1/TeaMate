@@ -85,9 +85,20 @@ public sealed class NotificationServiceTests
         public List<ActionItem> ActionItems { get; } = [];
         public Dictionary<string, (Guid Id, string Status, string? Error)> Deliveries { get; } = new(StringComparer.Ordinal);
         public List<(Guid SessionId, long MasterId, string Role, string Content)> SavedMessages { get; } = [];
+        public Dictionary<int, EmployeeNotificationPreferences> Preferences { get; } = [];
         private readonly Dictionary<long, Guid> _activeSessions = new();
 
         public Task EnsureNotificationSchemaAsync(CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<EmployeeNotificationPreferences> GetNotificationPreferencesAsync(int employeeId, long masterId = 0, CancellationToken ct = default)
+        {
+            if (Preferences.TryGetValue(employeeId, out var p))
+                return Task.FromResult(p);
+            return Task.FromResult(EmployeeNotificationPreferences.CreateDefault(employeeId, masterId));
+        }
+
+        public Task<IReadOnlyDictionary<int, EmployeeNotificationPreferences>> GetAllNotificationPreferencesAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyDictionary<int, EmployeeNotificationPreferences>>(Preferences);
 
         public Task<List<Employee>> GetAllEmployeesAsync(CancellationToken ct = default) =>
             Task.FromResult(Employees.Where(e => e.IsActive).ToList());
@@ -491,5 +502,113 @@ public sealed class NotificationServiceTests
         var res = await service.SendTargetedNotificationAsync(new SendNotificationCommand(TelegramId: 1980443994, Text: "   "));
         Assert.False(res.Ok);
         Assert.Equal(NotificationStatuses.ValidationError, res.Results[0].Status);
+    }
+
+    [Fact]
+    public void TimeHelper_ParsesTimes_And_EvaluatesOvernightQuietHours()
+    {
+        Assert.True(NotificationTimeHelper.TryParseTimeMsk("8:30", out var t1));
+        Assert.Equal(new TimeOnly(8, 30), t1);
+        Assert.Equal("08:30", NotificationTimeHelper.NormalizeTimeMsk("8.30"));
+
+        var tz = NotificationTimeHelper.ResolveTimeZone("Europe/Moscow");
+        // 23:15 MSK (20:15 UTC) is inside 22:00-08:00 quiet hours
+        var nightUtc = new DateTimeOffset(2026, 11, 12, 20, 15, 0, TimeSpan.Zero);
+        Assert.True(NotificationTimeHelper.IsQuietHoursActive(nightUtc, tz, "22:00", "08:00"));
+
+        // 07:45 MSK (04:45 UTC) is still inside 22:00-08:00 quiet hours
+        var earlyMorningUtc = new DateTimeOffset(2026, 11, 12, 4, 45, 0, TimeSpan.Zero);
+        Assert.True(NotificationTimeHelper.IsQuietHoursActive(earlyMorningUtc, tz, "22:00", "08:00"));
+
+        // 08:30 MSK (05:30 UTC) is outside 22:00-08:00 quiet hours
+        var workMorningUtc = new DateTimeOffset(2026, 11, 12, 5, 30, 0, TimeSpan.Zero);
+        Assert.False(NotificationTimeHelper.IsQuietHoursActive(workMorningUtc, tz, "22:00", "08:00"));
+    }
+
+    [Fact]
+    public async Task DispatchMorningDigestAsync_EnforceScheduleTime_SendsOnlyToEmployeesWhoseCustomTimeIsDue()
+    {
+        // Thursday 2026-11-12 05:32 UTC == 08:32 MSK
+        var nowUtc = new DateTimeOffset(2026, 11, 12, 5, 32, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(nowUtc);
+        var repo = new InMemoryNotificationRepository();
+
+        repo.Employees.AddRange([
+            new Employee { Id = 5, MasterId = 100005, FirstName = "Денис", LastName = "Александренков", TelegramId = 1980443994, IsActive = true, NotificationsEnabled = true },
+            new Employee { Id = 6, MasterId = 100006, FirstName = "Кирилл", LastName = "Инженер", TelegramId = 2135203645, IsActive = true, NotificationsEnabled = true }
+        ]);
+
+        // Employee 5 shifted digest to 08:30 MSK; Employee 6 shifted digest to 10:30 MSK
+        repo.Preferences[5] = EmployeeNotificationPreferences.CreateDefault(5, 100005) with { DigestTimeMsk = "08:30" };
+        repo.Preferences[6] = EmployeeNotificationPreferences.CreateDefault(6, 100006) with { DigestTimeMsk = "10:30" };
+
+        repo.Meetings.Add(new Meeting
+        {
+            Id = Guid.NewGuid(),
+            Title = "Планерка цеха",
+            StartTime = nowUtc.UtcDateTime.AddHours(3),
+            EndTime = nowUtc.UtcDateTime.AddHours(4),
+            Status = "scheduled",
+            OrganizerId = 5,
+            ParticipantIds = [5, 6]
+        });
+
+        var bot = new FakeTelegramBotClient();
+        var service = CreateService(repo, bot, clock);
+
+        // At 08:32 MSK: Employee 5 receives digest, Employee 6 is skipped (not due yet)
+        var batchAt0832 = await service.DispatchMorningDigestAsync(new DispatchMorningDigestCommand(EnforceScheduleTime: true));
+        Assert.Equal(1, batchAt0832.SentCount);
+        Assert.Single(bot.SentMessages, m => m.ChatId == 1980443994);
+        Assert.Contains(batchAt0832.Results, r => r.EmployeeId == 6 && r.Status == NotificationStatuses.SkippedScheduleTime);
+
+        // Advance 2 hours to 10:32 MSK (07:32 UTC): Employee 6 receives digest, Employee 5 is deduplicated
+        clock.Advance(TimeSpan.FromHours(2));
+        var batchAt1032 = await service.DispatchMorningDigestAsync(new DispatchMorningDigestCommand(EnforceScheduleTime: true));
+        Assert.Equal(1, batchAt1032.SentCount);
+        Assert.Single(bot.SentMessages, m => m.ChatId == 2135203645);
+    }
+
+    [Fact]
+    public async Task DispatchPreMeetingRemindersAsync_RespectsPerEmployeeCustomWindowAndQuietHours()
+    {
+        var nowUtc = new DateTimeOffset(2026, 11, 12, 7, 0, 0, TimeSpan.Zero); // 10:00 MSK
+        var clock = new FakeTimeProvider(nowUtc);
+        var repo = new InMemoryNotificationRepository();
+
+        repo.Employees.AddRange([
+            new Employee { Id = 5, MasterId = 100005, FirstName = "Денис", LastName = "Александренков", TelegramId = 1980443994, IsActive = true, NotificationsEnabled = true },
+            new Employee { Id = 6, MasterId = 100006, FirstName = "Кирилл", LastName = "Инженер", TelegramId = 2135203645, IsActive = true, NotificationsEnabled = true }
+        ]);
+
+        // Employee 5 wants reminders 15 min before meeting; Employee 6 wants 45 min before meeting
+        repo.Preferences[5] = EmployeeNotificationPreferences.CreateDefault(5, 100005) with { PreMeetingWindowMinutes = 15 };
+        repo.Preferences[6] = EmployeeNotificationPreferences.CreateDefault(6, 100006) with { PreMeetingWindowMinutes = 45 };
+
+        // Meeting starts in 30 minutes
+        repo.Meetings.Add(new Meeting
+        {
+            Id = Guid.NewGuid(),
+            Title = "Техсовет по Heidelberg",
+            StartTime = nowUtc.UtcDateTime.AddMinutes(30),
+            EndTime = nowUtc.UtcDateTime.AddMinutes(60),
+            Status = "scheduled",
+            OrganizerId = 5,
+            ParticipantIds = [5, 6]
+        });
+
+        var bot = new FakeTelegramBotClient();
+        var service = CreateService(repo, bot, clock);
+
+        // At T-30m: only Employee 6 (45m window) gets notified; Employee 5 (15m window) waits
+        var runAtMinus30 = await service.DispatchPreMeetingRemindersAsync(new DispatchPreMeetingCommand());
+        Assert.Equal(1, runAtMinus30.SentCount);
+        Assert.Single(bot.SentMessages, m => m.ChatId == 2135203645);
+
+        // Advance 20 minutes to T-10m: now Employee 5 (15m window) gets notified, Employee 6 is deduplicated
+        clock.Advance(TimeSpan.FromMinutes(20));
+        var runAtMinus10 = await service.DispatchPreMeetingRemindersAsync(new DispatchPreMeetingCommand());
+        Assert.Equal(1, runAtMinus10.SentCount);
+        Assert.Single(bot.SentMessages, m => m.ChatId == 1980443994);
     }
 }

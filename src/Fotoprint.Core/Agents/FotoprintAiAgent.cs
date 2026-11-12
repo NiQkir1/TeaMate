@@ -100,14 +100,11 @@ public class FotoprintAiAgent : IFotoprintAgent
             ? string.Join(",", agCache.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
             : "all";
 
-        // Краткосрочный RBAC-кэш (45 сек) для одинаковых read-only запросов (экономит квоту 40 RPM при массовых вопросах в минуту)
+        // Краткосрочный RBAC-кэш (45 сек) для одинаковых read-only запросов (строго изолирован по empId во избежание утечки данных между сотрудниками)
         string? cacheKey = null;
         if (IsCacheableReadQuery(messageText))
         {
-            var isPersonalQuery = messageText.Contains("мои", StringComparison.OrdinalIgnoreCase) ||
-                                  messageText.Contains("у меня", StringComparison.OrdinalIgnoreCase) ||
-                                  messageText.Contains("мне", StringComparison.OrdinalIgnoreCase);
-            var scopeKey = isPersonalQuery ? $"emp:{empIdForCache}" : $"dept:{deptStr}|roles:{rolesStr}|ag:{accessKey}";
+            var scopeKey = $"emp:{empIdForCache}|dept:{deptStr}|roles:{rolesStr}|ag:{accessKey}";
             cacheKey = $"{scopeKey}|msg:{messageText.Trim().ToLowerInvariant()}";
 
             if (_responseCache.TryGetValue(cacheKey, out var cached) && DateTime.UtcNow < cached.ExpiresAtUtc)
@@ -190,8 +187,9 @@ public class FotoprintAiAgent : IFotoprintAgent
             3. Задачи, поручения и CRM-сделки сотрудника (Битрикс24) -> вызови 'get_user_tasks', 'get_crm_deal_info' или 'create_task'
             4. Расписание и история планерок/совещаний (Календарь) -> вызови 'get_upcoming_meetings', 'get_meeting_history' или 'schedule_meeting'
             5. Технологические карты, нормы отходов, регламенты оборудования, коммерческая политика/скидки, оплата сверхурочных, ПВТР и база знаний (RAG) -> вызови 'search_typography_regulations'
+            6. Персональные настройки уведомлений и напоминаний (время утренней сводки по МСК, за сколько минут напоминать о встречах, за сколько часов о дедлайнах задач, тихие часы, будни/ежедневно, включение/выключение уведомлений) -> вызови 'get_notification_settings' или 'update_notification_settings' (подтверждение НЕ требуется, выполняй изменение настроек сразу по просьбе сотрудника!)
 
-            Правило подтверждения (Human-in-the-Loop): для инструментов с атрибутом [RequireConfirmation(true)] ('create_task', 'schedule_meeting') без подтверждения пользователя (сейчас confirmed={isConfirmedByUser}) сначала выведи точный «📋 План действий (требуется подтверждение)» со всеми параметрами и попроси подтвердить выполнение («Да, подтверждаю» / «Выполняй»). Если confirmed=True — сразу вызови инструмент создания.
+            Правило подтверждения (Human-in-the-Loop): для инструментов с атрибутом [RequireConfirmation(true)] ('create_task', 'schedule_meeting') без подтверждения пользователя (сейчас confirmed={isConfirmedByUser}) сначала выведи точный «📋 План действий (требуется подтверждение)» со всеми параметрами и попроси подтвердить выполнение («Да, подтверждаю» / «Выполняй»). Если confirmed=True — сразу вызови инструмент создания. Инструмент 'update_notification_settings' НЕ требует подтверждения — вызывай его сразу.
             Всегда формулируй ответ четко, структурированно, опираясь на факты из вызванных инструментов, не опускай важные детали ответа инструментов (наличие материалов/остатков, сроки, риски, время и участников встреч).
             """;
 
@@ -312,7 +310,7 @@ public class FotoprintAiAgent : IFotoprintAgent
                     ? fnCall.CallId!
                     : $"call_{fnCall.Name}_{Guid.NewGuid():N}";
                 var startSpan = DateTime.UtcNow;
-                var result = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, empId, userAccessGroups, traceId, isConfirmedByUser, ct);
+                var result = await ExecuteToolAsync(fnCall.Name, fnCall.Arguments, telegramId, empId, userAccessGroups, secContext, traceId, isConfirmedByUser, ct);
                 var endSpan = DateTime.UtcNow;
                 return (Call: fnCall, CallId: callId, Result: result, Start: startSpan, End: endSpan);
             });
@@ -470,6 +468,8 @@ public class FotoprintAiAgent : IFotoprintAgent
         if (t.Contains("поставь") || t.Contains("создай") || t.Contains("назначь") || t.Contains("заведи") ||
             t.Contains("запланируй") || t.Contains("организуй") ||
             t.Contains("добавь") || t.Contains("удали") || t.Contains("измени") || t.Contains("поменяй") ||
+            t.Contains("перенес") || t.Contains("включи") || t.Contains("выключи") || t.Contains("отключи") ||
+            t.Contains("уведомл") || t.Contains("напомин") || t.Contains("дайджест") || t.Contains("сводк") || t.Contains("тихие часы") ||
             ContextSwitchDetector.IsActionPlanConfirmationOrAdjustment(t))
             return false;
         if (t.StartsWith("а ") || t.StartsWith("и ") || t.StartsWith("подробнее") || t.StartsWith("уточни"))
@@ -477,20 +477,21 @@ public class FotoprintAiAgent : IFotoprintAgent
         return true;
     }
 
-    private HttpClient CreateMcpClient(long telegramId, string traceId, bool isConfirmed = false)
+    private HttpRequestMessage CreateMcpRequest(HttpMethod method, string mcpUrl, long telegramId, string traceId, bool isConfirmed = false)
     {
-        var client = _httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Internal-Service-Key", _config.Security.InternalServiceSecretKey);
-        client.DefaultRequestHeaders.Add("X-Telegram-Id", telegramId.ToString());
-        client.DefaultRequestHeaders.Add("X-Trace-Id", traceId);
-        client.DefaultRequestHeaders.Add("X-User-Confirmed", isConfirmed ? "true" : "false");
-        return client;
+        var req = new HttpRequestMessage(method, mcpUrl);
+        req.Headers.TryAddWithoutValidation("X-Internal-Service-Key", _config.Security.InternalServiceSecretKey);
+        req.Headers.TryAddWithoutValidation("X-Telegram-Id", telegramId.ToString());
+        req.Headers.TryAddWithoutValidation("X-Trace-Id", traceId);
+        req.Headers.TryAddWithoutValidation("X-User-Confirmed", isConfirmed ? "true" : "false");
+        return req;
     }
 
     private async Task<object> GetMcpJsonAsync(string mcpUrl, string serviceName, long telegramId, string traceId, CancellationToken ct)
     {
-        var client = CreateMcpClient(telegramId, traceId);
-        var res = await client.GetAsync(mcpUrl, ct);
+        var client = _httpClientFactory.CreateClient();
+        using var req = CreateMcpRequest(HttpMethod.Get, mcpUrl, telegramId, traceId);
+        using var res = await client.SendAsync(req, ct);
         if (res.IsSuccessStatusCode)
         {
             return await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
@@ -518,12 +519,24 @@ public class FotoprintAiAgent : IFotoprintAgent
         return null;
     }
 
+    private static bool? TryGetBoolArg(JsonElement arguments, string propName)
+    {
+        if (arguments.ValueKind != JsonValueKind.Object || !arguments.TryGetProperty(propName, out var prop))
+            return null;
+        if (prop.ValueKind == JsonValueKind.True) return true;
+        if (prop.ValueKind == JsonValueKind.False) return false;
+        if (prop.ValueKind == JsonValueKind.String && bool.TryParse(prop.GetString(), out var parsed))
+            return parsed;
+        return null;
+    }
+
     private async Task<object> ExecuteToolAsync(
         string toolName,
         JsonElement arguments,
         long telegramId,
         int defaultEmployeeId,
         List<string> userAccessGroups,
+        EmployeeSecurityContext? secContext,
         string traceId,
         bool isConfirmed,
         CancellationToken ct)
@@ -545,13 +558,15 @@ public class FotoprintAiAgent : IFotoprintAgent
             {
                 "get_order_status" => await Tool_get_order_status(arguments, telegramId, traceId, ct),
                 "get_production_kpis" => await Tool_get_production_kpis(arguments, telegramId, traceId, ct),
-                "get_user_tasks" => await Tool_get_user_tasks(arguments, telegramId, defaultEmployeeId, traceId, ct),
+                "get_user_tasks" => await Tool_get_user_tasks(arguments, telegramId, defaultEmployeeId, secContext, traceId, ct),
                 "get_crm_deal_info" => await Tool_get_crm_deal_info(arguments, telegramId, traceId, ct),
                 "create_task" => await Tool_create_task(arguments, telegramId, defaultEmployeeId, traceId, isConfirmed, ct),
                 "get_upcoming_meetings" => await Tool_get_upcoming_meetings(arguments, telegramId, traceId, ct),
                 "get_meeting_history" => await Tool_get_meeting_history(arguments, telegramId, traceId, ct),
                 "schedule_meeting" => await Tool_schedule_meeting(arguments, telegramId, traceId, isConfirmed, ct),
                 "search_typography_regulations" => await Tool_search_typography_regulations(arguments, userAccessGroups, ct),
+                "get_notification_settings" => await Tool_get_notification_settings(defaultEmployeeId, secContext, ct),
+                "update_notification_settings" => await Tool_update_notification_settings(arguments, defaultEmployeeId, secContext, ct),
                 _ => new { status = "unknown_tool", tool = toolName }
             };
         }
@@ -604,9 +619,20 @@ public class FotoprintAiAgent : IFotoprintAgent
     }
 
     [RequireConfirmation(false)]
-    private Task<object> Tool_get_user_tasks(JsonElement arguments, long telegramId, int defaultEmployeeId, string traceId, CancellationToken ct)
+    private Task<object> Tool_get_user_tasks(
+        JsonElement arguments,
+        long telegramId,
+        int defaultEmployeeId,
+        EmployeeSecurityContext? secContext,
+        string traceId,
+        CancellationToken ct)
     {
-        var empId = TryGetIntArg(arguments, "employee_id") ?? defaultEmployeeId;
+        var requestedEmpId = TryGetIntArg(arguments, "employee_id");
+        var isExecutive = secContext?.IsExecutive == true;
+        var empId = (isExecutive && requestedEmpId.HasValue && requestedEmpId.Value > 0)
+            ? requestedEmpId.Value
+            : defaultEmployeeId;
+
         var statusFilter = TryGetStringArg(arguments, "status_filter");
         var url = $"{BitrixMcpBaseUrl}/tools/get_user_tasks?employee_id={empId}";
         if (!string.IsNullOrWhiteSpace(statusFilter))
@@ -631,15 +657,17 @@ public class FotoprintAiAgent : IFotoprintAgent
         DateTime? deadline = DateTime.TryParse(TryGetStringArg(arguments, "deadline"), out var dl) ? dl : null;
         Guid? meetingId = Guid.TryParse(TryGetStringArg(arguments, "meeting_id"), out var mid) ? mid : null;
 
-        var client = CreateMcpClient(telegramId, traceId, isConfirmed);
-        var res = await client.PostAsJsonAsync($"{BitrixMcpBaseUrl}/tools/create_task", new
+        var client = _httpClientFactory.CreateClient();
+        using var req = CreateMcpRequest(HttpMethod.Post, $"{BitrixMcpBaseUrl}/tools/create_task", telegramId, traceId, isConfirmed);
+        req.Content = JsonContent.Create(new
         {
             title,
             description,
             responsibleId,
             deadline,
             meetingId
-        }, ct);
+        });
+        using var res = await client.SendAsync(req, ct);
         if (res.IsSuccessStatusCode)
         {
             return await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
@@ -672,20 +700,149 @@ public class FotoprintAiAgent : IFotoprintAgent
         var durationMinutes = TryGetIntArg(arguments, "duration_minutes") ?? 30;
         var participants = TryGetStringArg(arguments, "participants");
 
-        var client = CreateMcpClient(telegramId, traceId, isConfirmed);
-        var res = await client.PostAsJsonAsync($"{CalendarMcpBaseUrl}/tools/schedule_meeting", new
+        var client = _httpClientFactory.CreateClient();
+        using var req = CreateMcpRequest(HttpMethod.Post, $"{CalendarMcpBaseUrl}/tools/schedule_meeting", telegramId, traceId, isConfirmed);
+        req.Content = JsonContent.Create(new
         {
             title,
             description,
             startTime,
             durationMinutes,
             participants
-        }, ct);
+        });
+        using var res = await client.SendAsync(req, ct);
         if (res.IsSuccessStatusCode)
         {
             return await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         }
         return new { status = "error", message = $"Календарь вернул код {res.StatusCode}" };
+    }
+
+    [RequireConfirmation(false)]
+    private async Task<object> Tool_get_notification_settings(
+        int defaultEmployeeId,
+        EmployeeSecurityContext? secContext,
+        CancellationToken ct)
+    {
+        if (defaultEmployeeId <= 0)
+        {
+            return new { status = "error", message = "Не удалось определить профиль сотрудника для чтения настроек уведомлений." };
+        }
+
+        var prefs = await _repo.GetNotificationPreferencesAsync(defaultEmployeeId, secContext?.MasterId ?? 0, ct);
+        var employee = await _repo.GetEmployeeByIdAsync(defaultEmployeeId, ct);
+        var notificationsEnabled = employee?.NotificationsEnabled ?? true;
+
+        return new
+        {
+            status = "ok",
+            employee_id = defaultEmployeeId,
+            employee_name = secContext?.FullName,
+            notifications_enabled = notificationsEnabled,
+            digest_enabled = prefs.DigestEnabled,
+            digest_time_msk = prefs.DigestTimeMsk,
+            digest_weekdays_only = prefs.DigestWeekdaysOnly,
+            pre_meeting_enabled = prefs.PreMeetingEnabled,
+            pre_meeting_window_minutes = prefs.PreMeetingWindowMinutes,
+            task_deadlines_enabled = prefs.TaskDeadlinesEnabled,
+            task_due_soon_hours = prefs.TaskDueSoonHours,
+            task_urgent_hours = prefs.TaskUrgentHours,
+            quiet_hours_start_msk = prefs.QuietHoursStartMsk,
+            quiet_hours_end_msk = prefs.QuietHoursEndMsk,
+            preferred_channel = prefs.PreferredChannel
+        };
+    }
+
+    [RequireConfirmation(false)]
+    private async Task<object> Tool_update_notification_settings(
+        JsonElement arguments,
+        int defaultEmployeeId,
+        EmployeeSecurityContext? secContext,
+        CancellationToken ct)
+    {
+        if (defaultEmployeeId <= 0)
+        {
+            return new { status = "error", message = "Не удалось определить профиль сотрудника для сохранения настроек уведомлений." };
+        }
+
+        var digestTimeArg = TryGetStringArg(arguments, "digest_time_msk");
+        if (!string.IsNullOrWhiteSpace(digestTimeArg) && !Notifications.NotificationTimeHelper.TryParseTimeMsk(digestTimeArg, out _))
+        {
+            return new
+            {
+                status = "validation_error",
+                message = $"Некорректный формат времени утренней сводки: '{digestTimeArg}'. Укажите время в формате ЧЧ:ММ (например '08:30' или '10:00')."
+            };
+        }
+
+        var quietStartArg = TryGetStringArg(arguments, "quiet_hours_start_msk");
+        if (!string.IsNullOrWhiteSpace(quietStartArg) && !Notifications.NotificationTimeHelper.TryParseTimeMsk(quietStartArg, out _))
+        {
+            return new
+            {
+                status = "validation_error",
+                message = $"Некорректный формат начала тихих часов: '{quietStartArg}'. Укажите время в формате ЧЧ:ММ (например '22:00')."
+            };
+        }
+
+        var quietEndArg = TryGetStringArg(arguments, "quiet_hours_end_msk");
+        if (!string.IsNullOrWhiteSpace(quietEndArg) && !Notifications.NotificationTimeHelper.TryParseTimeMsk(quietEndArg, out _))
+        {
+            return new
+            {
+                status = "validation_error",
+                message = $"Некорректный формат окончания тихих часов: '{quietEndArg}'. Укажите время в формате ЧЧ:ММ (например '08:00')."
+            };
+        }
+
+        var patch = new UpdateNotificationPreferencesPatch(
+            NotificationsEnabled: TryGetBoolArg(arguments, "notifications_enabled"),
+            DigestEnabled: TryGetBoolArg(arguments, "digest_enabled"),
+            DigestTimeMsk: digestTimeArg,
+            DigestWeekdaysOnly: TryGetBoolArg(arguments, "digest_weekdays_only"),
+            PreMeetingEnabled: TryGetBoolArg(arguments, "pre_meeting_enabled"),
+            PreMeetingWindowMinutes: TryGetIntArg(arguments, "pre_meeting_window_minutes"),
+            TaskDeadlinesEnabled: TryGetBoolArg(arguments, "task_deadlines_enabled"),
+            TaskDueSoonHours: TryGetIntArg(arguments, "task_due_soon_hours"),
+            TaskUrgentHours: TryGetIntArg(arguments, "task_urgent_hours"),
+            QuietHoursStartMsk: quietStartArg,
+            QuietHoursEndMsk: quietEndArg,
+            ClearQuietHours: TryGetBoolArg(arguments, "clear_quiet_hours") ?? false,
+            PreferredChannel: TryGetStringArg(arguments, "preferred_channel"));
+
+        var masterId = secContext?.MasterId ?? 0;
+        var updated = await _repo.UpsertNotificationPreferencesAsync(defaultEmployeeId, masterId, patch, ct);
+        var currentEmp = await _repo.GetEmployeeByIdAsync(defaultEmployeeId, ct);
+        var effectiveGlobalEnabled = patch.NotificationsEnabled ?? (currentEmp?.NotificationsEnabled ?? true);
+
+        bool resetTodayDigestDedup = false;
+        if (!string.IsNullOrWhiteSpace(digestTimeArg))
+        {
+            var tz = Notifications.NotificationTimeHelper.ResolveTimeZone(_config.Environment.Timezone);
+            var (_, _, mskDate) = Notifications.NotificationTimeHelper.GetDayBoundsUtc(DateTimeOffset.UtcNow, tz);
+            var dedupKey = Notifications.NotificationTimeHelper.BuildMorningDigestDedupKey(mskDate, defaultEmployeeId);
+            resetTodayDigestDedup = await _repo.ResetNotificationDeliveryByDedupKeyAsync(dedupKey, ct);
+        }
+
+        return new
+        {
+            status = "updated",
+            employee_id = updated.EmployeeId,
+            notifications_enabled = effectiveGlobalEnabled,
+            digest_enabled = updated.DigestEnabled,
+            digest_time_msk = updated.DigestTimeMsk,
+            digest_weekdays_only = updated.DigestWeekdaysOnly,
+            pre_meeting_enabled = updated.PreMeetingEnabled,
+            pre_meeting_window_minutes = updated.PreMeetingWindowMinutes,
+            task_deadlines_enabled = updated.TaskDeadlinesEnabled,
+            task_due_soon_hours = updated.TaskDueSoonHours,
+            task_urgent_hours = updated.TaskUrgentHours,
+            quiet_hours_start_msk = updated.QuietHoursStartMsk,
+            quiet_hours_end_msk = updated.QuietHoursEndMsk,
+            preferred_channel = updated.PreferredChannel,
+            today_digest_rescheduled = resetTodayDigestDedup,
+            message = "Персональные настройки уведомлений успешно сохранены."
+        };
     }
 
     [RequireConfirmation(false)]
@@ -878,6 +1035,49 @@ public class FotoprintAiAgent : IFotoprintAgent
                             query = new { type = "string", description = "Поисковый запрос по базе знаний / регламентам (или '*' для обзора всех документов в RAG)" }
                         },
                         required = new[] { "query" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "get_notification_settings",
+                    description = "Возвращает текущие персональные настройки уведомлений и напоминаний сотрудника (время утренней сводки по МСК, за сколько минут напоминать о встречах, за сколько часов напоминать о дедлайнах задач, тихие часы, статус включения).",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new { }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "update_notification_settings",
+                    description = "Изменяет персональные настройки времени и параметров уведомлений сотрудника по его просьбе в чате (не требует подтверждения, применяется сразу). Передавай только те поля, которые просит изменить пользователь.",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            notifications_enabled = new { type = "boolean", description = "Включить (true) или полностью отключить (false) все автоматические уведомления" },
+                            digest_enabled = new { type = "boolean", description = "Включить (true) или отключить (false) утреннюю сводку расписания и задач" },
+                            digest_time_msk = new { type = "string", description = "Время отправки утренней сводки по МСК в формате ЧЧ:ММ (например '08:30', '09:00', '10:15')" },
+                            digest_weekdays_only = new { type = "boolean", description = "true — присылать утреннюю сводку только по будням (пн–пт); false — присылать ежедневно (включая выходные)" },
+                            pre_meeting_enabled = new { type = "boolean", description = "Включить (true) или отключить (false) напоминания перед началом встреч" },
+                            pre_meeting_window_minutes = new { type = "integer", description = "За сколько минут до начала встречи присылать напоминание (от 5 до 240, например 15, 30, 60)" },
+                            task_deadlines_enabled = new { type = "boolean", description = "Включить (true) или отключить (false) напоминания о дедлайнах задач" },
+                            task_due_soon_hours = new { type = "integer", description = "За сколько часов до дедлайна присылать заблаговременное напоминание (по умолчанию 24)" },
+                            task_urgent_hours = new { type = "integer", description = "За сколько часов до дедлайна присылать срочное напоминание (по умолчанию 2)" },
+                            quiet_hours_start_msk = new { type = "string", description = "Начало тихих часов по МСК в формате ЧЧ:ММ (например '22:00')" },
+                            quiet_hours_end_msk = new { type = "string", description = "Конец тихих часов по МСК в формате ЧЧ:ММ (например '08:00')" },
+                            clear_quiet_hours = new { type = "boolean", description = "Установить true, если пользователь просит отключить/сбросить тихие часы" },
+                            preferred_channel = new { type = "string", description = "Предпочтительный канал уведомлений ('telegram' или 'crm_webhook')" }
+                        }
                     }
                 }
             }

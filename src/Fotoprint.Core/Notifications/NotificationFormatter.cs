@@ -220,4 +220,40 @@ public static class NotificationFormatter
         "cancelled" => "Отменена",
         _ => string.IsNullOrWhiteSpace(status) ? "В работе" : status
     };
+
+    public static string FormatNotificationSettingsSummary(
+        Employee employee,
+        EmployeeNotificationPreferences prefs)
+    {
+        var globalStatus = employee.NotificationsEnabled ? "✅ Включены" : "🔕 Выключены";
+        var digestStatus = prefs.DigestEnabled
+            ? $"✅ В {prefs.DigestTimeMsk} МСК ({(prefs.DigestWeekdaysOnly ? "пн–пт" : "ежедневно")})"
+            : "🔕 Выключена";
+        var preMeetingStatus = prefs.PreMeetingEnabled
+            ? $"✅ За {prefs.PreMeetingWindowMinutes} мин до начала"
+            : "🔕 Выключены";
+        var taskDeadlinesStatus = prefs.TaskDeadlinesEnabled
+            ? $"✅ За {prefs.TaskDueSoonHours} ч, за {prefs.TaskUrgentHours} ч и при просрочке"
+            : "🔕 Выключены";
+        var quietHours = !string.IsNullOrWhiteSpace(prefs.QuietHoursStartMsk) && !string.IsNullOrWhiteSpace(prefs.QuietHoursEndMsk)
+            ? $"{prefs.QuietHoursStartMsk}–{prefs.QuietHoursEndMsk} МСК"
+            : "не заданы";
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"🔔 Настройки уведомлений ({employee.FullName}):");
+        sb.AppendLine($"• Общий статус: {globalStatus}");
+        sb.AppendLine($"• Утренняя сводка: {digestStatus}");
+        sb.AppendLine($"• Напоминания о встречах: {preMeetingStatus}");
+        sb.AppendLine($"• Напоминания о дедлайнах задач: {taskDeadlinesStatus}");
+        sb.AppendLine($"• Тихие часы: {quietHours}");
+        sb.AppendLine($"• Канал доставки: {prefs.PreferredChannel}");
+        sb.AppendLine();
+        sb.AppendLine("💬 Вы можете изменить время и параметры прямо в чате обычным сообщением, например:");
+        sb.AppendLine("— «Перенеси утреннюю сводку на 08:30»");
+        sb.AppendLine("— «Напоминай о встречах за 15 минут»");
+        sb.AppendLine("— «Включи тихие часы с 22:00 до 08:00»");
+        sb.AppendLine("— «Присылай сводку каждый день, включая выходные»");
+        sb.Append("Также доступны быстрые команды: /notifications on | /notifications off");
+        return sb.ToString();
+    }
 }

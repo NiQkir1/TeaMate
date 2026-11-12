@@ -16,7 +16,7 @@
     },
     {
       "parameters": {
-        "url": "=http://mcp-employee-reader:8081/tools/get_employee_security_context?telegram_id={{ $json.body.user_id || 100001 }}",
+        "url": "=http://mcp-employee-reader:8081/tools/get_employee_security_context?telegram_id={{ $json.body.user_id || 0 }}",
         "headerParameters": {
           "parameters": [
             {

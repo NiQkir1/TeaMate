@@ -20,7 +20,29 @@ public static class NotificationEndpoints
 
     public static IServiceCollection AddNotificationIntegration(this IServiceCollection services)
     {
-        services.AddSingleton<INotificationService, NotificationService>();
+        services.AddSingleton<INotificationDataProvider, RepositoryNotificationDataProvider>();
+        services.AddSingleton<INotificationChannel, TelegramNotificationChannel>();
+        services.AddHttpClient("CrmNotificationWebhookClient", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddSingleton<INotificationChannel>(sp =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var cfg = sp.GetRequiredService<FotoprintConfig>();
+            var webhookUrl = Environment.GetEnvironmentVariable("CRM_NOTIFICATION_WEBHOOK_URL");
+            var webhookKey = Environment.GetEnvironmentVariable("CRM_NOTIFICATION_WEBHOOK_KEY");
+            return new WebhookNotificationChannel(factory.CreateClient("CrmNotificationWebhookClient"), webhookUrl, webhookKey);
+        });
+        services.AddSingleton<INotificationService>(sp => new NotificationService(
+            sp.GetRequiredService<Fotoprint.Core.Data.IFotoprintRepository>(),
+            sp.GetRequiredService<INotificationDataProvider>(),
+            sp.GetServices<INotificationChannel>(),
+            sp.GetRequiredService<Fotoprint.Core.Telemetry.ILangfuseClient>(),
+            sp.GetRequiredService<FotoprintConfig>(),
+            sp.GetService<TimeProvider>(),
+            sp.GetService<ILogger<NotificationService>>(),
+            sp.GetService<Fotoprint.Core.Telegram.ITelegramBotClient>()));
         services.AddHostedService<NotificationSchemaInitializer>();
         return services;
     }
@@ -101,7 +123,8 @@ public static class NotificationEndpoints
                 new DispatchMorningDigestCommand(
                     EmployeeId: req.EmployeeId,
                     SkipIfEmpty: req.SkipIfEmpty,
-                    DryRun: req.DryRun ?? false),
+                    DryRun: req.DryRun ?? false,
+                    EnforceScheduleTime: req.EnforceScheduleTime ?? false),
                 ct);
 
             return Results.Ok(ToResponseDto(batch));
@@ -148,6 +171,86 @@ public static class NotificationEndpoints
                 ct);
 
             return Results.Ok(ToResponseDto(batch));
+        });
+
+        group.MapGet("/preferences/{employeeId:int}", async (
+            int employeeId,
+            Fotoprint.Core.Data.IFotoprintRepository repo,
+            CancellationToken ct) =>
+        {
+            var employee = await repo.GetEmployeeByIdAsync(employeeId, ct);
+            if (employee is null)
+            {
+                return Results.NotFound(new { ok = false, error = $"Employee {employeeId} not found." });
+            }
+
+            var prefs = await repo.GetNotificationPreferencesAsync(employeeId, employee.MasterId, ct);
+            return Results.Ok(new
+            {
+                ok = true,
+                preferences = new
+                {
+                    employee_id = prefs.EmployeeId,
+                    master_id = prefs.MasterId,
+                    notifications_enabled = employee.NotificationsEnabled,
+                    digest_enabled = prefs.DigestEnabled,
+                    digest_time_msk = prefs.DigestTimeMsk,
+                    digest_weekdays_only = prefs.DigestWeekdaysOnly,
+                    pre_meeting_enabled = prefs.PreMeetingEnabled,
+                    pre_meeting_window_minutes = prefs.PreMeetingWindowMinutes,
+                    task_deadlines_enabled = prefs.TaskDeadlinesEnabled,
+                    task_due_soon_hours = prefs.TaskDueSoonHours,
+                    task_urgent_hours = prefs.TaskUrgentHours,
+                    quiet_hours_start_msk = prefs.QuietHoursStartMsk,
+                    quiet_hours_end_msk = prefs.QuietHoursEndMsk,
+                    preferred_channel = prefs.PreferredChannel,
+                    channel_address = prefs.ChannelAddress,
+                    updated_at = prefs.UpdatedAt
+                }
+            });
+        });
+
+        group.MapPut("/preferences/{employeeId:int}", async (
+            int employeeId,
+            HttpContext httpContext,
+            Fotoprint.Core.Data.IFotoprintRepository repo,
+            CancellationToken ct) =>
+        {
+            var employee = await repo.GetEmployeeByIdAsync(employeeId, ct);
+            if (employee is null)
+            {
+                return Results.NotFound(new { ok = false, error = $"Employee {employeeId} not found." });
+            }
+
+            var (patch, parseError) = await TryReadOptionalJsonAsync<Fotoprint.Core.Models.UpdateNotificationPreferencesPatch>(httpContext, ct);
+            if (parseError is not null || patch is null)
+            {
+                return Results.BadRequest(new { ok = false, error = parseError ?? "JSON body is required." });
+            }
+
+            var updated = await repo.UpsertNotificationPreferencesAsync(employeeId, employee.MasterId, patch, ct);
+            return Results.Ok(new
+            {
+                ok = true,
+                preferences = new
+                {
+                    employee_id = updated.EmployeeId,
+                    master_id = updated.MasterId,
+                    digest_enabled = updated.DigestEnabled,
+                    digest_time_msk = updated.DigestTimeMsk,
+                    digest_weekdays_only = updated.DigestWeekdaysOnly,
+                    pre_meeting_enabled = updated.PreMeetingEnabled,
+                    pre_meeting_window_minutes = updated.PreMeetingWindowMinutes,
+                    task_deadlines_enabled = updated.TaskDeadlinesEnabled,
+                    task_due_soon_hours = updated.TaskDueSoonHours,
+                    task_urgent_hours = updated.TaskUrgentHours,
+                    quiet_hours_start_msk = updated.QuietHoursStartMsk,
+                    quiet_hours_end_msk = updated.QuietHoursEndMsk,
+                    preferred_channel = updated.PreferredChannel,
+                    channel_address = updated.ChannelAddress,
+                    updated_at = updated.UpdatedAt
+                }
+            });
         });
 
         return endpoints;
@@ -272,7 +375,8 @@ public sealed record SendNotificationRequest(
 public sealed record DispatchMorningDigestRequest(
     [property: JsonPropertyName("employee_id")] int? EmployeeId = null,
     [property: JsonPropertyName("skip_if_empty")] bool? SkipIfEmpty = null,
-    [property: JsonPropertyName("dry_run")] bool? DryRun = null);
+    [property: JsonPropertyName("dry_run")] bool? DryRun = null,
+    [property: JsonPropertyName("enforce_schedule_time")] bool? EnforceScheduleTime = null);
 
 public sealed record DispatchPreMeetingRequest(
     [property: JsonPropertyName("window_minutes")] int? WindowMinutes = null,
