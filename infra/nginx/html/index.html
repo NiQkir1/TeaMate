@@ -721,6 +721,75 @@
       </form>
     </div>
   </div>
+
+  <!-- Dynamic Left/Right Context-Anchored Creation Popover (#cal-drag-create-popover) -->
+  <div id="cal-drag-create-popover" class="cal-drag-popover" style="display: none;" role="dialog" aria-modal="false" aria-labelledby="drag-create-title">
+    <div class="cal-drag-popover-header">
+      <div class="cal-drag-popover-badge-wrap">
+        <span id="drag-create-date-badge" class="cal-drag-date-badge">Чт, 12 ноя</span>
+        <span class="cal-drag-popover-hint">Новая встреча</span>
+      </div>
+      <button type="button" id="drag-create-close" class="cal-drag-close-btn" onclick="closeDragCreatePopover()" title="Закрыть">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+
+    <form id="cal-drag-create-form" onsubmit="submitDragCreate(event)">
+      <!-- Field 1: Название (Title, auto-focused) -->
+      <div class="cal-drag-form-group">
+        <input type="text" id="drag-create-title" class="cal-drag-input cal-drag-title-input" placeholder="Название встречи или задачи..." required autocomplete="off">
+      </div>
+
+      <!-- Field 2: Описание (Description) -->
+      <div class="cal-drag-form-group">
+        <textarea id="drag-create-desc" class="cal-drag-textarea" rows="2" placeholder="Описание / повестка..."></textarea>
+      </div>
+
+      <!-- Field 3: Время (Time: Date, Start, End) -->
+      <div class="cal-drag-form-group cal-drag-time-group">
+        <div class="cal-drag-time-row">
+          <input type="date" id="drag-create-date" class="cal-drag-input" required onchange="onDragPopoverDateChange()">
+          <input type="time" id="drag-create-start" class="cal-drag-input" step="900" required onchange="onDragPopoverTimeChange()">
+          <span class="cal-drag-time-sep">–</span>
+          <input type="time" id="drag-create-end" class="cal-drag-input" step="900" required onchange="onDragPopoverTimeChange()">
+        </div>
+      </div>
+
+      <!-- Field 4: Участники (Participants - Bottom Section) -->
+      <div class="cal-drag-form-group cal-drag-participants-group">
+        <label class="cal-drag-label">Участники (Кто будет занят)</label>
+        <div class="cal-drag-participants-grid">
+          <label class="cal-drag-emp-check">
+            <input type="checkbox" name="drag-create-emp" value="1" checked>
+            <span class="cal-emp-badge">Смирнов А.С. (CEO)</span>
+          </label>
+          <label class="cal-drag-emp-check">
+            <input type="checkbox" name="drag-create-emp" value="2" checked>
+            <span class="cal-emp-badge">Кузнецов И.П. (Цех)</span>
+          </label>
+          <label class="cal-drag-emp-check">
+            <input type="checkbox" name="drag-create-emp" value="3">
+            <span class="cal-emp-badge">Морозова Е.А. (Продажи)</span>
+          </label>
+          <label class="cal-drag-emp-check">
+            <input type="checkbox" name="drag-create-emp" value="4">
+            <span class="cal-emp-badge">Соколова О.В. (Бухг.)</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="drag-create-msg" class="cal-modal-msg" style="display: none;"></div>
+
+      <!-- Action Footer -->
+      <div class="cal-drag-actions">
+        <button type="button" id="drag-create-cancel-btn" class="cal-btn-sec" onclick="closeDragCreatePopover()">Отмена</button>
+        <button type="submit" id="drag-create-submit-btn" class="cal-btn-primary">
+          <i data-lucide="check"></i>
+          <span>Запланировать</span>
+        </button>
+      </div>
+    </form>
+  </div>
   <aside id="calendar-drawer" class="calendar-drawer" style="display: none;" aria-hidden="true">
     <div id="drawer-backdrop" class="drawer-backdrop" style="display: none;"></div>
     <div id="selected-day-title" class="day-title" style="display: none;"></div>
@@ -1424,6 +1493,12 @@
     };
 
     let calendarAutoScrolled = false;
+    let activeDragGhost = null;
+    let activeDragCol = null;
+
+    function openCalendarWindow() {
+      toggleCalendarDrawer(true);
+    }
 
     function toggleCalendarDrawer(forceOpen) {
       const win = document.getElementById('calendar-window-view');
@@ -1446,16 +1521,24 @@
 
         if (window.lucide) lucide.createIcons();
 
-        // Auto-scroll to 07:30 AM on initial open matching reference screenshot
-        if (!calendarAutoScrolled) {
-          setTimeout(() => {
-            const scrollArea = document.getElementById('cal-timegrid-scroll');
-            if (scrollArea) {
-              scrollArea.scrollTop = 450; // 07:30 AM (7.5 * 60px)
+        // Auto-scroll to current time minus 90 min on open (matches reference: scrollArea.scrollTop = 450)
+        setTimeout(() => {
+          const scrollArea = document.getElementById('cal-timegrid-scroll');
+          if (scrollArea) {
+            const now = new Date();
+            const currentMin = now.getHours() * 60 + now.getMinutes();
+            const targetScroll = Math.max(0, currentMin - 90);
+            try {
+              scrollArea.scrollTo({ top: targetScroll, behavior: 'smooth' });
+            } catch (err) {
+              scrollArea.scrollTop = 450;
+              scrollArea.scrollTop = targetScroll;
+            }
+            if (!calendarAutoScrolled) {
               calendarAutoScrolled = true;
             }
-          }, 60);
-        }
+          }
+        }, 60);
       } else {
         if (win) {
           win.classList.remove('open');
@@ -1467,7 +1550,10 @@
 
     function toggleCalSidebar() {
       const sidebar = document.getElementById('cal-sidebar');
-      if (sidebar) sidebar.classList.toggle('collapsed');
+      if (sidebar) {
+        sidebar.classList.toggle('collapsed');
+        requestAnimationFrame(repositionDragCreatePopover);
+      }
     }
 
     function setCalendarScope(scope) {
@@ -1937,16 +2023,8 @@
         colDiv.className = 'cal-day-col';
         colDiv.setAttribute('data-date', isoDate);
 
-        // Click on empty grid slot -> quick add modal
-        colDiv.onclick = (e) => {
-          if (e.target.closest('.cal-event-block')) return;
-          const rect = colDiv.getBoundingClientRect();
-          const y = e.clientY - rect.top;
-          const totalMin = Math.floor(y);
-          const h = Math.min(23, Math.max(0, Math.floor(totalMin / 60)));
-          const m = Math.floor((totalMin % 60) / 15) * 15;
-          openQuickAddModal(isoDate, h, m);
-        };
+        // Drag-to-Create time-range selection
+        setupDayColDrag(colDiv, isoDate);
 
         // Hourly lines & half-hour lines
         for (let h = 0; h < 24; h++) {
@@ -2381,11 +2459,410 @@
       closeQuickAddModal();
     }
 
+    // ========================================================================
+    // TICKTICK DRAG-TO-CREATE ENGINE & CONTEXT-ANCHORED POPOVER (TASK 017A)
+    // Contract: calendar_drag_create_contract.md
+    // ========================================================================
+    function minToTimeStr(min) {
+      const h = Math.floor(min / 60) % 24;
+      const m = min % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+
+    function timeStrToMin(str) {
+      if (!str) return 0;
+      const [h, m] = str.split(':').map(Number);
+      return (h || 0) * 60 + (m || 0);
+    }
+
+    function formatDurationRu(durationMin) {
+      const h = Math.floor(durationMin / 60);
+      const m = durationMin % 60;
+      if (h > 0 && m > 0) return `${h} ч ${m} мин`;
+      if (h > 0) return `${h} ч`;
+      return `${m} мин`;
+    }
+
+    function updateDragPopoverDateBadge(isoDate) {
+      const badge = document.getElementById('drag-create-date-badge');
+      if (!badge) return;
+      try {
+        const d = new Date(isoDate + 'T00:00:00');
+        const dayStr = d.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+        badge.textContent = dayStr;
+      } catch (e) {
+        badge.textContent = isoDate;
+      }
+    }
+
+    function onDragPopoverDateChange() {
+      const dateVal = document.getElementById('drag-create-date').value;
+      if (!dateVal) return;
+      const col = document.querySelector(`.cal-day-col[data-date="${dateVal}"]`);
+      if (col && col !== activeDragCol && activeDragGhost) {
+        col.appendChild(activeDragGhost);
+        activeDragCol = col;
+      }
+      updateDragPopoverDateBadge(dateVal);
+      repositionDragCreatePopover();
+    }
+
+    function onDragPopoverTimeChange() {
+      const startVal = document.getElementById('drag-create-start').value;
+      const endVal = document.getElementById('drag-create-end').value;
+      if (!startVal || !endVal) return;
+      const sMin = timeStrToMin(startVal);
+      let eMin = timeStrToMin(endVal);
+      if (eMin <= sMin) {
+        eMin = Math.min(1440, sMin + 15);
+        document.getElementById('drag-create-end').value = minToTimeStr(eMin);
+      }
+      const ghost = activeDragGhost || document.getElementById('cal-active-drag-ghost');
+      if (ghost) {
+        ghost.style.top = `${sMin}px`;
+        ghost.style.height = `${eMin - sMin}px`;
+        const label = ghost.querySelector('.cal-drag-ghost-time');
+        if (label) {
+          label.textContent = `${minToTimeStr(sMin)} – ${minToTimeStr(eMin)} (${formatDurationRu(eMin - sMin)})`;
+        }
+        repositionDragCreatePopover();
+      }
+    }
+
+    function removeDragGhost() {
+      const existing = document.getElementById('cal-active-drag-ghost');
+      if (existing && existing.parentNode) {
+        existing.parentNode.removeChild(existing);
+      }
+      activeDragGhost = null;
+      activeDragCol = null;
+    }
+
+    function closeDragCreatePopover() {
+      const popover = document.getElementById('cal-drag-create-popover');
+      if (popover) {
+        popover.style.display = 'none';
+      }
+      removeDragGhost();
+    }
+
+    function openDragCreatePopover(dateStr, startMin, endMin) {
+      closeQuickAddModal();
+      closeEventPopover();
+
+      const popover = document.getElementById('cal-drag-create-popover');
+      if (!popover) return;
+
+      const titleInput = document.getElementById('drag-create-title');
+      const descInput = document.getElementById('drag-create-desc');
+      const dateInput = document.getElementById('drag-create-date');
+      const startInput = document.getElementById('drag-create-start');
+      const endInput = document.getElementById('drag-create-end');
+      const msgEl = document.getElementById('drag-create-msg');
+
+      if (titleInput) titleInput.value = '';
+      if (descInput) descInput.value = '';
+      if (dateInput) dateInput.value = dateStr;
+      if (startInput) startInput.value = minToTimeStr(startMin);
+      if (endInput) endInput.value = minToTimeStr(endMin);
+      if (msgEl) msgEl.style.display = 'none';
+
+      updateDragPopoverDateBadge(dateStr);
+
+      document.querySelectorAll('input[name="drag-create-emp"]').forEach(cb => {
+        cb.checked = (cb.value === '1' || cb.value === '2');
+      });
+
+      popover.style.display = 'flex';
+      repositionDragCreatePopover();
+
+      if (titleInput) {
+        setTimeout(() => titleInput.focus(), 30);
+      }
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function repositionDragCreatePopover() {
+      const popover = document.getElementById('cal-drag-create-popover');
+      if (!popover || popover.style.display === 'none') return;
+      const ghost = activeDragGhost || document.getElementById('cal-active-drag-ghost');
+      if (!ghost) return;
+
+      const ghostRect = ghost.getBoundingClientRect();
+      const popoverWidth = popover.offsetWidth || 340;
+      const popoverHeight = popover.offsetHeight || 360;
+
+      const spaceRight = window.innerWidth - ghostRect.right - 12;
+      const spaceLeft = ghostRect.left - 12;
+
+      let left;
+      let placement;
+
+      if (spaceRight >= popoverWidth) {
+        left = ghostRect.right + 12;
+        placement = 'right';
+      } else if (spaceLeft >= popoverWidth) {
+        left = ghostRect.left - popoverWidth - 12;
+        placement = 'left';
+      } else {
+        if (ghostRect.left > window.innerWidth / 2) {
+          left = Math.max(12, ghostRect.left - popoverWidth - 12);
+          placement = 'left';
+        } else {
+          left = Math.min(window.innerWidth - popoverWidth - 12, ghostRect.right + 12);
+          placement = 'right';
+        }
+      }
+
+      let top = ghostRect.top;
+      const minTop = 60;
+      const maxTop = Math.max(minTop, window.innerHeight - popoverHeight - 12);
+      top = Math.max(minTop, Math.min(maxTop, top));
+
+      popover.style.left = `${Math.round(left)}px`;
+      popover.style.top = `${Math.round(top)}px`;
+      popover.setAttribute('data-placement', placement);
+    }
+
+    function setupDayColDrag(colDiv, isoDate) {
+      colDiv.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('.cal-event-block') || e.target.closest('#cal-drag-create-popover')) return;
+
+        const existingPopover = document.getElementById('cal-drag-create-popover');
+        if (existingPopover && existingPopover.style.display !== 'none') {
+          closeDragCreatePopover();
+        }
+
+        const colRect = colDiv.getBoundingClientRect();
+        const startY = e.clientY - colRect.top;
+        const snappedAnchorMin = Math.min(1425, Math.max(0, Math.floor(startY / 15) * 15));
+
+        let isDragging = true;
+        const dragStartY = e.clientY;
+        let hasMoved = false;
+
+        removeDragGhost();
+
+        const ghost = document.createElement('div');
+        ghost.className = 'cal-drag-ghost';
+        ghost.id = 'cal-active-drag-ghost';
+        ghost.style.top = `${snappedAnchorMin}px`;
+        ghost.style.height = '15px';
+        ghost.innerHTML = `
+          <span class="cal-drag-ghost-time">${minToTimeStr(snappedAnchorMin)} – ${minToTimeStr(snappedAnchorMin + 15)} (15 мин)</span>
+          <span class="cal-drag-ghost-hint">Новая встреча</span>
+        `;
+        colDiv.appendChild(ghost);
+        activeDragGhost = ghost;
+        activeDragCol = colDiv;
+
+        function onMouseMove(moveEv) {
+          if (!isDragging) return;
+          if (Math.abs(moveEv.clientY - dragStartY) > 5) {
+            hasMoved = true;
+          }
+          const curColRect = colDiv.getBoundingClientRect();
+          const curY = moveEv.clientY - curColRect.top;
+          const rawMin = Math.floor(curY / 15) * 15;
+          const snappedCurMin = Math.min(1440, Math.max(0, rawMin));
+
+          const startMin = Math.max(0, Math.min(snappedAnchorMin, snappedCurMin));
+          let endMin = Math.min(1440, Math.max(snappedAnchorMin, snappedCurMin));
+          if (endMin - startMin < 15) {
+            endMin = Math.min(1440, startMin + 15);
+          }
+
+          ghost.style.top = `${startMin}px`;
+          ghost.style.height = `${endMin - startMin}px`;
+          const duration = endMin - startMin;
+          const timeLabel = ghost.querySelector('.cal-drag-ghost-time');
+          if (timeLabel) {
+            timeLabel.textContent = `${minToTimeStr(startMin)} – ${minToTimeStr(endMin)} (${formatDurationRu(duration)})`;
+          }
+        }
+
+        function onMouseUp(upEv) {
+          if (!isDragging) return;
+          isDragging = false;
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', onMouseUp);
+
+          let finalStartMin = snappedAnchorMin;
+          let finalEndMin = snappedAnchorMin + 30;
+
+          if (hasMoved) {
+            finalStartMin = parseInt(ghost.style.top, 10) || snappedAnchorMin;
+            const h = parseInt(ghost.style.height, 10) || 15;
+            finalEndMin = Math.min(1440, finalStartMin + Math.max(15, h));
+          } else {
+            finalEndMin = Math.min(1440, finalStartMin + 30);
+            ghost.style.top = `${finalStartMin}px`;
+            ghost.style.height = `${finalEndMin - finalStartMin}px`;
+            const timeLabel = ghost.querySelector('.cal-drag-ghost-time');
+            if (timeLabel) {
+              timeLabel.textContent = `${minToTimeStr(finalStartMin)} – ${minToTimeStr(finalEndMin)} (${formatDurationRu(finalEndMin - finalStartMin)})`;
+            }
+          }
+
+          openDragCreatePopover(isoDate, finalStartMin, finalEndMin);
+        }
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+      });
+    }
+
+    async function submitDragCreate(e) {
+      e.preventDefault();
+      const titleInput = document.getElementById('drag-create-title');
+      const descInput = document.getElementById('drag-create-desc');
+      const dateInput = document.getElementById('drag-create-date');
+      const startInput = document.getElementById('drag-create-start');
+      const endInput = document.getElementById('drag-create-end');
+
+      const title = titleInput ? titleInput.value.trim() : '';
+      if (!title) return;
+
+      const desc = descInput ? descInput.value.trim() : '';
+      const dateStr = dateInput ? dateInput.value : '2026-11-12';
+      const startStr = startInput ? startInput.value : '10:00';
+      const endStr = endInput ? endInput.value : '11:00';
+
+      const empCheckboxes = document.querySelectorAll('input[name="drag-create-emp"]:checked');
+      let participantIds = Array.from(empCheckboxes).map(cb => parseInt(cb.value, 10));
+      if (participantIds.length === 0) participantIds = [1];
+
+      const empNames = {
+        1: 'Смирнов А.С.',
+        2: 'Кузнецов И.П.',
+        3: 'Морозова Е.А.',
+        4: 'Соколова О.В.'
+      };
+      const participants = participantIds.map(id => empNames[id] || `Сотрудник #${id}`);
+
+      const startIso = `${dateStr}T${startStr}:00+03:00`;
+      const endIso = `${dateStr}T${endStr}:00+03:00`;
+
+      const newEvent = {
+        id: 'ev-' + Date.now(),
+        meeting_id: 'ev-' + Date.now(),
+        title: title,
+        description: desc,
+        start_time: startIso,
+        end_time: endIso,
+        item_type: 'meeting',
+        category: 'production',
+        is_all_day: false,
+        is_recurring: false,
+        status: 'scheduled',
+        organizer_id: participantIds[0] || 1,
+        organizer_name: empNames[participantIds[0] || 1] || 'Смирнов А.С.',
+        participant_ids: participantIds,
+        participants: participants,
+        tags: ['календарь']
+      };
+
+      const submitBtn = document.getElementById('drag-create-submit-btn');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i data-lucide="loader"></i> <span>Сохранение...</span>';
+        if (window.lucide) lucide.createIcons();
+      }
+
+      try {
+        const res = await fetch('/api/calendar/confirm', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Telegram-Id': String(currentTelegramId)
+          },
+          body: JSON.stringify({
+            title: title,
+            description: desc,
+            start_time: startIso,
+            end_time: endIso,
+            organizer_id: participantIds[0] || 1,
+            participant_ids: participantIds,
+            status: 'scheduled'
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.id) newEvent.id = data.id;
+          if (data.meeting_id) newEvent.meeting_id = data.meeting_id;
+        }
+      } catch (err) {
+        console.warn('Backend unavailable, saving event locally:', err);
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<i data-lucide="check"></i> <span>Запланировать</span>';
+        }
+      }
+
+      cachedCalendarEvents.push(newEvent);
+      renderCalendarGrid();
+      renderWeekViewGrid();
+      closeDragCreatePopover();
+    }
+
+    // Dynamic tracking on timegrid scroll
+    const timegridScrollArea = document.getElementById('cal-timegrid-scroll');
+    if (timegridScrollArea) {
+      timegridScrollArea.addEventListener('scroll', () => {
+        if (activeDragGhost) {
+          requestAnimationFrame(repositionDragCreatePopover);
+        }
+      }, { passive: true });
+    }
+
+    // Dynamic tracking on window resize
+    window.addEventListener('resize', () => {
+      if (activeDragGhost) {
+        requestAnimationFrame(repositionDragCreatePopover);
+      }
+    }, { passive: true });
+
+    // Dynamic tracking on sidebar transition
+    const calSidebarElement = document.getElementById('cal-sidebar');
+    if (calSidebarElement) {
+      calSidebarElement.addEventListener('transitionend', () => {
+        requestAnimationFrame(repositionDragCreatePopover);
+      });
+    }
+
+    // ResizeObserver on .cal-main-area
+    if (window.ResizeObserver) {
+      const mainAreaEl = document.querySelector('.cal-main-area');
+      if (mainAreaEl) {
+        const ro = new ResizeObserver(() => {
+          if (activeDragGhost) {
+            requestAnimationFrame(repositionDragCreatePopover);
+          }
+        });
+        ro.observe(mainAreaEl);
+      }
+    }
+
     // Global Key Listener for Esc to dismiss popovers
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         closeEventPopover();
         closeQuickAddModal();
+        closeDragCreatePopover();
+      }
+    });
+
+    // Outside click to dismiss drag popover
+    document.addEventListener('mousedown', (e) => {
+      const popover = document.getElementById('cal-drag-create-popover');
+      if (popover && popover.style.display !== 'none') {
+        if (!popover.contains(e.target) && !e.target.closest('.cal-drag-ghost') && !e.target.closest('.cal-day-col')) {
+          closeDragCreatePopover();
+        }
       }
     });
 
