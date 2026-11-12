@@ -35,6 +35,26 @@
   --cal-hover-bg: rgba(255, 255, 255, 0.05);
   --cal-active-bg: rgba(255, 255, 255, 0.1);
   --cal-badge-director: #d97706;
+
+  /* Drag-to-Create Ghost & Anchored Popover Tokens */
+  --cal-ghost-bg: rgba(59, 130, 246, 0.25);
+  --cal-ghost-border: #3b82f6;
+  --cal-ghost-text: #ffffff;
+  --cal-popover-bg: #1a1a1a;
+  --cal-popover-border: rgba(255, 255, 255, 0.12);
+  --cal-popover-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  --cal-popover-blur: none;
+
+  /* Search, Chip & Autocomplete Tokens */
+  --cal-highlight-bg: rgba(245, 158, 11, 0.35);
+  --cal-highlight-text: #ffffff;
+  --cal-chip-bg: rgba(255, 255, 255, 0.08);
+  --cal-chip-border: rgba(255, 255, 255, 0.15);
+  --cal-chip-text: var(--cal-text-primary);
+  --cal-dropdown-bg: #1e1e1e;
+  --cal-dropdown-border: rgba(255, 255, 255, 0.15);
+  --cal-dropdown-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  --cal-dropdown-hover: rgba(255, 255, 255, 0.08);
 }
 
 /* Theme Adaptation: Apple Liquid Glass */
@@ -49,6 +69,12 @@
   --cal-today-accent: #38bdf8;
   --cal-active-week-bg: rgba(56, 189, 248, 0.16);
   --cal-hover-bg: rgba(255, 255, 255, 0.08);
+  --cal-highlight-bg: rgba(56, 189, 248, 0.35);
+  --cal-chip-bg: rgba(255, 255, 255, 0.1);
+  --cal-chip-border: rgba(255, 255, 255, 0.2);
+  --cal-dropdown-bg: rgba(20, 30, 50, 0.95);
+  --cal-dropdown-border: rgba(255, 255, 255, 0.18);
+  --cal-dropdown-hover: rgba(255, 255, 255, 0.12);
 }
 
 /* Theme Adaptation: Business Noir & Electric Amber */
@@ -63,6 +89,12 @@
   --cal-today-accent: #f59e0b;
   --cal-active-week-bg: rgba(245, 158, 11, 0.14);
   --cal-hover-bg: rgba(245, 158, 11, 0.06);
+  --cal-highlight-bg: rgba(245, 158, 11, 0.4);
+  --cal-chip-bg: rgba(245, 158, 11, 0.12);
+  --cal-chip-border: rgba(245, 158, 11, 0.25);
+  --cal-dropdown-bg: #14161f;
+  --cal-dropdown-border: rgba(245, 158, 11, 0.25);
+  --cal-dropdown-hover: rgba(245, 158, 11, 0.15);
 }
 
 /* Theme Adaptation: Linear Obsidian Pro */
@@ -74,6 +106,12 @@
   --cal-border: rgba(255, 255, 255, 0.08);
   --cal-today-accent: #6366f1;
   --cal-active-week-bg: rgba(99, 102, 241, 0.15);
+  --cal-highlight-bg: rgba(99, 102, 241, 0.35);
+  --cal-chip-bg: rgba(255, 255, 255, 0.06);
+  --cal-chip-border: rgba(255, 255, 255, 0.12);
+  --cal-dropdown-bg: #181818;
+  --cal-dropdown-border: rgba(255, 255, 255, 0.12);
+  --cal-dropdown-hover: rgba(255, 255, 255, 0.08);
 }
 
 /* ==========================================================================
@@ -591,16 +629,23 @@
    ========================================================================== */
 .cal-main-area {
   flex: 1;
+  max-width: none !important;
+  width: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--cal-bg-canvas);
   overflow: hidden;
   position: relative;
+  box-sizing: border-box;
 }
 
 /* 4.1 Top Workspace Toolbar (.cal-toolbar, height: 52px) */
 .cal-toolbar {
+  margin: 0 !important;
+  box-shadow: none !important;
   height: 52px;
   min-height: 52px;
   background: var(--cal-bg-toolbar);
@@ -956,16 +1001,24 @@
 .cal-time-axis {
   width: 56px;
   min-width: 56px;
-  border-right: 1px solid var(--cal-grid-line);
+  max-width: 56px;
+  height: 1440px;
+  min-height: 1440px;
+  flex-shrink: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   position: relative;
   background: var(--cal-bg-toolbar);
   user-select: none;
+  border-right: 1px solid var(--cal-grid-line);
 }
 
 .cal-axis-hour {
   height: 60px;
+  min-height: 60px;
+  max-height: 60px;
+  flex-shrink: 0;
   box-sizing: border-box;
   font-size: 11px;
   color: var(--cal-text-dim);
@@ -974,18 +1027,28 @@
   transform: translateY(-8px);
 }
 
+.cal-axis-hour:first-child {
+  transform: translateY(2px);
+}
+
 .cal-grid-columns {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   position: relative;
-  min-height: 1440px; /* 24h * 60px */
+  height: 1440px;
+  min-height: 1440px;
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .cal-day-col {
   border-right: 1px solid var(--cal-grid-line);
   position: relative;
-  height: 100%;
+  height: 1440px;
+  min-height: 1440px;
+  box-sizing: border-box;
+  user-select: none;
 }
 
 .cal-day-col:last-child {
@@ -1651,4 +1714,502 @@
   background: rgba(239, 68, 68, 0.15);
   color: #f87171;
   border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* ==========================================================================
+   7. DRAG-TO-CREATE GHOST SELECTION & CONTEXT-ANCHORED CREATION POPOVER
+   Contract: calendar_drag_create_contract.md
+   ========================================================================== */
+.cal-drag-ghost {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  background: var(--cal-ghost-bg, rgba(59, 130, 246, 0.25));
+  border: 1.5px dashed var(--cal-ghost-border, #3b82f6);
+  border-radius: 6px;
+  color: var(--cal-ghost-text, #ffffff);
+  padding: 4px 6px;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.cal-drag-ghost-time {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.cal-drag-ghost-hint {
+  font-size: 9.5px;
+  opacity: 0.85;
+  margin-top: 2px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* Floating Anchored Creation Popover (#cal-drag-create-popover) */
+#cal-drag-create-popover {
+  position: fixed;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  background: var(--cal-popover-bg, #1a1a1a);
+  border: 1px solid var(--cal-popover-border, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: var(--cal-popover-shadow, 0 16px 36px rgba(0, 0, 0, 0.5));
+  backdrop-filter: var(--cal-popover-blur, none);
+  -webkit-backdrop-filter: var(--cal-popover-blur, none);
+  z-index: 1050;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: auto;
+  transition: opacity 0.12s ease;
+}
+
+#cal-drag-create-popover[data-placement="right"] {
+  /* Directional cue: right placement */
+}
+
+#cal-drag-create-popover[data-placement="left"] {
+  /* Directional cue: left placement */
+}
+
+.cal-drag-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cal-drag-popover-badge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-drag-date-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cal-today-accent, #3b82f6);
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.cal-drag-popover-hint {
+  font-size: 11px;
+  color: var(--cal-text-muted);
+}
+
+.cal-drag-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--cal-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-drag-close-btn:hover {
+  color: var(--cal-text-primary);
+  background: var(--cal-hover-bg);
+}
+
+.cal-drag-close-btn svg,
+.cal-drag-close-btn i {
+  width: 16px;
+  height: 16px;
+}
+
+#cal-drag-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cal-drag-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cal-drag-input,
+.cal-drag-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--cal-border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--cal-text-primary);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cal-drag-title-input {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cal-drag-input:focus,
+.cal-drag-textarea:focus {
+  border-color: var(--cal-today-accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.cal-drag-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-drag-time-row input[type="date"] {
+  flex: 1.25;
+}
+
+.cal-drag-time-row input[type="time"] {
+  flex: 1;
+}
+
+.cal-drag-time-sep {
+  color: var(--cal-text-muted);
+  font-weight: 600;
+}
+
+.cal-drag-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--cal-text-muted);
+}
+
+.cal-drag-participants-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.cal-drag-emp-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--cal-text-secondary);
+  cursor: pointer;
+}
+
+.cal-drag-emp-check input[type="checkbox"] {
+  accent-color: var(--cal-today-accent);
+  cursor: pointer;
+}
+
+.cal-drag-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ==========================================================================
+   SMART EMPLOYEE SEARCH, CHIPS & AUTOCOMPLETE DROPDOWN
+   Contract: employee_search_contract.md
+   ========================================================================== */
+
+/* Search Highlight Mark */
+mark.cal-search-highlight {
+  background: var(--cal-highlight-bg, rgba(245, 158, 11, 0.35));
+  color: var(--cal-highlight-text, inherit);
+  border-radius: 2px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+/* Selected Chips Container */
+.cal-selected-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+  min-height: 24px;
+}
+
+.cal-selected-chips:empty {
+  display: none;
+}
+
+/* Employee Chip */
+.cal-emp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 9px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--cal-chip-bg, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--cal-chip-border, rgba(255, 255, 255, 0.15));
+  color: var(--cal-chip-text, var(--cal-text-primary));
+  user-select: none;
+  animation: calChipFadeIn 0.15s ease-out;
+}
+
+@keyframes calChipFadeIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.cal-emp-chip-text {
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Chip Remove Button */
+.cal-emp-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  margin-left: 2px;
+  border: none;
+  background: transparent;
+  color: var(--cal-text-muted);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.cal-emp-chip-remove:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--cal-text-primary);
+}
+
+.cal-emp-chip-remove svg,
+.cal-emp-chip-remove i {
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+/* Search Wrapper & Box */
+.cal-emp-search-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.cal-emp-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.cal-emp-search-box input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 28px 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 6px;
+  border: 1px solid var(--cal-border);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--cal-text-primary);
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.cal-emp-search-box input::placeholder {
+  color: var(--cal-text-muted);
+  font-size: 11.5px;
+}
+
+.cal-emp-search-box input:focus {
+  border-color: var(--cal-today-accent);
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+/* Inline Clear Button */
+.cal-search-clear-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--cal-text-muted);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.cal-search-clear-btn:hover {
+  color: var(--cal-text-primary);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.cal-search-clear-btn svg,
+.cal-search-clear-btn i {
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+/* Autocomplete Dropdown */
+.cal-emp-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 210px;
+  overflow-y: auto;
+  background: var(--cal-dropdown-bg, #1a1a1a);
+  border: 1px solid var(--cal-dropdown-border, rgba(255, 255, 255, 0.15));
+  border-radius: 7px;
+  box-shadow: var(--cal-dropdown-shadow, 0 12px 28px rgba(0, 0, 0, 0.5));
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Dropdown Item */
+.cal-emp-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--cal-border);
+  transition: background 0.12s ease;
+  user-select: none;
+}
+
+.cal-emp-dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.cal-emp-dropdown-item:hover,
+.cal-emp-dropdown-item.active {
+  background: var(--cal-dropdown-hover, rgba(255, 255, 255, 0.08));
+}
+
+.cal-emp-dropdown-item.selected {
+  background: var(--cal-active-week-bg, rgba(59, 130, 246, 0.15));
+}
+
+.cal-emp-dropdown-item.selected:hover,
+.cal-emp-dropdown-item.selected.active {
+  background: var(--cal-active-week-bg, rgba(59, 130, 246, 0.25));
+}
+
+.cal-emp-dropdown-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--cal-text-muted);
+  font-size: 11.5px;
+}
+
+.cal-emp-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cal-emp-item-fio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cal-text-primary);
+}
+
+.cal-emp-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-emp-item-role {
+  font-size: 10.5px;
+  color: var(--cal-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 14px;
+}
+
+.cal-emp-check-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cal-today-accent);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.cal-emp-check-icon svg,
+.cal-emp-check-icon i {
+  width: 14px;
+  height: 14px;
+}
+
+/* Sidebar Employee Search & List */
+.cal-sidebar-search-box {
+  margin: 4px 8px 6px 8px;
+  width: calc(100% - 16px);
+}
+
+.cal-sidebar-search-box input {
+  padding: 5px 24px 5px 8px;
+  font-size: 11.5px;
+}
+
+.cal-sidebar-emp-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.cal-sidebar-empty {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--cal-text-muted);
+  text-align: center;
+}
+
+.cal-emp-sidebar-name {
+  font-size: 12px;
+  color: var(--cal-text-primary);
 }

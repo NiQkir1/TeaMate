@@ -37,7 +37,6 @@ desktop.ini
 # Локальные портативные бинарники Tsukiko и архивы
 tools/tsukiko/
 *.zip
-.memory_bank/
 
 # Whisper models
 models/*.bin
