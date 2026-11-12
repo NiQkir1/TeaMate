@@ -68,6 +68,7 @@ public interface IFotoprintRepository
         CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
     Task<List<Meeting>> GetUpcomingMeetingsAsync(int timeWindowMinutes = 30, CancellationToken ct = default);
     Task<List<Meeting>> GetMeetingsForRangeAsync(DateTime fromUtc, DateTime toUtc, int? employeeId = null, CancellationToken ct = default) => Task.FromResult(new List<Meeting>());
+    Task<List<ActionItem>> GetActionItemsForRangeAsync(DateTime fromUtc, DateTime toUtc, int? employeeId = null, CancellationToken ct = default) => Task.FromResult(new List<ActionItem>());
     Task<List<TimeSlot>> FindFreeSlotsAsync(
         int organizerId,
         List<int> participantIds,
@@ -1254,6 +1255,46 @@ public class FotoprintRepository : IFotoprintRepository, IDisposable, IAsyncDisp
         }, cancellationToken: ct));
 
         return meetings.ToList();
+    }
+
+    public async Task<List<ActionItem>> GetActionItemsForRangeAsync(
+        DateTime fromUtc,
+        DateTime toUtc,
+        int? employeeId = null,
+        CancellationToken ct = default)
+    {
+        await using var conn = await CreateConnectionAsync(ct);
+        var sql = """
+            SELECT
+                id AS Id,
+                meeting_id AS MeetingId,
+                protocol_id AS ProtocolId,
+                title AS Title,
+                description AS Description,
+                responsible_id AS ResponsibleId,
+                deadline AS Deadline,
+                status AS Status,
+                bitrix24_task_id AS Bitrix24TaskId,
+                created_at AS CreatedAt,
+                updated_at AS UpdatedAt
+            FROM action_items
+            WHERE status != 'cancelled'
+              AND (
+                (deadline IS NOT NULL AND deadline >= @FromUtc AND deadline <= @ToUtc)
+                OR (deadline IS NULL AND created_at >= @FromUtc AND created_at <= @ToUtc)
+              )
+        """;
+
+        if (employeeId.HasValue)
+        {
+            sql += "\n  AND responsible_id = @EmployeeId";
+        }
+
+        sql += "\nORDER BY deadline ASC NULLS LAST, created_at ASC;";
+
+        var items = await conn.QueryAsync<ActionItem>(
+            new CommandDefinition(sql, new { FromUtc = fromUtc, ToUtc = toUtc, EmployeeId = employeeId }, cancellationToken: ct));
+        return items.ToList();
     }
 
     public static List<TimeSlot> CalculateFreeSlots(

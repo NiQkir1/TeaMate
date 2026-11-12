@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fotoprint AI Copilot — Корпоративный AI-ассистент</title>
+  <link rel="stylesheet" href="themes/theme-core.css">
   <link id="app-theme-link" rel="stylesheet" href="themes/theme-liquid-glass.css">
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -67,7 +68,7 @@
         <i data-lucide="activity"></i>
         <span>Langfuse</span>
       </a>
-      <a href="/api/system/stats" target="_blank" rel="noopener noreferrer" class="nav-btn" title="Метрики системы">
+      <a href="/api/system/stats" id="metrics-nav-btn" onclick="openMetricsDashboard(event)" target="_blank" rel="noopener noreferrer" class="nav-btn" title="Управленческий дашборд и метрики системы">
         <i data-lucide="gauge"></i>
         <span>Метрики</span>
       </a>
@@ -165,59 +166,565 @@
     </div>
   </main>
 
-  <!-- Slide-Over Calendar Drawer & Frosted Backdrop -->
-  <div id="drawer-backdrop" class="drawer-backdrop" onclick="toggleCalendarDrawer(false)"></div>
-  <aside id="calendar-drawer" class="calendar-drawer" aria-label="Календарь встреч">
-    <div class="drawer-header">
-      <div class="drawer-title">
-        <i data-lucide="calendar"></i>
-        <span>Календарь встреч</span>
+  <!-- Standalone TickTick 3-Column Calendar Window Workspace (#calendar-window-view) -->
+  <div id="calendar-window-view" class="cal-window-view" style="display: none;">
+
+    <!-- COLUMN 1: Far-Left Icon Rail (.cal-nav-rail, 48px width) -->
+    <nav class="cal-nav-rail" aria-label="Навигационная панель календаря">
+      <div class="cal-rail-top">
+        <!-- User Avatar Tile with Crown for Director -->
+        <div class="cal-rail-avatar-wrapper" title="Текущий пользователь">
+          <div id="cal-user-avatar" class="cal-rail-avatar" onclick="focusUserSwitcher()">
+            <span id="cal-avatar-letter">А</span>
+            <span id="cal-crown-badge" class="cal-crown-badge" title="Генеральный директор"><i data-lucide="crown"></i></span>
+          </div>
+        </div>
+
+        <!-- Primary Navigation Icons -->
+        <button type="button" id="rail-btn-chat" class="cal-rail-btn" onclick="toggleCalendarDrawer(false)" title="Вернуться в чат с AI Copilot">
+          <i data-lucide="message-square"></i>
+        </button>
+        <button type="button" id="rail-btn-tasks" class="cal-rail-btn" onclick="toggleTaskFilter()" title="Фильтр: Задачи Битрикс24">
+          <i data-lucide="check-square"></i>
+        </button>
+        <button type="button" id="rail-btn-calendar" class="cal-rail-btn active" title="Календарь (Активный вид)">
+          <i data-lucide="calendar"></i>
+        </button>
+        <button type="button" id="rail-btn-matrix" class="cal-rail-btn" onclick="toggleDepartmentMatrix()" title="Матрица отделов и сотрудников">
+          <i data-lucide="layout-grid"></i>
+        </button>
+        <button type="button" id="rail-btn-clock" class="cal-rail-btn" onclick="goToToday()" title="Перейти к текущему времени (Сейчас)">
+          <i data-lucide="clock"></i>
+        </button>
+        <button type="button" id="rail-btn-search" class="cal-rail-btn" onclick="focusQuickSearch()" title="Быстрый поиск встреч и задач">
+          <i data-lucide="search"></i>
+        </button>
       </div>
-      <button type="button" class="drawer-close-btn" onclick="toggleCalendarDrawer(false)" aria-label="Закрыть календарь">
-        <i data-lucide="x"></i>
-      </button>
-    </div>
 
-    <!-- RBAC Calendar Scope Bar -->
-    <div class="calendar-scope-bar">
-      <button type="button" id="scope-my-btn" class="scope-btn active" onclick="setCalendarScope('my')">
-        <i data-lucide="user"></i>
-        <span>Мои встречи</span>
-      </button>
-      <button type="button" id="scope-all-btn" class="scope-btn" onclick="setCalendarScope('all')" title="Доступно только генеральному директору">
-        <i data-lucide="building"></i>
-        <span>Вся компания</span>
-        <span class="lock-icon" id="scope-lock-icon"><i data-lucide="lock"></i></span>
-      </button>
-    </div>
+      <!-- Bottom Utility Icons -->
+      <div class="cal-rail-bottom">
+        <button type="button" id="rail-btn-sync" class="cal-rail-btn" onclick="refreshCalendarEvents()" title="Синхронизировать события">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+        <button type="button" id="rail-btn-bell" class="cal-rail-btn" onclick="toggleNotificationPane()" title="Уведомления">
+          <i data-lucide="bell"></i>
+        </button>
+        <button type="button" id="rail-btn-help" class="cal-rail-btn" onclick="openCalendarHelp()" title="Справка и легенда">
+          <i data-lucide="help-circle"></i>
+        </button>
+      </div>
+    </nav>
 
-    <!-- Month Navigation -->
-    <div class="month-navigation">
-      <button type="button" class="nav-arrow" onclick="changeMonth(-1)" aria-label="Предыдущий месяц">
-        <i data-lucide="chevron-left"></i>
-      </button>
-      <span id="current-month-label" class="month-label">Ноябрь 2026</span>
-      <button type="button" class="nav-arrow" onclick="changeMonth(1)" aria-label="Следующий месяц">
-        <i data-lucide="chevron-right"></i>
-      </button>
-    </div>
+    <!-- COLUMN 2: Left Sidebar Panel (.cal-sidebar, 236px width, collapsible) -->
+    <aside id="cal-sidebar" class="cal-sidebar" aria-label="Панель фильтров и мини-календарь">
 
-    <!-- Calendar Grid Headers & Days Grid -->
-    <div class="calendar-grid-header">
-      <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
-    </div>
-    <div id="calendar-days-grid" class="calendar-days-grid"></div>
+      <!-- Mini Month Calendar (.cal-mini-month) -->
+      <div class="cal-mini-month">
+        <div class="cal-mini-month-header">
+          <span id="mini-month-label" class="cal-mini-month-title">Ноябрь 2026</span>
+          <div class="cal-mini-nav">
+            <button type="button" id="mini-prev-month" class="cal-mini-nav-btn" onclick="changeMiniMonth(-1)" title="Предыдущий месяц">
+              <i data-lucide="chevron-left"></i>
+            </button>
+            <button type="button" id="mini-today-dot" class="cal-mini-nav-btn cal-mini-today-btn" onclick="goToToday()" title="К сегодняшнему дню">
+              <i data-lucide="circle"></i>
+            </button>
+            <button type="button" id="mini-next-month" class="cal-mini-nav-btn" onclick="changeMiniMonth(1)" title="Следующий месяц">
+              <i data-lucide="chevron-right"></i>
+            </button>
+          </div>
+        </div>
 
-    <!-- Day Details Panel -->
-    <div class="day-details-panel">
-      <div id="selected-day-title" class="day-title">
+        <!-- Weekday Headers -->
+        <div class="cal-mini-weekdays">
+          <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+        </div>
+
+        <!-- 42-cell compact grid (#mini-month-grid / #calendar-days-grid) -->
+        <div id="calendar-days-grid" class="cal-mini-grid"></div>
+      </div>
+
+      <!-- Interactive Filter Sections (.cal-sidebar-filters) -->
+      <div class="cal-sidebar-filters">
+
+        <!-- Master 'All' Toggle Row -->
+        <div class="cal-master-row" onclick="handleMasterRowClick(event)">
+          <span class="cal-master-title">Все записи</span>
+          <label class="cal-checkbox-label" title="Включить / отключить все">
+            <input type="checkbox" id="filter-all" class="cal-checkbox" checked onchange="toggleAllFilters(this.checked)">
+            <span class="cal-custom-check"></span>
+          </label>
+        </div>
+
+        <!-- Section 1: Lists / Календари и отделы -->
+        <div class="cal-filter-section">
+          <div class="cal-section-header">Календари и отделы</div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('list', 'production', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #3b82f6;"><i data-lucide="printer"></i></span>
+              <span>Производство (Цех)</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-list="production" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('list', 'sales', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #10b981;"><i data-lucide="briefcase"></i></span>
+              <span>Продажи и клиенты</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-list="sales" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('list', 'accounting', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #f59e0b;"><i data-lucide="calculator"></i></span>
+              <span>Бухгалтерия</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-list="accounting" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('list', 'management', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #ec4899;"><i data-lucide="award"></i></span>
+              <span>Руководство</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-list="management" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('list', 'tasks', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #6366f1;"><i data-lucide="check-square"></i></span>
+              <span>Задачи Битрикс24</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-list="tasks" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('list', 'routine', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #d97706;"><i data-lucide="repeat"></i></span>
+              <span>Регулярные / Смены</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-list="routine" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section 2: Employees / Кто занят -->
+        <div class="cal-filter-section">
+          <div class="cal-section-header">Сотрудники (Кто занят)</div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '1', event)">
+            <div class="cal-filter-left">
+              <span class="cal-busy-dot dot-busy" title="Занят (планерки)"></span>
+              <span>Смирнов А.С.</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-employee="1" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '2', event)">
+            <div class="cal-filter-left">
+              <span class="cal-busy-dot dot-busy" title="Занят (производство)"></span>
+              <span>Кузнецов И.П.</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-employee="2" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '3', event)">
+            <div class="cal-filter-left">
+              <span class="cal-busy-dot dot-busy" title="Занята (клиенты)"></span>
+              <span>Морозова Е.А.</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-employee="3" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('employee', '4', event)">
+            <div class="cal-filter-left">
+              <span class="cal-busy-dot dot-free" title="Свободна"></span>
+              <span>Соколова О.В.</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-employee="4" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section 3: Tag / Теги и проекты -->
+        <div class="cal-filter-section">
+          <div class="cal-section-header">Теги</div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('tag', 'заказ-44102', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #ef4444;"><i data-lucide="tag"></i></span>
+              <span>#заказ-44102</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-tag="заказ-44102" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('tag', 'heidelberg', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #3b82f6;"><i data-lucide="tag"></i></span>
+              <span>#heidelberg</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-tag="heidelberg" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('tag', 'альфа-маркет', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #10b981;"><i data-lucide="tag"></i></span>
+              <span>#альфа-маркет</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-tag="альфа-маркет" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('tag', 'планерка', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #8b5cf6;"><i data-lucide="tag"></i></span>
+              <span>#планерка</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-tag="планерка" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+
+          <div class="cal-filter-item" onclick="toggleFilterItem('tag', 'битрикс24', event)">
+            <div class="cal-filter-left">
+              <span class="cal-filter-icon" style="color: #06b6d4;"><i data-lucide="tag"></i></span>
+              <span>#битрикс24</span>
+            </div>
+            <label class="cal-checkbox-label">
+              <input type="checkbox" class="cal-checkbox" data-filter-tag="битрикс24" checked onchange="onCalendarFilterChange()">
+              <span class="cal-custom-check"></span>
+            </label>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- COLUMN 3: Main Time-Grid Workspace (.cal-main-area, flex: 1) -->
+    <main class="cal-main-area">
+
+      <!-- Top Workspace Toolbar (.cal-toolbar, height: 52px) -->
+      <header class="cal-toolbar">
+        <div class="cal-toolbar-left">
+          <!-- Sidebar Toggle Button -->
+          <button type="button" id="cal-sidebar-toggle" class="cal-tb-btn" onclick="toggleCalSidebar()" title="Скрыть / показать боковую панель">
+            <i data-lucide="panel-left"></i>
+          </button>
+
+          <!-- Bold Month Title -->
+          <h2 id="current-month-label" class="cal-current-month">Ноябрь 2026</h2>
+
+          <!-- RBAC Scope Toggle Pill -->
+          <div class="cal-scope-toggle">
+            <button type="button" id="scope-my-btn" class="cal-scope-pill active" onclick="setCalendarScope('my')">
+              <i data-lucide="user"></i>
+              <span>Мои встречи</span>
+            </button>
+            <button type="button" id="scope-all-btn" class="cal-scope-pill" onclick="setCalendarScope('all')" title="Доступно только генеральному директору">
+              <i data-lucide="building"></i>
+              <span>Вся компания</span>
+              <span class="lock-icon" id="scope-lock-icon"><i data-lucide="lock"></i></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Center: Live Time Clock Badge -->
+        <div class="cal-toolbar-center">
+          <div id="cal-top-clock" class="cal-clock-badge" title="Текущее московское время">
+            <span class="cal-clock-dot"></span>
+            <span class="cal-clock-text">11:08</span>
+          </div>
+        </div>
+
+        <!-- Right Controls -->
+        <div class="cal-toolbar-right">
+          <!-- Quick Add Button -->
+          <button type="button" id="cal-add-btn" class="cal-tb-btn cal-add-event-btn" onclick="openQuickAddModal()" title="Добавить встречу или задачу">
+            <i data-lucide="plus"></i>
+            <span>Добавить</span>
+          </button>
+
+          <!-- View Mode Selector -->
+          <select id="cal-view-select" class="cal-view-dropdown" onchange="changeCalendarView(this.value)" title="Режим отображения сетки">
+            <option value="week" selected>Неделя</option>
+            <option value="3days">3 дня</option>
+            <option value="day">День</option>
+          </select>
+
+          <!-- Navigation Group -->
+          <div class="cal-nav-group">
+            <button type="button" id="cal-prev-btn" class="cal-tb-btn" onclick="changeWeek(-1)" title="Предыдущая неделя">
+              <i data-lucide="chevron-left"></i>
+            </button>
+            <button type="button" id="cal-today-btn" class="cal-tb-btn cal-today-btn" onclick="goToToday()" title="Перейти к сегодняшнему дню">
+              Сегодня
+            </button>
+            <button type="button" id="cal-next-btn" class="cal-tb-btn" onclick="changeWeek(1)" title="Следующая неделя">
+              <i data-lucide="chevron-right"></i>
+            </button>
+          </div>
+
+          <!-- Close / Back to Chat Button -->
+          <button type="button" id="cal-close-btn" class="cal-tb-btn cal-close-window-btn" onclick="toggleCalendarDrawer(false)" title="Вернуться в чат ассистента">
+            <i data-lucide="x"></i>
+            <span>Чат</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Time-Grid Workspace Body (Header, All-Day Strip, 24-Hour Scroll Grid) -->
+      <div id="cal-workspace-body" class="cal-workspace-body">
+
+        <!-- Multi-Day Header (.cal-week-header) -->
+        <div class="cal-week-header">
+          <div class="cal-week-gutter-header">
+            <span id="cal-week-number">W46</span>
+          </div>
+          <div id="cal-week-columns-header" class="cal-week-columns-header">
+            <!-- Populated dynamically: 7 day header columns -->
+          </div>
+        </div>
+
+        <!-- All-Day & Pinned Tasks Container (.cal-allday-strip) -->
+        <div class="cal-allday-strip">
+          <div class="cal-allday-gutter">
+            <span>Весь день</span>
+          </div>
+          <div id="cal-allday-cells-container" class="cal-allday-cells-container">
+            <!-- Populated dynamically with all-day and routine tasks -->
+          </div>
+        </div>
+
+        <!-- Scrollable 24-Hour Vertical Time-Grid (.cal-timegrid-scroll) -->
+        <div id="cal-timegrid-scroll" class="cal-timegrid-scroll">
+
+          <!-- Left Time Axis (56px width) -->
+          <div class="cal-time-axis" id="cal-time-axis">
+            <!-- 24 hourly marks (00:00 - 23:00) -->
+          </div>
+
+          <!-- 7 Day Columns Grid -->
+          <div class="cal-grid-columns" id="cal-grid-columns">
+            <!-- Populated dynamically with 7 day columns and timed event blocks -->
+          </div>
+
+          <!-- Current Time Indicator Red Line -->
+          <div id="cal-now-line-wrapper" class="cal-now-line-wrapper">
+            <div class="cal-now-pill" id="cal-now-time-pill">11:08</div>
+            <div class="cal-now-dot" id="cal-now-dot"></div>
+            <div class="cal-now-line" id="cal-now-line"></div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Floating Event Inspector Popover (#cal-event-popover) -->
+  <div id="cal-event-popover" class="cal-popover" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="popover-title">
+    <div class="cal-popover-backdrop" onclick="closeEventPopover()"></div>
+    <div class="cal-popover-card">
+      <div class="cal-popover-header">
+        <div class="cal-popover-badges">
+          <span id="popover-category-badge" class="cal-badge-cat">Производство</span>
+          <span id="popover-status-badge" class="cal-badge-status status-scheduled">Запланировано</span>
+        </div>
+        <button type="button" class="cal-popover-close" onclick="closeEventPopover()" title="Закрыть">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <h3 id="popover-title" class="cal-popover-title">Название события</h3>
+      <div class="cal-popover-time-row">
         <i data-lucide="clock"></i>
-        <span>Встречи на выбранный день:</span>
+        <span id="popover-time">Чт, 12 ноя 10:05 - 11:30</span>
       </div>
-      <div id="day-meetings-list" class="meetings-list">
-        <div class="no-meetings">Загрузка встреч...</div>
+      <div id="popover-desc-row" class="cal-popover-desc" style="display: none;">
+        <p id="popover-desc"></p>
+      </div>
+
+      <!-- WHO IS BUSY / Кто занят -->
+      <div class="cal-popover-busy-section">
+        <div class="cal-popover-section-label">
+          <i data-lucide="users"></i>
+          <span>Занятость сотрудников</span>
+        </div>
+        <div id="popover-busy-list" class="cal-popover-busy-list">
+          <!-- Dynamic list of participants & organizer -->
+        </div>
+      </div>
+
+      <!-- Tags -->
+      <div id="popover-tags-row" class="cal-popover-tags" style="display: none;">
+        <!-- Dynamic tags -->
+      </div>
+
+      <!-- Popover Actions -->
+      <div class="cal-popover-actions">
+        <button type="button" id="popover-toggle-status-btn" class="cal-btn-sec" onclick="togglePopoverEventStatus()">
+          <i data-lucide="check"></i>
+          <span id="popover-toggle-status-text">Отметить выполненным</span>
+        </button>
+        <button type="button" id="popover-mom-btn" class="cal-btn-primary" onclick="downloadPopoverMoM()">
+          <i data-lucide="file-text"></i>
+          <span>Протокол MoM (.docx)</span>
+        </button>
       </div>
     </div>
+  </div>
+
+  <!-- Quick Schedule Meeting / Task Modal (#cal-quick-modal) -->
+  <div id="cal-quick-modal" class="cal-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modal-quick-title">
+    <div class="cal-modal-backdrop" onclick="closeQuickAddModal()"></div>
+    <div class="cal-modal-content">
+      <div class="cal-modal-header">
+        <div class="cal-modal-title-wrap">
+          <i data-lucide="calendar-plus" class="cal-modal-title-icon"></i>
+          <h3 id="modal-quick-title" class="cal-modal-title">Запланировать встречу или задачу</h3>
+        </div>
+        <button type="button" class="cal-modal-close" onclick="closeQuickAddModal()" title="Закрыть">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <form id="cal-quick-form" onsubmit="submitQuickSchedule(event)">
+        <div class="cal-form-group">
+          <label for="quick-title" class="cal-form-label">Название *</label>
+          <input type="text" id="quick-title" class="cal-form-input" placeholder="Например: Оперативка производства или Проверка валов" required>
+        </div>
+
+        <div class="cal-form-row">
+          <div class="cal-form-group cal-form-half">
+            <label for="quick-type" class="cal-form-label">Тип</label>
+            <select id="quick-type" class="cal-form-select">
+              <option value="meeting" selected>Встреча / Совещание</option>
+              <option value="task">Задача Битрикс24</option>
+              <option value="routine">Регулярная смена</option>
+            </select>
+          </div>
+          <div class="cal-form-group cal-form-half">
+            <label for="quick-category" class="cal-form-label">Календарь / Отдел</label>
+            <select id="quick-category" class="cal-form-select">
+              <option value="production" selected>Производство (Цех)</option>
+              <option value="sales">Продажи и клиенты</option>
+              <option value="accounting">Бухгалтерия</option>
+              <option value="management">Руководство</option>
+              <option value="tasks">Задачи Битрикс24</option>
+              <option value="routine">Регулярные / Смены</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="cal-form-row">
+          <div class="cal-form-group cal-form-half">
+            <label for="quick-date" class="cal-form-label">Дата</label>
+            <input type="date" id="quick-date" class="cal-form-input" required>
+          </div>
+          <div class="cal-form-group cal-form-half">
+            <label for="quick-time" class="cal-form-label">Время начала</label>
+            <input type="time" id="quick-time" class="cal-form-input" required>
+          </div>
+        </div>
+
+        <div class="cal-form-group">
+          <label class="cal-form-label">Длительность</label>
+          <div class="cal-duration-pills">
+            <button type="button" class="cal-duration-pill" onclick="setQuickDuration(15)">15 мин</button>
+            <button type="button" class="cal-duration-pill active" onclick="setQuickDuration(30)">30 мин</button>
+            <button type="button" class="cal-duration-pill" onclick="setQuickDuration(45)">45 мин</button>
+            <button type="button" class="cal-duration-pill" onclick="setQuickDuration(60)">60 мин</button>
+            <button type="button" class="cal-duration-pill" onclick="setQuickDuration(90)">90 мин</button>
+          </div>
+          <input type="hidden" id="quick-duration" value="30">
+        </div>
+
+        <div class="cal-form-group">
+          <label class="cal-form-label">Участники (Кто будет занят)</label>
+          <div class="cal-participants-checkboxes">
+            <label class="cal-participant-check">
+              <input type="checkbox" name="quick-emp" value="1" checked>
+              <span class="cal-emp-badge">Смирнов А.С. (CEO)</span>
+            </label>
+            <label class="cal-participant-check">
+              <input type="checkbox" name="quick-emp" value="2" checked>
+              <span class="cal-emp-badge">Кузнецов И.П. (Цех)</span>
+            </label>
+            <label class="cal-participant-check">
+              <input type="checkbox" name="quick-emp" value="3">
+              <span class="cal-emp-badge">Морозова Е.А. (Продажи)</span>
+            </label>
+            <label class="cal-participant-check">
+              <input type="checkbox" name="quick-emp" value="4">
+              <span class="cal-emp-badge">Соколова О.В. (Бухг.)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="cal-form-group">
+          <label for="quick-desc" class="cal-form-label">Повестка / Описание</label>
+          <textarea id="quick-desc" class="cal-form-textarea" rows="2" placeholder="Краткое описание вопросов для обсуждения..."></textarea>
+        </div>
+
+        <div class="cal-form-group">
+          <label for="quick-tags" class="cal-form-label">Теги (через запятую)</label>
+          <input type="text" id="quick-tags" class="cal-form-input" placeholder="heidelberg, заказ-44102">
+        </div>
+
+        <div id="quick-submit-msg" class="cal-modal-msg" style="display: none;"></div>
+
+        <div class="cal-modal-actions">
+          <button type="button" class="cal-btn-sec" onclick="closeQuickAddModal()">Отмена</button>
+          <button type="submit" id="quick-submit-btn" class="cal-btn-primary">
+            <i data-lucide="check"></i>
+            <span>Запланировать</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <aside id="calendar-drawer" class="calendar-drawer" style="display: none;" aria-hidden="true">
+    <div id="drawer-backdrop" class="drawer-backdrop" style="display: none;"></div>
+    <div id="selected-day-title" class="day-title" style="display: none;"></div>
+    <div id="day-meetings-list" class="meetings-list" style="display: none;"></div>
   </aside>
 
   <!-- Client-side Application Script -->
@@ -255,8 +762,10 @@
     // Calendar state
     let currentCalendarDate = new Date(2026, 10, 12); // Default: November 12, 2026
     let selectedCalendarDate = new Date(2026, 10, 12);
+    let currentWeekStart = new Date(2026, 10, 12); // Reference week starts Thu 12 Nov 2026
     let currentCalendarScope = 'my';
     let cachedCalendarEvents = [];
+    let currentActivePopoverEvent = null;
 
     // Helper: Escape HTML strings to prevent XSS
     function escapeHtml(str) {
@@ -346,6 +855,7 @@
       if (!exists) currentTelegramId = availableUsers[0].telegram_id;
       userSelect.value = String(currentTelegramId);
       updateRoleBadge(getCurrentUser());
+      updateAvatarBadge(getCurrentUser());
     }
 
     async function loadUsers() {
@@ -367,6 +877,7 @@
       localStorage.setItem('fotoprint_telegram_id', String(currentTelegramId));
       const user = getCurrentUser();
       updateRoleBadge(user);
+      updateAvatarBadge(user);
 
       const notice = document.createElement('div');
       notice.className = 'system-notice';
@@ -377,6 +888,17 @@
       chatWindow.scrollTop = chatWindow.scrollHeight;
 
       refreshCalendarEvents();
+    }
+
+    function openMetricsDashboard(event) {
+      if (event) event.preventDefault();
+      const user = getCurrentUser();
+      const role = (user.roles && user.roles[0]) ? user.roles[0] : 'Director';
+      localStorage.setItem('picpac.role', role);
+      localStorage.setItem('picpac.session', `${role.toLowerCase()}@fotoprint.by`);
+      localStorage.setItem('fotoprint_telegram_id', String(currentTelegramId));
+      const targetUrl = `/dashboard/?telegram_id=${encodeURIComponent(currentTelegramId)}&role=${encodeURIComponent(role)}`;
+      window.open(targetUrl, '_blank', 'noopener');
     }
 
     // ========================================================================
@@ -406,18 +928,557 @@
       }
     }
 
+    // ========================================================================
+    // STANDALONE TICKTICK CALENDAR WINDOW ENGINE & SIDEBAR FILTERS
+    // ========================================================================
+    const FALLBACK_CALENDAR_EVENTS = [
+      // Recurring Routine (All-day bars across week)
+      {
+        id: "routine-daily-12",
+        meeting_id: "b0000001-1112-2026-0000-000000000001",
+        item_type: "routine",
+        category: "routine",
+        title: "Утренняя сводка выработки цеха",
+        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
+        start_time: "2026-11-12T00:00:00+03:00",
+        end_time: "2026-11-12T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["рутина", "цех", "приоритеты"]
+      },
+      {
+        id: "routine-daily-13",
+        meeting_id: "b0000001-1113-2026-0000-000000000001",
+        item_type: "routine",
+        category: "routine",
+        title: "Утренняя сводка выработки цеха",
+        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
+        start_time: "2026-11-13T00:00:00+03:00",
+        end_time: "2026-11-13T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["рутина", "цех", "приоритеты"]
+      },
+      {
+        id: "routine-daily-14",
+        meeting_id: "b0000001-1114-2026-0000-000000000001",
+        item_type: "routine",
+        category: "routine",
+        title: "Утренняя сводка выработки цеха",
+        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
+        start_time: "2026-11-14T00:00:00+03:00",
+        end_time: "2026-11-14T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["рутина", "цех", "приоритеты"]
+      },
+      {
+        id: "routine-daily-15",
+        meeting_id: "b0000001-1115-2026-0000-000000000001",
+        item_type: "routine",
+        category: "routine",
+        title: "Утренняя сводка выработки цеха",
+        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
+        start_time: "2026-11-15T00:00:00+03:00",
+        end_time: "2026-11-15T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["рутина", "цех", "приоритеты"]
+      },
+      {
+        id: "routine-daily-16",
+        meeting_id: "b0000001-1116-2026-0000-000000000001",
+        item_type: "routine",
+        category: "routine",
+        title: "Утренняя сводка выработки цеха",
+        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
+        start_time: "2026-11-16T00:00:00+03:00",
+        end_time: "2026-11-16T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["рутина", "цех", "приоритеты"]
+      },
+      {
+        id: "routine-daily-17",
+        meeting_id: "b0000001-1117-2026-0000-000000000001",
+        item_type: "routine",
+        category: "routine",
+        title: "Утренняя сводка выработки цеха",
+        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
+        start_time: "2026-11-17T00:00:00+03:00",
+        end_time: "2026-11-17T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["рутина", "цех", "приоритеты"]
+      },
+      {
+        id: "routine-daily-18",
+        meeting_id: "b0000001-1118-2026-0000-000000000001",
+        item_type: "routine",
+        category: "routine",
+        title: "Утренняя сводка выработки цеха",
+        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
+        start_time: "2026-11-18T00:00:00+03:00",
+        end_time: "2026-11-18T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["рутина", "цех", "приоритеты"]
+      },
+      {
+        id: "routine-heidelberg-12",
+        item_type: "routine",
+        category: "routine",
+        title: "Контроль смены и нормы брака Heidelberg",
+        description: "Инструментальный замер разнотона и допустимого процента брака офсетной печати",
+        start_time: "2026-11-12T00:00:00+03:00",
+        end_time: "2026-11-12T23:59:59+03:00",
+        is_all_day: true,
+        is_recurring: true,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["heidelberg", "цех"]
+      },
+      // Daily All-Day Tasks (Thu 12)
+      {
+        id: "task-val-check",
+        item_type: "task",
+        category: "production",
+        title: "Техническое обслуживание и юстировка валов Heidelberg",
+        description: "Осмотр офсетных резинотканевых полотен и прижимных валиков Heidelberg Speedmaster",
+        start_time: "2026-11-12T00:00:00+03:00",
+        is_all_day: true,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["heidelberg", "производство"]
+      },
+      {
+        id: "task-paper-stock",
+        item_type: "task",
+        category: "production",
+        title: "Сверка остатков меловой бумаги на складе",
+        description: "Инвентаризация паллет меловки 150г/м2 под тираж каталогов №44102",
+        start_time: "2026-11-12T00:00:00+03:00",
+        is_all_day: true,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["склад", "производство"]
+      },
+      // Thursday 12 Nov Timed Events
+      {
+        id: "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        meeting_id: "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        item_type: "meeting",
+        category: "production",
+        title: "Оперативка производства: тираж №44102",
+        description: "Разбор юстировки валов Heidelberg XL 75, срыв поставки меловки и перераспределение смен",
+        start_time: "2026-11-12T10:05:00+03:00",
+        end_time: "2026-11-12T11:30:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2, 3],
+        participants: ["Смирнов А.С.", "Кузнецов И.П.", "Морозова Е.А."],
+        tags: ["heidelberg", "заказ-44102", "планерка"]
+      },
+      // OVERLAPPING PAIR on Thu 12 at 12:00 (50% / 50% side-by-side)
+      {
+        id: "bbbbbbb3-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        meeting_id: "bbbbbbb3-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        item_type: "meeting",
+        category: "sales",
+        title: "ЛР ОМО: Согласование договора Альфа-Маркет",
+        description: "Утверждение графика поставок упаковки и отсрочки платежа 30 дней",
+        start_time: "2026-11-12T12:00:00+03:00",
+        end_time: "2026-11-12T13:25:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 3,
+        organizer_name: "Морозова Е.А.",
+        participant_ids: [3, 4],
+        participants: ["Морозова Е.А.", "Соколова О.В."],
+        tags: ["альфа-маркет", "заказ-44102"]
+      },
+      {
+        id: "task-spec-val-12",
+        item_type: "task",
+        category: "tasks",
+        title: "Отправить спецификацию валов в Битрикс24",
+        description: "Сформировать и отправить сервисной службе Heidelberg спецификацию на валы в Битрикс24 (задача #1045)",
+        start_time: "2026-11-12T12:00:00+03:00",
+        end_time: "2026-11-12T12:45:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["heidelberg", "битрикс24"]
+      },
+      {
+        id: "b0000112-1335-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "production",
+        title: "Техконтроль печатного цеха Heidelberg",
+        description: "Инструментальная проверка биения валов печатного цеха и калибровка краски",
+        start_time: "2026-11-12T13:35:00+03:00",
+        end_time: "2026-11-12T15:00:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["техконтроль", "heidelberg", "производство"]
+      },
+      {
+        id: "b0000112-1530-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "production",
+        title: "Калибровка цветопробы и спектрофотометрия",
+        description: "Проверка спектрофотометра и линеаризация выводного устройства CTP",
+        start_time: "2026-11-12T15:30:00+03:00",
+        end_time: "2026-11-12T16:55:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["цветопроба", "цех"]
+      },
+      {
+        id: "e0000112-1900-2026-0000-000000000001",
+        item_type: "task",
+        category: "tasks",
+        title: "Вечерний чек-ин смены: тираж №44102",
+        description: "Контрольная сдача смены печатников и передача ночного задания на тираж №44102",
+        start_time: "2026-11-12T19:00:00+03:00",
+        end_time: "2026-11-12T19:45:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["тираж-44102", "смена", "битрикс24"]
+      },
+      // Friday 13 Nov Timed Events
+      {
+        id: "b0000113-1900-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "sales",
+        title: "Итоги недели по отгрузкам",
+        description: "Сводка выполненных отгрузок за неделю, контроль дебиторской задолженности и закрытие актов",
+        start_time: "2026-11-13T19:00:00+03:00",
+        end_time: "2026-11-13T20:25:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 3],
+        participants: ["Смирнов А.С.", "Морозова Е.А."],
+        tags: ["отгрузки", "продажи"]
+      },
+      // Saturday 14 Nov Timed Events
+      {
+        id: "b0000114-1200-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "production",
+        title: "Аудит профилактики валов Heidelberg",
+        description: "Плановое техническое обслуживание и смывка красочных валиков офсетных секций",
+        start_time: "2026-11-14T12:00:00+03:00",
+        end_time: "2026-11-14T13:25:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["аудит", "валы", "heidelberg"]
+      },
+      {
+        id: "b0000114-1335-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "accounting",
+        title: "Сверка складских остатков и БД 1С",
+        description: "Сверка остатков бумаги, красок и лаков в 1С с фактическими инвентаризационными описями",
+        start_time: "2026-11-14T13:35:00+03:00",
+        end_time: "2026-11-14T15:00:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 4,
+        organizer_name: "Соколова О.В.",
+        participant_ids: [4],
+        participants: ["Соколова О.В."],
+        tags: ["1с", "инвентаризация", "склад", "бухгалтерия"]
+      },
+      // Monday 16 Nov Timed Events
+      {
+        id: "b0000116-1705-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "accounting",
+        title: "Финансовый комитет и закрытие счетов",
+        description: "Утверждение реестра оплат недели: аванс поставщику валов и оплата сырья",
+        start_time: "2026-11-16T17:05:00+03:00",
+        end_time: "2026-11-16T18:30:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 4],
+        participants: ["Смирнов А.С.", "Соколова О.В."],
+        tags: ["финансы", "платежи", "бухгалтерия"]
+      },
+      {
+        id: "b0000116-1900-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "sales",
+        title: "План продаж корпоративным клиентам",
+        description: "Анализ воронки ключевых корпоративных клиентов, новогодний каталог и загрузка цехов",
+        start_time: "2026-11-16T19:00:00+03:00",
+        end_time: "2026-11-16T20:25:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 3],
+        participants: ["Смирнов А.С.", "Морозова Е.А."],
+        tags: ["продажи", "клиенты"]
+      },
+      // Tuesday 17 Nov Timed Events
+      {
+        id: "b0000117-1530-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "production",
+        title: "Калибровка цветопробы цеха",
+        description: "Проверка спектрофотометра и линеаризация выводного устройства CTP",
+        start_time: "2026-11-17T15:30:00+03:00",
+        end_time: "2026-11-17T16:55:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 2,
+        organizer_name: "Кузнецов И.П.",
+        participant_ids: [2],
+        participants: ["Кузнецов И.П."],
+        tags: ["цветопроба", "цех"]
+      },
+      {
+        id: "b0000117-1705-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "management",
+        title: "Разбор аналитики выработки и себестоимости",
+        description: "Оценка выработки цехов, себестоимости тиражей и времени ответа Copilot",
+        start_time: "2026-11-17T17:05:00+03:00",
+        end_time: "2026-11-17T18:30:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2],
+        participants: ["Смирнов А.С.", "Кузнецов И.П."],
+        tags: ["себестоимость", "планерка"]
+      },
+      {
+        id: "b0000117-1900-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "sales",
+        title: "Синхронизация задач CRM Битрикс24",
+        description: "Разбор стадий сделок в CRM, проверка контактных лиц и задач менеджеров",
+        start_time: "2026-11-17T19:00:00+03:00",
+        end_time: "2026-11-17T20:25:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 3,
+        organizer_name: "Морозова Е.А.",
+        participant_ids: [3],
+        participants: ["Морозова Е.А."],
+        tags: ["битрикс24", "crm", "продажи"]
+      },
+      // Wednesday 18 Nov Timed Events
+      {
+        id: "b0000118-1530-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "management",
+        title: "Совещание по автоматизации n8n",
+        description: "Тестирование вебхука смены статуса заказов 1С и триггера авто-создания встреч",
+        start_time: "2026-11-18T15:30:00+03:00",
+        end_time: "2026-11-18T16:55:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 2, 3],
+        participants: ["Смирнов А.С.", "Кузнецов И.П.", "Морозова Е.А."],
+        tags: ["n8n", "автоматизация", "руководство"]
+      },
+      {
+        id: "b0000118-1705-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "accounting",
+        title: "Ревизия себестоимости тиражей",
+        description: "Анализ плановой и фактической маржинальности ноябрьских заказов с учетом ночных смен",
+        start_time: "2026-11-18T17:05:00+03:00",
+        end_time: "2026-11-18T18:30:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 1,
+        organizer_name: "Смирнов А.С.",
+        participant_ids: [1, 4],
+        participants: ["Смирнов А.С.", "Соколова О.В."],
+        tags: ["себестоимость", "бухгалтерия"]
+      },
+      {
+        id: "b0000118-1900-2026-0000-000000000001",
+        item_type: "meeting",
+        category: "accounting",
+        title: "Контроль дебиторской задолженности по отгрузкам",
+        description: "Сверка актов сверок и статус погашения задолженности за предыдущий отчетный месяц",
+        start_time: "2026-11-18T19:00:00+03:00",
+        end_time: "2026-11-18T20:25:00+03:00",
+        is_all_day: false,
+        is_recurring: false,
+        status: "scheduled",
+        organizer_id: 4,
+        organizer_name: "Соколова О.В.",
+        participant_ids: [4],
+        participants: ["Соколова О.В."],
+        tags: ["дебиторка", "платежи", "бухгалтерия"]
+      }
+    ];
+
+    const calendarFilterState = {
+      all: true,
+      lists: {
+        production: true,
+        sales: true,
+        accounting: true,
+        management: true,
+        tasks: true,
+        routine: true
+      },
+      employees: {
+        '1': true,
+        '2': true,
+        '3': true,
+        '4': true
+      },
+      tags: {
+        'заказ-44102': true,
+        'heidelberg': true,
+        'альфа-маркет': true,
+        'планерка': true,
+        'битрикс24': true
+      }
+    };
+
+    let calendarAutoScrolled = false;
+
     function toggleCalendarDrawer(forceOpen) {
-      const isOpen = calendarDrawer.classList.contains('open');
+      const win = document.getElementById('calendar-window-view');
+      const drawer = document.getElementById('calendar-drawer');
+      const isOpen = win ? win.classList.contains('open') : (drawer && drawer.classList.contains('open'));
       const nextState = (typeof forceOpen === 'boolean') ? forceOpen : !isOpen;
 
       if (nextState) {
-        calendarDrawer.classList.add('open');
-        drawerBackdrop.classList.add('open');
+        if (win) {
+          win.classList.add('open');
+          win.style.display = 'flex';
+        }
+        if (drawer) drawer.classList.add('open');
+
+        updateAvatarBadge();
+        updateCalClock();
         refreshCalendarEvents();
+        renderCalendarGrid();
+        renderWeekViewGrid();
+
+        if (window.lucide) lucide.createIcons();
+
+        // Auto-scroll to 07:30 AM on initial open matching reference screenshot
+        if (!calendarAutoScrolled) {
+          setTimeout(() => {
+            const scrollArea = document.getElementById('cal-timegrid-scroll');
+            if (scrollArea) {
+              scrollArea.scrollTop = 450; // 07:30 AM (7.5 * 60px)
+              calendarAutoScrolled = true;
+            }
+          }, 60);
+        }
       } else {
-        calendarDrawer.classList.remove('open');
-        drawerBackdrop.classList.remove('open');
+        if (win) {
+          win.classList.remove('open');
+          win.style.display = 'none';
+        }
+        if (drawer) drawer.classList.remove('open');
       }
+    }
+
+    function toggleCalSidebar() {
+      const sidebar = document.getElementById('cal-sidebar');
+      if (sidebar) sidebar.classList.toggle('collapsed');
     }
 
     function setCalendarScope(scope) {
@@ -428,8 +1489,10 @@
       }
 
       currentCalendarScope = scope;
-      document.getElementById('scope-my-btn').classList.toggle('active', scope === 'my');
-      document.getElementById('scope-all-btn').classList.toggle('active', scope === 'all');
+      const myBtn = document.getElementById('scope-my-btn');
+      const allBtn = document.getElementById('scope-all-btn');
+      if (myBtn) myBtn.classList.toggle('active', scope === 'my');
+      if (allBtn) allBtn.classList.toggle('active', scope === 'all');
       refreshCalendarEvents();
     }
 
@@ -439,18 +1502,182 @@
       refreshCalendarEvents();
     }
 
+    function changeMiniMonth(delta) {
+      currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
+      renderCalendarGrid();
+      refreshCalendarEvents();
+    }
+
+    function changeWeek(delta) {
+      if (!currentWeekStart) currentWeekStart = new Date(2026, 10, 12);
+      currentWeekStart.setDate(currentWeekStart.getDate() + delta * 7);
+      selectedCalendarDate = new Date(currentWeekStart);
+      currentCalendarDate = new Date(currentWeekStart);
+      renderCalendarGrid();
+      renderWeekViewGrid();
+      refreshCalendarEvents();
+    }
+
+    function goToToday() {
+      currentCalendarDate = new Date(2026, 10, 12);
+      selectedCalendarDate = new Date(2026, 10, 12);
+      currentWeekStart = new Date(2026, 10, 12);
+      renderCalendarGrid();
+      renderWeekViewGrid();
+      refreshCalendarEvents();
+      const scrollArea = document.getElementById('cal-timegrid-scroll');
+      if (scrollArea) scrollArea.scrollTop = 450;
+    }
+
+    function changeCalendarView(viewMode) {
+      const sel = document.getElementById('cal-view-select');
+      if (sel && sel.value !== viewMode) sel.value = viewMode;
+      renderWeekViewGrid();
+    }
+
+    function updateAvatarBadge(user) {
+      if (!user) user = getCurrentUser();
+      const letterEl = document.getElementById('cal-avatar-letter');
+      const crownEl = document.getElementById('cal-crown-badge');
+      if (letterEl) {
+        const name = user.full_name || 'Алексей';
+        letterEl.textContent = name[0] || 'А';
+      }
+      if (crownEl) {
+        const isDirector = user.roles && (user.roles.includes('Director') || user.roles.includes('Admin'));
+        crownEl.style.display = isDirector ? 'flex' : 'none';
+      }
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function updateCalClock() {
+      const clockEl = document.querySelector('#cal-top-clock .cal-clock-text');
+      const pillEl = document.getElementById('cal-now-time-pill');
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const timeStr = `${hh}:${mm}`;
+      if (clockEl) clockEl.textContent = timeStr;
+      if (pillEl) pillEl.textContent = timeStr;
+    }
+    setInterval(updateCalClock, 1000);
+
+    // ========================================================================
+    // FILTER MANAGEMENT & DISPATCH
+    // ========================================================================
+    function onCalendarFilterChange() {
+      document.querySelectorAll('[data-filter-list]').forEach(cb => {
+        calendarFilterState.lists[cb.dataset.filterList] = cb.checked;
+      });
+      document.querySelectorAll('[data-filter-employee]').forEach(cb => {
+        calendarFilterState.employees[cb.dataset.filterEmployee] = cb.checked;
+      });
+      document.querySelectorAll('[data-filter-tag]').forEach(cb => {
+        calendarFilterState.tags[cb.dataset.filterTag] = cb.checked;
+      });
+
+      const allListVals = Object.values(calendarFilterState.lists);
+      const allEmpVals = Object.values(calendarFilterState.employees);
+      const allTagVals = Object.values(calendarFilterState.tags);
+      const allVals = [...allListVals, ...allEmpVals, ...allTagVals];
+      const allChecked = allVals.every(v => v === true);
+      const noneChecked = allVals.every(v => v === false);
+
+      const masterAll = document.getElementById('filter-all');
+      if (masterAll) {
+        masterAll.checked = allChecked;
+        masterAll.indeterminate = !allChecked && !noneChecked;
+      }
+      calendarFilterState.all = allChecked;
+
+      window.dispatchEvent(new CustomEvent('fotoprint:calendar-filter', { detail: calendarFilterState }));
+      renderWeekViewGrid();
+    }
+
+    function toggleAllFilters(checked) {
+      document.querySelectorAll('#cal-sidebar input[type="checkbox"]').forEach(cb => {
+        cb.checked = checked;
+      });
+      const masterAll = document.getElementById('filter-all');
+      if (masterAll) {
+        masterAll.checked = checked;
+        masterAll.indeterminate = false;
+      }
+      onCalendarFilterChange();
+    }
+
+    function handleMasterRowClick(e) {
+      if (e.target.tagName.toLowerCase() === 'input') return;
+      const masterAll = document.getElementById('filter-all');
+      if (masterAll) {
+        masterAll.checked = !masterAll.checked;
+        toggleAllFilters(masterAll.checked);
+      }
+    }
+
+    function toggleFilterItem(type, key, e) {
+      if (e.target.tagName.toLowerCase() === 'input') return;
+      let selector = '';
+      if (type === 'list') selector = `[data-filter-list="${key}"]`;
+      else if (type === 'employee') selector = `[data-filter-employee="${key}"]`;
+      else if (type === 'tag') selector = `[data-filter-tag="${key}"]`;
+
+      const cb = document.querySelector(selector);
+      if (cb) {
+        cb.checked = !cb.checked;
+        onCalendarFilterChange();
+      }
+    }
+
+    function isEventVisible(ev) {
+      if (calendarFilterState.all) return true;
+
+      // Check category list
+      if (ev.category && calendarFilterState.lists[ev.category] === false) {
+        return false;
+      }
+
+      // Check organizer and participants
+      if (ev.organizer_id && calendarFilterState.employees[String(ev.organizer_id)] === false) {
+        const hasVisibleParticipant = (ev.participant_ids || []).some(id => calendarFilterState.employees[String(id)] !== false);
+        if (!hasVisibleParticipant) return false;
+      }
+
+      // Check tags
+      if (ev.tags && Array.isArray(ev.tags) && ev.tags.length > 0) {
+        const anyTagExcluded = ev.tags.some(t => calendarFilterState.tags[t] === false);
+        if (anyTagExcluded) return false;
+      }
+
+      return true;
+    }
+
     const MONTH_NAMES = [
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
       'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
     ];
 
+    const WEEKDAY_NAMES_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+    function getWeekNumber(d) {
+      const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+      const dayNum = date.getUTCDay() || 7;
+      date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+      const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+      return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+    }
+
+    // ========================================================================
+    // MINI MONTH CALENDAR RENDERING (.cal-mini-month)
+    // ========================================================================
     function renderCalendarGrid() {
       const year = currentCalendarDate.getFullYear();
       const month = currentCalendarDate.getMonth();
       const monthLabel = document.getElementById('current-month-label');
-      if (monthLabel) {
-        monthLabel.textContent = `${MONTH_NAMES[month]} ${year}`;
-      }
+      const miniLabel = document.getElementById('mini-month-label');
+      const labelText = `${MONTH_NAMES[month]} ${year}`;
+      if (monthLabel) monthLabel.textContent = labelText;
+      if (miniLabel) miniLabel.textContent = labelText;
 
       const grid = document.getElementById('calendar-days-grid');
       if (!grid) return;
@@ -465,137 +1692,377 @@
       const totalDays = lastDay.getDate();
       const prevMonthLastDay = new Date(year, month, 0).getDate();
 
-      // Days from previous month
-      for (let i = startingDay - 1; i >= 0; i--) {
-        const cell = document.createElement('div');
-        cell.className = 'calendar-day-cell other-month';
-        cell.innerHTML = `<span>${prevMonthLastDay - i}</span>`;
-        grid.appendChild(cell);
-      }
+      // Active week calculation (Monday to Sunday) containing selectedCalendarDate
+      const selDate = selectedCalendarDate || new Date(2026, 10, 12);
+      const selDayOfWeek = selDate.getDay() - 1 === -1 ? 6 : selDate.getDay() - 1;
+      const activeWeekStart = new Date(selDate.getFullYear(), selDate.getMonth(), selDate.getDate() - selDayOfWeek);
+      const activeWeekEnd = new Date(activeWeekStart.getFullYear(), activeWeekStart.getMonth(), activeWeekStart.getDate() + 6);
+      activeWeekStart.setHours(0, 0, 0, 0);
+      activeWeekEnd.setHours(23, 59, 59, 999);
 
       const todayStr = '2026-11-12';
+      const allCells = [];
 
-      // Current month days
+      // Days from previous month
+      for (let i = startingDay - 1; i >= 0; i--) {
+        const dNum = prevMonthLastDay - i;
+        const cellDate = new Date(year, month - 1, dNum);
+        allCells.push({ date: cellDate, dayNum: dNum, isCurrentMonth: false });
+      }
+
+      // Days from current month
       for (let day = 1; day <= totalDays; day++) {
+        const cellDate = new Date(year, month, day);
+        allCells.push({ date: cellDate, dayNum: day, isCurrentMonth: true });
+      }
+
+      // Remaining cells to reach exactly 42 (6 complete rows)
+      const remainingCells = 42 - allCells.length;
+      for (let d = 1; d <= remainingCells; d++) {
+        const cellDate = new Date(year, month + 1, d);
+        allCells.push({ date: cellDate, dayNum: d, isCurrentMonth: false });
+      }
+
+      // Render 42 day cells
+      allCells.forEach((cData, index) => {
         const cell = document.createElement('div');
-        cell.className = 'calendar-day-cell';
+        cell.className = 'mini-day-cell';
+        if (!cData.isCurrentMonth) cell.classList.add('other-month');
 
-        const dayDate = new Date(year, month, day);
-        const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const cellTime = cData.date.getTime();
+        const isInActiveWeek = cellTime >= activeWeekStart.getTime() && cellTime <= activeWeekEnd.getTime();
+        if (isInActiveWeek) {
+          cell.classList.add('in-active-week');
+          const colIndex = index % 7;
+          if (colIndex === 0) cell.classList.add('week-start');
+          if (colIndex === 6) cell.classList.add('week-end');
+        }
 
+        const isoDate = `${cData.date.getFullYear()}-${String(cData.date.getMonth() + 1).padStart(2, '0')}-${String(cData.date.getDate()).padStart(2, '0')}`;
         if (isoDate === todayStr) {
           cell.classList.add('today');
         }
 
-        if (selectedCalendarDate &&
-            selectedCalendarDate.getFullYear() === year &&
-            selectedCalendarDate.getMonth() === month &&
-            selectedCalendarDate.getDate() === day) {
+        if (selDate.getFullYear() === cData.date.getFullYear() &&
+            selDate.getMonth() === cData.date.getMonth() &&
+            selDate.getDate() === cData.date.getDate()) {
           cell.classList.add('selected');
         }
 
-        // Check scheduled meetings for this date
-        const dayMeetings = cachedCalendarEvents.filter(ev => {
-          if (!ev.start_time) return false;
-          return ev.start_time.startsWith(isoDate);
-        });
-
-        let dotsHtml = '';
-        if (dayMeetings.length > 0) {
-          dotsHtml = '<div class="day-dots">';
-          if (dayMeetings.length <= 2) {
-            dotsHtml += '<span class="dot dot-green" title="Свободный график (1-2 встречи)"></span>';
-          } else if (dayMeetings.length <= 4) {
-            dotsHtml += '<span class="dot dot-amber" title="Умеренная занятость (3-4 встречи)"></span>';
-          } else {
-            dotsHtml += '<span class="dot dot-red" title="Высокая плотность (5+ встреч)"></span>';
-          }
-          dotsHtml += '</div>';
+        // Event dot indicator
+        const dayEvents = cachedCalendarEvents.filter(ev => ev.start_time && ev.start_time.startsWith(isoDate));
+        let dotHtml = '';
+        if (dayEvents.length > 0) {
+          dotHtml = '<span class="mini-day-dot"></span>';
         }
 
-        cell.innerHTML = `
-          <span>${day}</span>
-          ${dotsHtml}
-        `;
+        cell.innerHTML = `<span class="mini-day-num">${cData.dayNum}</span>${dotHtml}`;
 
         cell.onclick = () => {
-          selectedCalendarDate = new Date(year, month, day);
-          grid.querySelectorAll('.calendar-day-cell').forEach(c => c.classList.remove('selected'));
-          cell.classList.add('selected');
-          renderSelectedDayMeetings(isoDate, dayMeetings);
+          selectedCalendarDate = new Date(cData.date);
+          currentCalendarDate = new Date(cData.date);
+          renderCalendarGrid();
+          renderWeekViewGrid();
         };
 
         grid.appendChild(cell);
-      }
-
-      // Fill remaining cells for 6 complete rows (42 cells)
-      const currentCellCount = startingDay + totalDays;
-      const remainingCells = (currentCellCount > 35 ? 42 : 35) - currentCellCount;
-      for (let d = 1; d <= remainingCells; d++) {
-        const cell = document.createElement('div');
-        cell.className = 'calendar-day-cell other-month';
-        cell.innerHTML = `<span>${d}</span>`;
-        grid.appendChild(cell);
-      }
-
-      // Initial render for selected day
-      const selIso = `${selectedCalendarDate.getFullYear()}-${String(selectedCalendarDate.getMonth() + 1).padStart(2, '0')}-${String(selectedCalendarDate.getDate()).padStart(2, '0')}`;
-      const selMeetings = cachedCalendarEvents.filter(ev => ev.start_time && ev.start_time.startsWith(selIso));
-      renderSelectedDayMeetings(selIso, selMeetings);
+      });
     }
 
-    function renderSelectedDayMeetings(isoDate, meetings) {
-      const titleEl = document.getElementById('selected-day-title');
-      const listEl = document.getElementById('day-meetings-list');
-      if (!titleEl || !listEl) return;
+    // ========================================================================
+    // MAIN 7-DAY WEEK VIEW & TIME-GRID RENDERING (.cal-main-area)
+    // ========================================================================
+    function formatHourLabel(h) {
+      if (h === 0) return '12 AM';
+      if (h < 12) return `${h} AM`;
+      if (h === 12) return 'Noon';
+      return `${h - 12} PM`;
+    }
 
-      const dateParts = isoDate.split('-');
-      const dNum = Number(dateParts[2]);
-      const mIdx = Number(dateParts[1]) - 1;
-      const yNum = dateParts[0];
+    function layoutDayTimedEvents(events) {
+      if (!events || events.length === 0) return [];
 
-      titleEl.innerHTML = `
-        <i data-lucide="clock"></i>
-        <span>Встречи на ${dNum} ${MONTH_NAMES[mIdx]} ${yNum}:</span>
-      `;
+      const parsed = events.map(ev => {
+        const start = new Date(ev.start_time);
+        const end = ev.end_time ? new Date(ev.end_time) : new Date(start.getTime() + 60 * 60000);
+        const startMin = start.getHours() * 60 + start.getMinutes();
+        const endMin = end.getHours() * 60 + end.getMinutes();
+        const duration = Math.max(30, endMin - startMin);
+        return {
+          event: ev,
+          start,
+          end,
+          startMin,
+          endMin: startMin + duration,
+          duration,
+          colIndex: 0,
+          totalCols: 1
+        };
+      });
 
-      if (!meetings || meetings.length === 0) {
-        listEl.innerHTML = '<div class="no-meetings">На этот день запланированных встреч нет.</div>';
-        if (window.lucide) lucide.createIcons();
-        return;
+      // Earlier start first, then longer duration first
+      parsed.sort((a, b) => a.startMin - b.startMin || b.duration - a.duration);
+
+      // Group into overlapping collision clusters
+      const clusters = [];
+      let currentCluster = [];
+      let clusterEnd = -1;
+
+      parsed.forEach(item => {
+        if (currentCluster.length === 0) {
+          currentCluster.push(item);
+          clusterEnd = item.endMin;
+        } else if (item.startMin < clusterEnd) {
+          currentCluster.push(item);
+          clusterEnd = Math.max(clusterEnd, item.endMin);
+        } else {
+          clusters.push(currentCluster);
+          currentCluster = [item];
+          clusterEnd = item.endMin;
+        }
+      });
+      if (currentCluster.length > 0) {
+        clusters.push(currentCluster);
       }
 
-      listEl.innerHTML = meetings.map(m => {
-        let startTimeStr = '';
-        let endTimeStr = '';
-        try {
-          if (m.start_time) {
-            const st = new Date(m.start_time);
-            startTimeStr = st.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      // Assign horizontal column index inside each collision cluster
+      clusters.forEach(cluster => {
+        const colEnds = []; // column end-times
+        cluster.forEach(item => {
+          let placed = false;
+          for (let c = 0; c < colEnds.length; c++) {
+            if (item.startMin >= colEnds[c]) {
+              colEnds[c] = item.endMin;
+              item.colIndex = c;
+              placed = true;
+              break;
+            }
           }
-          if (m.end_time) {
-            const et = new Date(m.end_time);
-            endTimeStr = ' – ' + et.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          if (!placed) {
+            colEnds.push(item.endMin);
+            item.colIndex = colEnds.length - 1;
           }
-        } catch (_) {}
+        });
+        const totalCols = colEnds.length;
+        cluster.forEach(item => {
+          item.totalCols = totalCols;
+        });
+      });
 
-        return `
-          <div class="meeting-item">
-            <div class="meeting-item-time">
-              <i data-lucide="clock" style="width: 12px; height: 12px;"></i>
-              <span>${escapeHtml(startTimeStr + endTimeStr || 'Время не указано')}</span>
-            </div>
-            <div class="meeting-item-title">${escapeHtml(m.title || 'Совещание')}</div>
-            <div class="meeting-item-participants">
-              ${m.description ? escapeHtml(m.description) : 'Организатор: ' + (m.organizer_id === 1 ? 'Смирнов А.С.' : 'Сотрудник ID ' + m.organizer_id)}
-            </div>
-          </div>
+      return parsed;
+    }
+
+    function selectWeekDayHeader(date) {
+      selectedCalendarDate = new Date(date);
+      currentCalendarDate = new Date(date);
+      renderCalendarGrid();
+      renderWeekViewGrid();
+    }
+
+    function renderWeekViewGrid() {
+      if (!currentWeekStart) currentWeekStart = new Date(2026, 10, 12);
+
+      const weekNumEl = document.getElementById('cal-week-number');
+      if (weekNumEl) {
+        weekNumEl.textContent = `W${getWeekNumber(currentWeekStart)}`;
+      }
+
+      const weekColumnsHeader = document.getElementById('cal-week-columns-header');
+      const alldayCells = document.getElementById('cal-allday-cells-container');
+      const timeAxis = document.getElementById('cal-time-axis');
+      const gridColumns = document.getElementById('cal-grid-columns');
+
+      if (!weekColumnsHeader || !gridColumns) return;
+
+      weekColumnsHeader.innerHTML = '';
+      if (alldayCells) alldayCells.innerHTML = '';
+      if (timeAxis && timeAxis.children.length === 0) {
+        timeAxis.innerHTML = '';
+        for (let h = 0; h < 24; h++) {
+          const hourDiv = document.createElement('div');
+          hourDiv.className = 'cal-axis-hour';
+          hourDiv.textContent = formatHourLabel(h);
+          timeAxis.appendChild(hourDiv);
+        }
+      }
+
+      gridColumns.innerHTML = '';
+
+      const todayStr = '2026-11-12';
+      const weekDates = [];
+      const WEEKDAY_NAMES_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+      for (let i = 0; i < 7; i++) {
+        const colDate = new Date(currentWeekStart.getFullYear(), currentWeekStart.getMonth(), currentWeekStart.getDate() + i);
+        const isoDate = `${colDate.getFullYear()}-${String(colDate.getMonth() + 1).padStart(2, '0')}-${String(colDate.getDate()).padStart(2, '0')}`;
+        const isToday = (isoDate === todayStr);
+        const weekday = WEEKDAY_NAMES_EN[colDate.getDay()];
+        weekDates.push({ date: colDate, isoDate, isToday, weekday, dayNum: colDate.getDate() });
+
+        // 1. Day header column (Thu 12 .. Wed 18)
+        const headerCol = document.createElement('div');
+        headerCol.className = 'cal-day-header-col' + (isToday ? ' is-today' : '');
+        headerCol.innerHTML = `
+          <span class="cal-day-weekday-name">${weekday}</span>
+          <span class="cal-day-badge-num">${colDate.getDate()}</span>
         `;
-      }).join('');
+        headerCol.onclick = () => selectWeekDayHeader(colDate);
+        weekColumnsHeader.appendChild(headerCol);
+
+        // 2. All-Day cell directly beneath day numbers
+        if (alldayCells) {
+          const alldayCell = document.createElement('div');
+          alldayCell.className = 'cal-allday-cell';
+
+          // Filter all-day / recurring events for this date
+          const allDayEvents = cachedCalendarEvents.filter(ev => {
+            if (!ev.is_all_day && !ev.is_recurring) return false;
+            if (!isEventVisible(ev)) return false;
+            return ev.start_time && ev.start_time.startsWith(isoDate);
+          });
+
+          allDayEvents.forEach(ev => {
+            const bar = document.createElement('div');
+            bar.className = 'cal-event-block cal-allday-bar';
+            const isRec = ev.is_recurring || ev.item_type === 'routine';
+            bar.classList.add(isRec ? 'cal-event-routine' : 'cal-event-task');
+
+            const iconName = isRec ? 'repeat' : 'circle';
+            bar.innerHTML = `
+              <i data-lucide="${iconName}" class="cal-inline-icon"></i>
+              <span class="cal-event-title">${escapeHtml(ev.title)}</span>
+            `;
+            bar.title = `${ev.title} (${ev.category || 'all-day'})`;
+            bar.onclick = (e) => {
+              e.stopPropagation();
+              openEventPopover(ev, bar);
+            };
+            alldayCell.appendChild(bar);
+          });
+
+          alldayCells.appendChild(alldayCell);
+        }
+
+        // 3. Grid column (24h vertical timeline)
+        const colDiv = document.createElement('div');
+        colDiv.className = 'cal-day-col';
+        colDiv.setAttribute('data-date', isoDate);
+
+        // Click on empty grid slot -> quick add modal
+        colDiv.onclick = (e) => {
+          if (e.target.closest('.cal-event-block')) return;
+          const rect = colDiv.getBoundingClientRect();
+          const y = e.clientY - rect.top;
+          const totalMin = Math.floor(y);
+          const h = Math.min(23, Math.max(0, Math.floor(totalMin / 60)));
+          const m = Math.floor((totalMin % 60) / 15) * 15;
+          openQuickAddModal(isoDate, h, m);
+        };
+
+        // Hourly lines & half-hour lines
+        for (let h = 0; h < 24; h++) {
+          const line = document.createElement('div');
+          line.className = 'cal-hour-row-line';
+          line.style.top = `${h * 60}px`;
+          colDiv.appendChild(line);
+
+          const halfLine = document.createElement('div');
+          halfLine.className = 'cal-half-hour-line';
+          halfLine.style.top = `${h * 60 + 30}px`;
+          colDiv.appendChild(halfLine);
+        }
+
+        // Timed event blocks for this day
+        const dayTimedEvents = cachedCalendarEvents.filter(ev => {
+          if (ev.is_all_day || ev.is_recurring) return false;
+          if (!isEventVisible(ev)) return false;
+          return ev.start_time && ev.start_time.startsWith(isoDate);
+        });
+
+        // Compute collision layout (side-by-side)
+        const laidOutEvents = layoutDayTimedEvents(dayTimedEvents);
+
+        laidOutEvents.forEach(item => {
+          const ev = item.event;
+          const block = document.createElement('div');
+          block.className = 'cal-event-block';
+          block.classList.add(ev.item_type === 'task' ? 'cal-event-task' : 'cal-event-meeting');
+          block.style.top = `${item.startMin}px`;
+          block.style.height = `${item.duration}px`;
+
+          if (item.totalCols > 1) {
+            const widthPct = (100 / item.totalCols).toFixed(2);
+            const leftPct = (item.colIndex * (100 / item.totalCols)).toFixed(2);
+            block.style.width = `calc(${widthPct}% - 6px)`;
+            block.style.left = `calc(${leftPct}% + 3px)`;
+            block.style.right = 'auto';
+          } else {
+            block.style.left = '4px';
+            block.style.right = '4px';
+            block.style.width = 'calc(100% - 8px)';
+          }
+
+          // Category icon
+          let iconName = 'calendar';
+          if (ev.category === 'production') iconName = 'printer';
+          else if (ev.category === 'sales') iconName = 'briefcase';
+          else if (ev.category === 'accounting') iconName = 'calculator';
+          else if (ev.category === 'management') iconName = 'award';
+          else if (ev.item_type === 'task') iconName = 'check-square';
+
+          const timeStr = `${item.start.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} - ${item.end.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+          const participantsStr = (ev.participants && ev.participants.length > 0) ? ev.participants.join(', ') : (ev.organizer_name || '');
+
+          block.innerHTML = `
+            <div class="cal-event-header">
+              <i data-lucide="${iconName}" class="cal-card-icon"></i>
+              <span class="cal-event-title">${escapeHtml(ev.title)}</span>
+            </div>
+            <div class="cal-event-time">${escapeHtml(timeStr)}</div>
+            ${participantsStr ? `<div class="cal-event-participants" title="${escapeHtml(participantsStr)}"><i data-lucide="users" class="cal-mini-icon"></i> <span>${escapeHtml(participantsStr)}</span></div>` : ''}
+          `;
+          block.title = `${ev.title}\nВремя: ${timeStr}\nКто занят: ${participantsStr}`;
+
+          block.onclick = (e) => {
+            e.stopPropagation();
+            openEventPopover(ev, block);
+          };
+
+          colDiv.appendChild(block);
+        });
+
+        gridColumns.appendChild(colDiv);
+      }
+
+      // Position current time red line (11:08 = 668px)
+      const nowWrapper = document.getElementById('cal-now-line-wrapper');
+      const nowDot = document.getElementById('cal-now-dot');
+      const nowPill = document.getElementById('cal-now-time-pill');
+
+      if (nowWrapper) {
+        nowWrapper.style.top = '668px';
+      }
+      if (nowPill) {
+        nowPill.textContent = '11:08';
+      }
+
+      // Dot on Today's column left border
+      const todayColIdx = weekDates.findIndex(w => w.isToday);
+      if (nowDot) {
+        if (todayColIdx >= 0) {
+          nowDot.style.display = 'block';
+          nowDot.style.left = `calc(56px + ${todayColIdx} * ((100% - 56px) / 7))`;
+        } else {
+          nowDot.style.display = 'none';
+        }
+      }
 
       if (window.lucide) lucide.createIcons();
     }
 
+    // ========================================================================
+    // BACKEND DATA FETCHING WITH FALLBACK
+    // ========================================================================
     async function refreshCalendarEvents() {
       const year = currentCalendarDate.getFullYear();
       const month = currentCalendarDate.getMonth();
@@ -621,16 +2088,18 @@
 
         if (res.ok) {
           const data = await res.json();
-          cachedCalendarEvents = data.events || [];
+          cachedCalendarEvents = (data.events && data.events.length > 0) ? data.events : FALLBACK_CALENDAR_EVENTS;
         } else if (res.status === 403) {
           cachedCalendarEvents = [];
           if (currentCalendarScope === 'all') {
             setCalendarScope('my');
             return;
           }
+        } else {
+          cachedCalendarEvents = FALLBACK_CALENDAR_EVENTS;
         }
       } catch (err) {
-        console.warn('Calendar events load error, using fallback simulated events', err);
+        cachedCalendarEvents = FALLBACK_CALENDAR_EVENTS;
       }
 
       // Update today badge count
@@ -641,6 +2110,323 @@
       }
 
       renderCalendarGrid();
+      renderWeekViewGrid();
+    }
+
+    // ========================================================================
+    // INTERACTIVE EVENT INSPECTOR POPOVER & QUICK CREATE MODAL
+    // ========================================================================
+    function openEventPopover(ev, blockEl) {
+      currentActivePopoverEvent = ev;
+      const popover = document.getElementById('cal-event-popover');
+      if (!popover) return;
+
+      const titleEl = document.getElementById('popover-title');
+      const catEl = document.getElementById('popover-category-badge');
+      const statusEl = document.getElementById('popover-status-badge');
+      const timeEl = document.getElementById('popover-time');
+      const descEl = document.getElementById('popover-desc');
+      const descRow = document.getElementById('popover-desc-row');
+      const busyList = document.getElementById('popover-busy-list');
+      const tagsRow = document.getElementById('popover-tags-row');
+      const toggleBtnText = document.getElementById('popover-toggle-status-text');
+
+      if (titleEl) titleEl.textContent = ev.title;
+
+      const catNames = {
+        production: 'Производство (Цех)',
+        sales: 'Продажи и клиенты',
+        accounting: 'Бухгалтерия',
+        management: 'Руководство',
+        tasks: 'Задачи Битрикс24',
+        routine: 'Регулярные / Смены'
+      };
+      if (catEl) catEl.textContent = catNames[ev.category] || ev.category || 'Встреча';
+
+      const isCompleted = (ev.status === 'completed');
+      if (statusEl) {
+        statusEl.textContent = isCompleted ? 'Выполнено' : 'Запланировано';
+        statusEl.className = 'cal-badge-status ' + (isCompleted ? 'status-completed' : 'status-scheduled');
+      }
+      if (toggleBtnText) {
+        toggleBtnText.textContent = isCompleted ? 'Вернуть в работу' : 'Отметить выполненным';
+      }
+
+      // Time Range
+      if (timeEl) {
+        if (ev.is_all_day) {
+          timeEl.textContent = 'Весь день (All-day)';
+        } else {
+          const s = new Date(ev.start_time);
+          const e = ev.end_time ? new Date(ev.end_time) : new Date(s.getTime() + 60 * 60000);
+          const dayStr = s.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+          const sTime = s.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          const eTime = e.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          timeEl.textContent = `${dayStr}, ${sTime} - ${eTime}`;
+        }
+      }
+
+      // Description
+      if (descEl) {
+        if (ev.description) {
+          descEl.textContent = ev.description;
+          if (descRow) descRow.style.display = 'block';
+        } else {
+          descEl.textContent = '';
+          if (descRow) descRow.style.display = 'none';
+        }
+      }
+
+      // WHO IS BUSY / Кто занят
+      if (busyList) {
+        busyList.innerHTML = '';
+        const empRoles = {
+          'Смирнов А.С.': 'Генеральный директор (Руководство)',
+          'Кузнецов И.П.': 'Начальник производства (Цех)',
+          'Морозова Е.А.': 'Руководитель отдела продаж',
+          'Соколова О.В.': 'Главный бухгалтер'
+        };
+
+        const participants = (ev.participants && ev.participants.length > 0) ? ev.participants : (ev.organizer_name ? [ev.organizer_name] : ['Смирнов А.С.']);
+        participants.forEach(p => {
+          const item = document.createElement('div');
+          item.className = 'cal-popover-busy-item';
+          const isOrg = (p === ev.organizer_name);
+          item.innerHTML = `
+            <span class="cal-busy-dot dot-busy"></span>
+            <div class="cal-busy-details">
+              <span class="cal-busy-name">${escapeHtml(p)} ${isOrg ? '<span class="cal-org-tag">(Организатор)</span>' : ''}</span>
+              <span class="cal-busy-role">${escapeHtml(empRoles[p] || 'Сотрудник типографии')}</span>
+            </div>
+          `;
+          busyList.appendChild(item);
+        });
+      }
+
+      // Tags
+      if (tagsRow) {
+        tagsRow.innerHTML = '';
+        if (ev.tags && Array.isArray(ev.tags) && ev.tags.length > 0) {
+          tagsRow.style.display = 'flex';
+          ev.tags.forEach(t => {
+            const tagSpan = document.createElement('span');
+            tagSpan.className = 'cal-popover-tag';
+            tagSpan.textContent = `#${t}`;
+            tagsRow.appendChild(tagSpan);
+          });
+        } else {
+          tagsRow.style.display = 'none';
+        }
+      }
+
+      popover.style.display = 'flex';
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function closeEventPopover() {
+      const popover = document.getElementById('cal-event-popover');
+      if (popover) popover.style.display = 'none';
+      currentActivePopoverEvent = null;
+    }
+
+    function togglePopoverEventStatus() {
+      if (!currentActivePopoverEvent) return;
+      currentActivePopoverEvent.status = (currentActivePopoverEvent.status === 'completed') ? 'scheduled' : 'completed';
+      renderCalendarGrid();
+      renderWeekViewGrid();
+      openEventPopover(currentActivePopoverEvent);
+    }
+
+    function downloadPopoverMoM() {
+      if (!currentActivePopoverEvent) return;
+      const ev = currentActivePopoverEvent;
+      const textContent = `Протокол встречи: ${ev.title}\nВремя: ${ev.start_time}\nУчастники: ${(ev.participants || []).join(', ')}\n\nСгенерировано Fotoprint AI Copilot.`;
+      const blob = new Blob([textContent], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Протокол_MoM_${ev.title.slice(0, 30).replace(/[^a-zA-Zа-яА-Я0-9_-]/g, '_')}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function openQuickAddModal(dateStr, hour, minute) {
+      const modal = document.getElementById('cal-quick-modal');
+      if (!modal) return;
+
+      const dateInput = document.getElementById('quick-date');
+      const timeInput = document.getElementById('quick-time');
+      const titleInput = document.getElementById('quick-title');
+      const descInput = document.getElementById('quick-desc');
+      const tagsInput = document.getElementById('quick-tags');
+      const msgEl = document.getElementById('quick-submit-msg');
+
+      if (msgEl) msgEl.style.display = 'none';
+      if (titleInput) titleInput.value = '';
+      if (descInput) descInput.value = '';
+      if (tagsInput) tagsInput.value = '';
+
+      const defaultDate = dateStr || '2026-11-12';
+      const defaultHour = typeof hour === 'number' ? hour : 14;
+      const defaultMin = typeof minute === 'number' ? minute : 0;
+
+      if (dateInput) dateInput.value = defaultDate;
+      if (timeInput) {
+        timeInput.value = `${String(defaultHour).padStart(2, '0')}:${String(defaultMin).padStart(2, '0')}`;
+      }
+
+      setQuickDuration(30);
+
+      modal.style.display = 'flex';
+      if (titleInput) titleInput.focus();
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function closeQuickAddModal() {
+      const modal = document.getElementById('cal-quick-modal');
+      if (modal) modal.style.display = 'none';
+      const submitBtn = document.getElementById('quick-submit-btn');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i data-lucide="check"></i> <span>Запланировать</span>';
+      }
+    }
+
+    function setQuickDuration(mins) {
+      const durationInput = document.getElementById('quick-duration');
+      if (durationInput) durationInput.value = String(mins);
+      document.querySelectorAll('.cal-duration-pill').forEach(btn => {
+        const isMatch = btn.textContent.includes(String(mins));
+        btn.classList.toggle('active', isMatch);
+      });
+    }
+
+    async function submitQuickSchedule(e) {
+      e.preventDefault();
+      const title = document.getElementById('quick-title').value.trim();
+      const itemType = document.getElementById('quick-type').value;
+      const category = document.getElementById('quick-category').value;
+      const dateStr = document.getElementById('quick-date').value;
+      const timeStr = document.getElementById('quick-time').value;
+      const duration = parseInt(document.getElementById('quick-duration').value, 10) || 30;
+      const desc = document.getElementById('quick-desc').value.trim();
+      const tagsStr = document.getElementById('quick-tags').value.trim();
+      const tags = tagsStr ? tagsStr.split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean) : [];
+
+      const empCheckboxes = document.querySelectorAll('input[name="quick-emp"]:checked');
+      const participantIds = Array.from(empCheckboxes).map(cb => parseInt(cb.value, 10));
+
+      const empNames = {
+        1: 'Смирнов А.С.',
+        2: 'Кузнецов И.П.',
+        3: 'Морозова Е.А.',
+        4: 'Соколова О.В.'
+      };
+      const participants = participantIds.map(id => empNames[id] || `Сотрудник #${id}`);
+
+      const startIso = `${dateStr}T${timeStr}:00+03:00`;
+      const [h, m] = timeStr.split(':').map(Number);
+      const totalEndMin = h * 60 + m + duration;
+      const endH = Math.floor(totalEndMin / 60) % 24;
+      const endM = totalEndMin % 60;
+      const endIso = `${dateStr}T${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}:00+03:00`;
+
+      const newEvent = {
+        id: 'ev-' + Date.now(),
+        meeting_id: 'ev-' + Date.now(),
+        title: title,
+        description: desc,
+        start_time: startIso,
+        end_time: endIso,
+        item_type: itemType,
+        category: category,
+        is_all_day: false,
+        is_recurring: itemType === 'routine',
+        status: 'scheduled',
+        organizer_id: participantIds[0] || 1,
+        organizer_name: empNames[participantIds[0] || 1] || 'Смирнов А.С.',
+        participant_ids: participantIds,
+        participants: participants,
+        tags: tags
+      };
+
+      const submitBtn = document.getElementById('quick-submit-btn');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i data-lucide="loader"></i> <span>Сохранение...</span>';
+        if (window.lucide) lucide.createIcons();
+      }
+
+      try {
+        const res = await fetch('/api/calendar/confirm', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Telegram-Id': String(currentTelegramId)
+          },
+          body: JSON.stringify({
+            title: title,
+            description: desc,
+            start_time: startIso,
+            end_time: endIso,
+            organizer_id: participantIds[0] || 1,
+            participant_ids: participantIds,
+            status: 'scheduled'
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.id) newEvent.id = data.id;
+          if (data.meeting_id) newEvent.meeting_id = data.meeting_id;
+        }
+      } catch (err) {
+        console.warn('Backend unavailable, saving event locally:', err);
+      }
+
+      cachedCalendarEvents.push(newEvent);
+      renderCalendarGrid();
+      renderWeekViewGrid();
+      closeQuickAddModal();
+    }
+
+    // Global Key Listener for Esc to dismiss popovers
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeEventPopover();
+        closeQuickAddModal();
+      }
+    });
+
+    // Interaction Stubs & Hotkeys
+    function focusQuickSearch() {
+      const fi = document.getElementById('prompt-input');
+      if (fi) {
+        toggleCalendarDrawer(false);
+        fi.focus();
+        fi.placeholder = 'Поиск встреч, заказов и регламентов...';
+      }
+    }
+    function toggleTaskFilter() {
+      const cb = document.querySelector('[data-filter-list="tasks"]');
+      if (cb) {
+        cb.checked = !cb.checked;
+        onCalendarFilterChange();
+      }
+    }
+    function toggleDepartmentMatrix() {
+      toggleCalSidebar();
+    }
+    function toggleNotificationPane() {
+      alert('Уведомления: все службы типографии работают в штатном режиме.');
+    }
+    function openCalendarHelp() {
+      alert('Горячие клавиши календаря:\n• T — Перейти к сегодняшнему дню\n• W — Вид недели\n• Esc — Вернуться к чату\n• S — Скрыть/показать боковую панель');
+    }
+    function focusUserSwitcher() {
+      if (userSelect) userSelect.focus();
     }
 
     // ========================================================================
@@ -1399,7 +3185,27 @@
         }
 
         if (data && data.success && data.text) {
-          input.value = data.text.trim();
+          const recognizedText = data.text.trim();
+          const start = input.selectionStart;
+          const end = input.selectionEnd;
+          const currentVal = input.value || '';
+
+          if (currentVal.trim().length === 0) {
+            input.value = recognizedText;
+          } else if (typeof start === 'number' && typeof end === 'number' && start <= currentVal.length) {
+            const before = currentVal.substring(0, start);
+            const after = currentVal.substring(end);
+            const sepBefore = (before.length > 0 && !/\s$/.test(before)) ? ' ' : '';
+            const sepAfter = (after.length > 0 && !/^\s/.test(after)) ? ' ' : '';
+            input.value = before + sepBefore + recognizedText + sepAfter + after;
+            const newPos = (before + sepBefore + recognizedText).length;
+            input.setSelectionRange(newPos, newPos);
+          } else {
+            const sep = (!/\s$/.test(currentVal)) ? ' ' : '';
+            input.value = currentVal + sep + recognizedText;
+          }
+
+          input.dispatchEvent(new Event('input', { bubbles: true }));
           input.focus();
           const sec = data.duration_ms ? (data.duration_ms / 1000).toFixed(1) : '0.0';
           showSttBadge(`Распознано: ${data.provider || 'local-metal'}, ${sec}s`, false, 'check-circle-2');

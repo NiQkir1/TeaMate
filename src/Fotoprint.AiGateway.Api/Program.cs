@@ -11,6 +11,7 @@ using Fotoprint.Core.Protocols;
 using Fotoprint.Core.Resilience;
 using Fotoprint.Core.Security;
 using Fotoprint.Core.Telemetry;
+using Fotoprint.AiGateway.Api.Dashboard;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -311,33 +312,8 @@ app.MapGet("/health", () => Results.Ok(new
     timestamp = DateTime.UtcNow
 }));
 
-// Статистика балансировщика нагрузки, счетчика вызовов Gemini (15 RPM) и роллбэка
-app.MapGet("/api/system/stats", (
-    ILlmLoadBalancer loadBalancer,
-    IRollbackManager rollbackManager,
-    IGeminiClient gemini,
-    FotoprintConfig config) =>
-{
-    return Results.Ok(new
-    {
-        service = "Fotoprint.AiGateway.Api",
-        llm_config = new
-        {
-            provider = config.Llm.Provider,
-            chat_model = config.Llm.Models.ChatModel,
-            fast_model = config.Llm.Models.FastModel,
-            temperature = config.Llm.Parameters.Temperature,
-            max_tokens = config.Llm.Parameters.MaxTokens,
-            rpm_limit = config.Llm.RateLimits.Rpm,
-            tpm_limit = config.Llm.RateLimits.Tpm,
-            proxy_enabled = config.Llm.Proxy.Enabled
-        },
-        gemini_rpm_tracker = gemini.GetStats(),
-        load_balancer = loadBalancer.GetStats(),
-        rollback_system = rollbackManager.GetStats(),
-        timestamp = DateTime.UtcNow
-    });
-});
+// Единый управленческий дашборд Трека 1 (/dashboard/, /api/system/stats, /api/decisions) + телеметрия LLM
+app.MapDashboardEndpoints();
 
 // Прямой вызов NVIDIA LLM с контролем нагрузки и повторами
 app.MapPost("/api/llm/generate", async (
