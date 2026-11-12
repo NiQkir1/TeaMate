@@ -23,7 +23,8 @@ INSERT INTO permissions (id, code, description, category) VALUES
 (5, 'calendar:read_meetings', 'Просмотр расписания и истории встреч', 'Calendar'),
 (6, 'rag:search_all', 'Доступ ко всей корпоративной базе знаний без ограничений', 'RAG'),
 (7, 'rag:search_department', 'Доступ к документам своего отдела и общим регламентам', 'RAG'),
-(8, 'executive:view_summary', 'Формирование и просмотр управленческого отчета Executive Summary', 'Analytics')
+(8, 'executive:view_summary', 'Формирование и просмотр управленческого отчета Executive Summary', 'Analytics'),
+(9, 'calendar:create_meetings', 'Заведение встреч в корпоративном календаре (доступно всем сотрудникам)', 'Calendar')
 ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, description = EXCLUDED.description;
 
 -- Привязка прав к ролям
@@ -37,7 +38,9 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
 -- Accounting (1С заказы, Битрикс задачи, Календарь, документы отдела)
 (4, 1), (4, 3), (4, 5), (4, 7),
 -- Employee (Базовые задачи и календарь)
-(5, 3), (5, 5), (5, 7)
+(5, 3), (5, 5), (5, 7),
+-- Заведение встреч доступно всем ролям
+(1, 9), (2, 9), (3, 9), (4, 9), (5, 9)
 ON CONFLICT DO NOTHING;
 
 -- Сброс последовательностей

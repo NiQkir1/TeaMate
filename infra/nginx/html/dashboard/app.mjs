@@ -1,4 +1,4 @@
-import { EMPLOYEES, SCREENS, INITIAL_DECISIONS, SYSTEMS_CONTOUR, CAPACITY_FORECAST } from './mock-data.mjs';
+import { EMPLOYEES, SCREENS, INITIAL_DECISIONS, SYSTEMS_CONTOUR, CAPACITY_FORECAST } from './mock-data.mjs?v=2';
 
 const $ = (id) => document.getElementById(id);
 

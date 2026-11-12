@@ -140,9 +140,10 @@ var tools = new List<McpToolDefinition>
                 description = new { type = "string", description = "Повестка / описание встречи" },
                 start_time = new { type = "string", description = "Дата и время начала (ГГГГ-ММ-ДД ЧЧ:ММ)" },
                 duration_minutes = new { type = "integer", description = "Длительность в минутах (по умолчанию 30)" },
-                participants = new { type = "string", description = "Список участников через запятую" }
+                participants = new { type = "string", description = "ФИО участников через запятую (резолвятся умным поиском)" },
+                participant_ids = new { type = "array", items = new { type = "integer" }, description = "ID участников (альтернатива ФИО)" }
             },
-            required = new[] { "title" }
+            required = new[] { "title", "start_time" }
         }
     },
     new()
@@ -538,45 +539,6 @@ app.MapGet("/tools/get_calendar_events", [RequirePermission("calendar:read_meeti
         eventMap[item.Id] = item;
     }
 
-    var demoStartUtc = new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc).AddHours(-3);
-    var demoEndUtc = new DateTime(2026, 11, 18, 23, 59, 59, DateTimeKind.Utc).AddHours(3);
-
-    bool shouldIncludeDemo = (fromUtc <= demoEndUtc && toUtc >= demoStartUtc) || eventMap.Count == 0;
-    if (shouldIncludeDemo)
-    {
-        var demoItems = CalendarHelper.GetReferenceWeekDemoItems(mskZone, FormatEmpShort);
-        foreach (var demo in demoItems)
-        {
-            if (filterEmployeeId.HasValue)
-            {
-                bool matchesEmployee = demo.OrganizerId == filterEmployeeId.Value
-                    || (demo.ParticipantIds != null && demo.ParticipantIds.Contains(filterEmployeeId.Value));
-                if (!matchesEmployee)
-                    continue;
-            }
-
-            if (DateTime.TryParse(demo.StartTime, out var demoStart) && DateTime.TryParse(demo.EndTime ?? demo.StartTime, out var demoEnd))
-            {
-                var startUtc = demoStart.ToUniversalTime();
-                var endUtc = demoEnd.ToUniversalTime();
-                if (startUtc > toUtc || endUtc < fromUtc)
-                    continue;
-            }
-
-            if (!eventMap.ContainsKey(demo.Id))
-            {
-                bool duplicateExists = eventMap.Values.Any(e =>
-                    string.Equals(e.Title, demo.Title, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(e.StartTime, demo.StartTime, StringComparison.OrdinalIgnoreCase));
-
-                if (!duplicateExists)
-                {
-                    eventMap[demo.Id] = demo;
-                }
-            }
-        }
-    }
-
     var sortedEvents = eventMap.Values
         .OrderBy(e => e.IsAllDay ? 0 : 1)
         .ThenBy(e => e.StartTime)
@@ -591,30 +553,14 @@ app.MapGet("/tools/get_calendar_events", [RequirePermission("calendar:read_meeti
 });
 
 // Tool 3: schedule_meeting
-app.MapPost("/tools/schedule_meeting", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(true)] async (ScheduleMeetingRequest req, ILangfuseClient langfuse, HttpContext ctx) =>
-{
-    var meetingId = Guid.NewGuid();
-    var startTime = DateTime.TryParse(req.StartTime, out var st) ? st : DateTime.UtcNow.AddDays(1).Date.AddHours(10);
-    var duration = req.DurationMinutes is > 0 ? req.DurationMinutes.Value : 30;
-    var endTime = startTime.AddMinutes(duration);
-
-    var traceId = ctx.Request.Headers.TryGetValue("X-Trace-Id", out var tr) ? tr.ToString() : langfuse.GenerateTraceId();
-    await langfuse.LogEventAsync(traceId, "Calendar:MeetingScheduled", "INFO", $"Встреча '{req.Title}' запланирована в календаре (ID: {meetingId})");
-
-    return Results.Ok(new
-    {
-        success = true,
-        meeting_id = meetingId,
-        title = req.Title,
-        description = req.Description ?? "Рабочее совещание",
-        start_time = startTime.ToString("yyyy-MM-dd HH:mm (МСК)"),
-        end_time = endTime.ToString("yyyy-MM-dd HH:mm (МСК)"),
-        duration_minutes = duration,
-        participants = req.Participants ?? "По списку отдела",
-        status = "scheduled",
-        calendar_url = $"https://calendar.fotoprint.local/meetings/{meetingId}"
-    });
-});
+// Реальное заведение встречи в БД. Доступно всем ролям (право calendar:create_meetings выдано каждой роли).
+// Организатор — всегда вызывающий сотрудник (защита от IDOR), участники резолвятся по ФИО через умный поиск.
+app.MapPost("/tools/schedule_meeting", [RequirePermission("calendar:create_meetings")] [RequireConfirmation(true)] (
+    ScheduleMeetingRequest req,
+    IFotoprintRepository repo,
+    ILangfuseClient langfuse,
+    HttpContext ctx,
+    CancellationToken ct) => CalendarScheduleHandler.HandleAsync(req, repo, langfuse, ctx, ct));
 
 // Tool 4: search_meeting_rag (изолированный RAG созвонов в meeting_chunks: только участники по MasterId + Директор)
 app.MapGet("/tools/search_meeting_rag", [RequirePermission("calendar:read_meetings")] [RequireConfirmation(false)] async (
@@ -723,149 +669,6 @@ app.MapGet("/tools/search_meeting_rag", [RequirePermission("calendar:read_meetin
     });
 });
 
-// MCP tools call router
-app.MapPost("/tools/call", async (McpJsonRpcRequest request, IFotoprintRepository repo, ISecurityValidator validator, ILangfuseClient langfuse, HttpContext ctx) =>
-{
-    var toolName = request.Params?.Name ?? request.Method;
-
-    long telegramId = 0;
-    if (ctx.Request.Headers.TryGetValue("X-Telegram-Id", out var h) && long.TryParse(h, out var hid))
-        telegramId = hid;
-    else if (request.Params?.Arguments != null && request.Params.Arguments.TryGetValue("telegram_id", out var tgObj))
-    {
-        if (tgObj is JsonElement je && je.TryGetInt64(out var pLong)) telegramId = pLong;
-        else if (long.TryParse(tgObj?.ToString(), out var pStr)) telegramId = pStr;
-    }
-
-    var traceId = ctx.Request.Headers.TryGetValue("X-Trace-Id", out var tr) ? tr.ToString() : langfuse.GenerateTraceId();
-
-    var (isAllowed, empContext, reason) = await validator.ValidateAccessAsync(telegramId, "calendar:read_meetings", toolName, traceId, ctx.RequestAborted);
-    if (!isAllowed)
-    {
-        return Results.Json(new McpJsonRpcResponse
-        {
-            Id = request.Id,
-            Error = new McpError { Code = 403, Message = reason ?? "Access Denied" }
-        }, statusCode: 403);
-    }
-
-    if (toolName == "get_upcoming_meetings")
-    {
-        int window = 30;
-        if (request.Params?.Arguments != null && request.Params.Arguments.TryGetValue("time_window_minutes", out var wObj))
-        {
-            if (wObj is JsonElement je && je.TryGetInt32(out var winVal)) window = winVal;
-            else if (int.TryParse(wObj?.ToString(), out var pWin)) window = pWin;
-        }
-
-        var meetings = (await repo.GetUpcomingMeetingsAsync(window))
-            .Where(m => CanAccessMeeting(m, empContext))
-            .ToList();
-        return Results.Ok(new McpJsonRpcResponse
-        {
-            Id = request.Id,
-            Result = McpToolCallResult.Text(JsonSerializer.Serialize(meetings))
-        });
-    }
-
-    if (toolName == "get_meeting_history")
-    {
-        var kw = request.Params?.Arguments?.GetValueOrDefault("topic_keywords")?.ToString() ?? "";
-        var accessible = (await repo.GetUpcomingMeetingsAsync(10000))
-            .Where(m => CanAccessMeeting(m, empContext))
-            .ToList();
-        var filtered = accessible
-            .Where(m => string.IsNullOrWhiteSpace(kw) ||
-                        (m.Title?.Contains(kw, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                        (m.Description?.Contains(kw, StringComparison.OrdinalIgnoreCase) ?? false))
-            .Select(m => new { meeting_id = m.Id, title = m.Title, date = m.StartTime.ToString("yyyy-MM-dd"), summary = m.Description })
-            .ToList();
-        return Results.Ok(new McpJsonRpcResponse
-        {
-            Id = request.Id,
-            Result = McpToolCallResult.Text(JsonSerializer.Serialize(new { topic = kw, meetings = filtered }))
-        });
-    }
-
-    if (toolName == "schedule_meeting")
-    {
-        var confirmedHeader = ctx.Request.Headers["X-User-Confirmed"].ToString();
-        if (!string.Equals(confirmedHeader, "true", StringComparison.OrdinalIgnoreCase))
-        {
-            return Results.Ok(new McpJsonRpcResponse
-            {
-                Id = request.Id,
-                Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
-                {
-                    status = "confirmation_required",
-                    requires_confirmation = true,
-                    message = "Требуется подтверждение пользователя (X-User-Confirmed: true) для назначения встречи."
-                }))
-            });
-        }
-
-        var title = request.Params?.Arguments?.GetValueOrDefault("title")?.ToString() ?? "Совещание";
-        var meetingId = Guid.NewGuid();
-        return Results.Ok(new McpJsonRpcResponse
-        {
-            Id = request.Id,
-            Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
-            {
-                meeting_id = meetingId,
-                title,
-                status = "scheduled"
-            }))
-        });
-    }
-
-    if (toolName == "find_free_slots")
-    {
-        var args = request.Params?.Arguments;
-        var dateStr = args?.GetValueOrDefault("date")?.ToString();
-        var duration = args != null && args.TryGetValue("duration_minutes", out var dObj) && int.TryParse(dObj?.ToString(), out var dv) ? dv : 30;
-        var orgId = args != null && args.TryGetValue("organizer_employee_id", out var oObj) && int.TryParse(oObj?.ToString(), out var ov) ? ov : 1;
-        var pIds = new List<int>();
-        if (args != null && args.TryGetValue("participant_employee_ids", out var pObj))
-        {
-            if (pObj is JsonElement pJe && pJe.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var el in pJe.EnumerateArray())
-                    if (el.TryGetInt32(out var idVal)) pIds.Add(idVal);
-            }
-        }
-
-        var mskZone = FotoprintRepository.GetMoscowTimeZone();
-        var nowMsk = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, mskZone);
-        var targetDate = !string.IsNullOrWhiteSpace(dateStr) && DateOnly.TryParse(dateStr, out var pd) ? pd : DateOnly.FromDateTime(nowMsk);
-
-        var slots = await repo.FindFreeSlotsAsync(orgId, pIds, targetDate, duration, ct: ctx.RequestAborted);
-        return Results.Ok(new McpJsonRpcResponse
-        {
-            Id = request.Id,
-            Result = McpToolCallResult.Text(JsonSerializer.Serialize(new
-            {
-                status = "success",
-                date = targetDate.ToString("yyyy-MM-dd"),
-                duration_minutes = duration,
-                available_slots = slots.Select(s => new
-                {
-                    start_time = TimeZoneInfo.ConvertTimeFromUtc(s.StartTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
-                    end_time = TimeZoneInfo.ConvertTimeFromUtc(s.EndTimeUtc, mskZone).ToString("yyyy-MM-ddTHH:mm:sszzz"),
-                    label = s.Label
-                }),
-                is_today = targetDate == DateOnly.FromDateTime(nowMsk),
-                has_free_slots = slots.Count > 0
-            }))
-        });
-    }
-
-    return Results.BadRequest(new McpJsonRpcResponse
-    {
-        Id = request.Id,
-        Error = new McpError { Code = -32601, Message = $"Метод {toolName} не найден" }
-    });
-});
-
 app.Run();
 
 public class FindFreeSlotsRequest
@@ -952,7 +755,131 @@ public class CreateMeetingRequest
     public List<int> EffectiveParticipantIds => ParticipantIds ?? ParticipantIdsCamel ?? new List<int>();
 }
 
-public record ScheduleMeetingRequest(string Title, string? Description, string? StartTime, int? DurationMinutes, string? Participants);
+public record ScheduleMeetingRequest(string Title, string? Description, string? StartTime, int? DurationMinutes, string? Participants, List<int>? ParticipantIds = null);
+
+public static class CalendarScheduleHandler
+{
+    public static async Task<IResult> HandleAsync(
+        ScheduleMeetingRequest req,
+        IFotoprintRepository repo,
+        ILangfuseClient langfuse,
+        HttpContext ctx,
+        CancellationToken ct)
+    {
+        var secContext = ctx.Items["SecurityContext"] as EmployeeSecurityContext;
+        if (secContext == null || secContext.EmployeeId <= 0)
+        {
+            return Results.Json(new { success = false, status = "error", message = "Не удалось определить сотрудника-организатора." }, statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        if (string.IsNullOrWhiteSpace(req.Title))
+        {
+            return Results.BadRequest(new { success = false, status = "error", message = "Не указана тема встречи (title)." });
+        }
+
+        var mskZone = FotoprintRepository.GetMoscowTimeZone();
+        var nowUtc = DateTime.UtcNow;
+        DateTime startUtc;
+        if (string.IsNullOrWhiteSpace(req.StartTime))
+        {
+            // По умолчанию — завтра 10:00 МСК
+            var tomorrowMsk = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, mskZone).Date.AddDays(1).AddHours(10);
+            startUtc = TimeZoneInfo.ConvertTimeToUtc(tomorrowMsk, mskZone);
+        }
+        else if (DateTimeOffset.TryParse(req.StartTime, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dto)
+                 && (req.StartTime.Contains('+') || req.StartTime.EndsWith("Z", StringComparison.OrdinalIgnoreCase)))
+        {
+            startUtc = dto.UtcDateTime;
+        }
+        else if (DateTime.TryParse(req.StartTime, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var localMsk))
+        {
+            // Время без зоны трактуем как московское
+            startUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localMsk, DateTimeKind.Unspecified), mskZone);
+        }
+        else
+        {
+            return Results.BadRequest(new { success = false, status = "error", message = $"Некорректное время начала '{req.StartTime}'. Ожидается ГГГГ-ММ-ДД ЧЧ:ММ." });
+        }
+
+        if (startUtc < nowUtc.AddMinutes(-5))
+        {
+            return Results.BadRequest(new { success = false, status = "error", message = "Нельзя назначить встречу в прошлом." });
+        }
+
+        var duration = Math.Clamp(req.DurationMinutes is > 0 ? req.DurationMinutes.Value : 30, 5, 8 * 60);
+        var endUtc = startUtc.AddMinutes(duration);
+
+        // Резолв участников: явные ID + ФИО через запятую
+        var participantIds = new HashSet<int>(req.ParticipantIds ?? new List<int>());
+        var unresolved = new List<string>();
+        var ambiguous = new List<object>();
+        if (!string.IsNullOrWhiteSpace(req.Participants))
+        {
+            foreach (var name in req.Participants.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var matches = await repo.SearchEmployeesAsync(name, 5, ct);
+                if (matches.Count == 1)
+                {
+                    participantIds.Add(matches[0].Id);
+                }
+                else if (matches.Count == 0)
+                {
+                    unresolved.Add(name);
+                }
+                else
+                {
+                    ambiguous.Add(new { query = name, candidates = matches.Select(m => new { id = m.Id, name = m.FullName, position = m.Position }) });
+                }
+            }
+        }
+
+        if (unresolved.Count > 0 || ambiguous.Count > 0)
+        {
+            return Results.Ok(new
+            {
+                success = false,
+                status = "participants_unresolved",
+                message = "Не удалось однозначно определить участников. Уточните ФИО или передайте participant_ids.",
+                unresolved,
+                ambiguous
+            });
+        }
+
+        participantIds.Remove(secContext.EmployeeId);
+        var participantList = participantIds.ToList();
+
+        var meetingId = await repo.CreateMeetingAsync(
+            title: req.Title.Trim(),
+            description: req.Description,
+            startTime: startUtc,
+            endTime: endUtc,
+            status: "scheduled",
+            organizerId: secContext.EmployeeId,
+            participantIds: participantList,
+            metadata: new { source = "mcp:schedule_meeting", item_type = "meeting" },
+            ct: ct);
+
+        var traceId = ctx.Request.Headers.TryGetValue("X-Trace-Id", out var tr) ? tr.ToString() : langfuse.GenerateTraceId();
+        await langfuse.LogEventAsync(traceId, "Calendar:MeetingScheduled", "INFO", $"Встреча '{req.Title}' создана сотрудником #{secContext.EmployeeId} (ID: {meetingId})");
+
+        var allEmps = await repo.GetAllEmployeesAsync(ct);
+        var empDict = allEmps.ToDictionary(e => e.Id, e => e.FullName);
+
+        return Results.Ok(new
+        {
+            success = true,
+            status = "scheduled",
+            meeting_id = meetingId,
+            title = req.Title.Trim(),
+            description = req.Description,
+            start_time = TimeZoneInfo.ConvertTimeFromUtc(startUtc, mskZone).ToString("yyyy-MM-dd HH:mm (МСК)"),
+            end_time = TimeZoneInfo.ConvertTimeFromUtc(endUtc, mskZone).ToString("yyyy-MM-dd HH:mm (МСК)"),
+            duration_minutes = duration,
+            organizer = new { id = secContext.EmployeeId, name = secContext.FullName },
+            participants = participantList.Select(pid => new { id = pid, name = empDict.TryGetValue(pid, out var n) ? n : $"Сотрудник #{pid}" })
+        });
+    }
+}
 
 public static class CalendarHelper
 {

@@ -185,7 +185,16 @@ public static class DashboardEndpoints
                 dailyPlans = payload.DailyPlans,
                 series = payload.Series,
                 forecastSeries = payload.ForecastSeries,
+                trend = BuildTrendPoints(payload.Series, payload.ForecastSeries, dateTo),
                 systems = GetSystemsContour(),
+                alerts = BuildAlerts(payload.Kpis, profile.Department),
+                quality = new
+                {
+                    missing = 0,
+                    duplicates = 0,
+                    freshness = 2,
+                    financeReconciliation = "warning"
+                },
                 forecast = GetCapacityForecast(),
                 decisions = GetDecisionsSnapshot(),
                 auditLog = GetAuditSnapshot(),
@@ -550,6 +559,61 @@ public static class DashboardEndpoints
     {
         var v = Math.Round(baseVal * (1.0 + shift * 0.25), 1);
         return new DashboardKpiDto(id, name, v, planVal, unit, delta, status, source, formula, updatedAt);
+    }
+
+    private static List<object> BuildTrendPoints(IReadOnlyList<double> series, IReadOnlyList<double> forecastSeries, string dateTo)
+    {
+        var anchor = DateOnly.TryParseExact(dateTo, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            ? parsed
+            : DateOnly.FromDateTime(DateTime.UtcNow.AddHours(3));
+
+        var points = new List<object>();
+        for (var i = 0; i < series.Count; i++)
+        {
+            var pointDate = anchor.AddDays(-(series.Count - 1 - i));
+            points.Add(new
+            {
+                date = pointDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                fact = series[i],
+                plan = Math.Round(series[i] * 0.96, 1),
+                forecast = i == series.Count - 1 && forecastSeries.Count > 0 ? forecastSeries[0] : (double?)null
+            });
+        }
+
+        for (var i = 1; i < forecastSeries.Count; i++)
+        {
+            var pointDate = anchor.AddDays(i);
+            points.Add(new
+            {
+                date = pointDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                fact = (double?)null,
+                plan = Math.Round(forecastSeries[i] * 0.96, 1),
+                forecast = forecastSeries[i]
+            });
+        }
+
+        return points;
+    }
+
+    private static List<object> BuildAlerts(List<DashboardKpiDto> kpis, string fallbackDepartment)
+    {
+        return kpis
+            .Where(k => k.Status is "critical" or "warning")
+            .Select(k => (object)new
+            {
+                id = $"alert_{k.Id}",
+                title = $"{k.Name}: {k.Base} {k.Unit}",
+                reason = $"Отклонение {k.Delta} от плана {k.Plan} {k.Unit} ({k.Source})",
+                metricId = k.Id,
+                department = k.Source.Contains("ERP", StringComparison.OrdinalIgnoreCase)
+                    ? "Производство"
+                    : k.Source.Contains("1С", StringComparison.OrdinalIgnoreCase)
+                        ? "Финансы"
+                        : k.Source.Contains("CRM", StringComparison.OrdinalIgnoreCase) || k.Source.Contains("Битрикс", StringComparison.OrdinalIgnoreCase)
+                            ? "Продажи"
+                            : fallbackDepartment
+            })
+            .ToList();
     }
 
     private static List<object> GetSystemsContour() =>
