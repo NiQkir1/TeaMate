@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fotoprint AI Copilot — Корпоративный AI-ассистент</title>
+  <title>TeaMate AI Copilot — Корпоративный AI-ассистент</title>
   <link rel="stylesheet" href="themes/theme-core.css">
   <link id="app-theme-link" rel="stylesheet" href="themes/theme-liquid-glass.css">
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -24,7 +24,7 @@
         <i data-lucide="printer"></i>
       </div>
       <div class="title-group">
-        <h1>Fotoprint AI Copilot</h1>
+        <h1>TeaMate AI Copilot</h1>
         <div class="model-badge">
           <div class="pulse" aria-hidden="true"></div>
           <span>NVIDIA Nemotron-3.5 120B &amp; Whisper STT</span>
@@ -81,7 +81,7 @@
       <div class="msg-row bot">
         <div class="avatar" aria-hidden="true"><i data-lucide="bot"></i></div>
         <div class="msg-content">
-          Здравствуйте! Я — корпоративный ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
+          Здравствуйте! Я — TeaMate, корпоративный AI-ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
           Я могу проверить статус тиража в 1С, рассчитать выработку машин Heidelberg, проверить задачи и сделки в Битрикс24, посмотреть планерки в календаре или подсказать технологический регламент.<br><br>
           Для голосовых сценариев доступны кнопки голосового ввода с микрофона и загрузки аудиозаписи совещания для протокола MoM.
         </div>
@@ -809,10 +809,11 @@
     const calendarTodayBadge = document.getElementById('calendar-today-badge');
 
     const FALLBACK_USERS = [
-      { telegram_id: 100001, full_name: 'Смирнов Алексей Сергеевич', department: 'Руководство', position: 'Генеральный директор', roles: ['Director'], permissions: [] },
-      { telegram_id: 100002, full_name: 'Кузнецов Иван Петрович', department: 'Производство', position: 'Начальник производства', roles: ['Production'], permissions: [] },
-      { telegram_id: 100003, full_name: 'Морозова Елена Алексеевна', department: 'Продажи', position: 'Руководитель отдела продаж', roles: ['Sales'], permissions: [] },
-      { telegram_id: 100004, full_name: 'Соколова Ольга Викторовна', department: 'Бухгалтерия', position: 'Главный бухгалтер', roles: ['Accounting'], permissions: [] }
+      { employee_id: 1, telegram_id: 2135203645, full_name: 'Смирнов Алексей Сергеевич', department: 'Руководство', position: 'Генеральный директор', roles: ['Director'], permissions: [] },
+      { employee_id: 2, telegram_id: 100002, full_name: 'Кузнецов Иван Петрович', department: 'Производство', position: 'Начальник производства', roles: ['Production'], permissions: [] },
+      { employee_id: 3, telegram_id: 100003, full_name: 'Морозова Елена Алексеевна', department: 'Продажи', position: 'Руководитель отдела продаж', roles: ['Sales'], permissions: [] },
+      { employee_id: 4, telegram_id: 100004, full_name: 'Соколова Ольга Викторовна', department: 'Бухгалтерия', position: 'Главный бухгалтер', roles: ['Accounting'], permissions: [] },
+      { employee_id: 5, telegram_id: 100005, full_name: 'Волков Дмитрий Игоревич', department: 'Производство', position: 'Печатник (Employee)', roles: ['Employee'], permissions: [] }
     ];
     const GUEST_TEST_USER = {
       telegram_id: 999999,
@@ -823,14 +824,31 @@
       permissions: []
     };
 
-    let availableUsers = [];
-    let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 100001;
+    function getTodayIso() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
 
-    // Calendar state
+    function getWeekMonday(d) {
+      const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const day = date.getDay();
+      const diff = (day === 0 ? -6 : 1) - day;
+      date.setDate(date.getDate() + diff);
+      return date;
+    }
+
+    let availableUsers = [];
+    let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 2135203645;
+
+    // Calendar state (live dynamic date)
+    const _nowInit = new Date();
     let currentCalendarViewMode = 'week';
-    let currentCalendarDate = new Date(2026, 10, 12); // Default: November 12, 2026
-    let selectedCalendarDate = new Date(2026, 10, 12);
-    let currentWeekStart = new Date(2026, 10, 12); // Reference week starts Thu 12 Nov 2026
+    let currentCalendarDate = new Date(_nowInit);
+    let selectedCalendarDate = new Date(_nowInit);
+    let currentWeekStart = getWeekMonday(_nowInit);
     let currentCalendarScope = 'my';
     let cachedCalendarEvents = [];
     let currentActivePopoverEvent = null;
@@ -1811,483 +1829,7 @@
     // ========================================================================
     // STANDALONE TICKTICK CALENDAR WINDOW ENGINE & SIDEBAR FILTERS
     // ========================================================================
-    const FALLBACK_CALENDAR_EVENTS = [
-      // Recurring Routine (All-day bars across week)
-      {
-        id: "routine-daily-12",
-        meeting_id: "b0000001-1112-2026-0000-000000000001",
-        item_type: "routine",
-        category: "routine",
-        title: "Утренняя сводка выработки цеха",
-        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
-        start_time: "2026-11-12T00:00:00+03:00",
-        end_time: "2026-11-12T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["рутина", "цех", "приоритеты"]
-      },
-      {
-        id: "routine-daily-13",
-        meeting_id: "b0000001-1113-2026-0000-000000000001",
-        item_type: "routine",
-        category: "routine",
-        title: "Утренняя сводка выработки цеха",
-        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
-        start_time: "2026-11-13T00:00:00+03:00",
-        end_time: "2026-11-13T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["рутина", "цех", "приоритеты"]
-      },
-      {
-        id: "routine-daily-14",
-        meeting_id: "b0000001-1114-2026-0000-000000000001",
-        item_type: "routine",
-        category: "routine",
-        title: "Утренняя сводка выработки цеха",
-        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
-        start_time: "2026-11-14T00:00:00+03:00",
-        end_time: "2026-11-14T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["рутина", "цех", "приоритеты"]
-      },
-      {
-        id: "routine-daily-15",
-        meeting_id: "b0000001-1115-2026-0000-000000000001",
-        item_type: "routine",
-        category: "routine",
-        title: "Утренняя сводка выработки цеха",
-        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
-        start_time: "2026-11-15T00:00:00+03:00",
-        end_time: "2026-11-15T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["рутина", "цех", "приоритеты"]
-      },
-      {
-        id: "routine-daily-16",
-        meeting_id: "b0000001-1116-2026-0000-000000000001",
-        item_type: "routine",
-        category: "routine",
-        title: "Утренняя сводка выработки цеха",
-        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
-        start_time: "2026-11-16T00:00:00+03:00",
-        end_time: "2026-11-16T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["рутина", "цех", "приоритеты"]
-      },
-      {
-        id: "routine-daily-17",
-        meeting_id: "b0000001-1117-2026-0000-000000000001",
-        item_type: "routine",
-        category: "routine",
-        title: "Утренняя сводка выработки цеха",
-        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
-        start_time: "2026-11-17T00:00:00+03:00",
-        end_time: "2026-11-17T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["рутина", "цех", "приоритеты"]
-      },
-      {
-        id: "routine-daily-18",
-        meeting_id: "b0000001-1118-2026-0000-000000000001",
-        item_type: "routine",
-        category: "routine",
-        title: "Утренняя сводка выработки цеха",
-        description: "Ежедневная утренняя пятиминутка начальника производства и директора, фиксация приоритетов смены",
-        start_time: "2026-11-18T00:00:00+03:00",
-        end_time: "2026-11-18T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["рутина", "цех", "приоритеты"]
-      },
-      {
-        id: "routine-heidelberg-12",
-        item_type: "routine",
-        category: "routine",
-        title: "Контроль смены и нормы брака Heidelberg",
-        description: "Инструментальный замер разнотона и допустимого процента брака офсетной печати",
-        start_time: "2026-11-12T00:00:00+03:00",
-        end_time: "2026-11-12T23:59:59+03:00",
-        is_all_day: true,
-        is_recurring: true,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["heidelberg", "цех"]
-      },
-      // Daily All-Day Tasks (Thu 12)
-      {
-        id: "task-val-check",
-        item_type: "task",
-        category: "production",
-        title: "Техническое обслуживание и юстировка валов Heidelberg",
-        description: "Осмотр офсетных резинотканевых полотен и прижимных валиков Heidelberg Speedmaster",
-        start_time: "2026-11-12T00:00:00+03:00",
-        is_all_day: true,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["heidelberg", "производство"]
-      },
-      {
-        id: "task-paper-stock",
-        item_type: "task",
-        category: "production",
-        title: "Сверка остатков меловой бумаги на складе",
-        description: "Инвентаризация паллет меловки 150г/м2 под тираж каталогов №44102",
-        start_time: "2026-11-12T00:00:00+03:00",
-        is_all_day: true,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["склад", "производство"]
-      },
-      // Thursday 12 Nov Timed Events
-      {
-        id: "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        meeting_id: "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        item_type: "meeting",
-        category: "production",
-        title: "Оперативка производства: тираж №44102",
-        description: "Разбор юстировки валов Heidelberg XL 75, срыв поставки меловки и перераспределение смен",
-        start_time: "2026-11-12T10:05:00+03:00",
-        end_time: "2026-11-12T11:30:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2, 3],
-        participants: ["Смирнов А.С.", "Кузнецов И.П.", "Морозова Е.А."],
-        tags: ["heidelberg", "заказ-44102", "планерка"]
-      },
-      // OVERLAPPING PAIR on Thu 12 at 12:00 (50% / 50% side-by-side)
-      {
-        id: "bbbbbbb3-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        meeting_id: "bbbbbbb3-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        item_type: "meeting",
-        category: "sales",
-        title: "ЛР ОМО: Согласование договора Альфа-Маркет",
-        description: "Утверждение графика поставок упаковки и отсрочки платежа 30 дней",
-        start_time: "2026-11-12T12:00:00+03:00",
-        end_time: "2026-11-12T13:25:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 3,
-        organizer_name: "Морозова Е.А.",
-        participant_ids: [3, 4],
-        participants: ["Морозова Е.А.", "Соколова О.В."],
-        tags: ["альфа-маркет", "заказ-44102"]
-      },
-      {
-        id: "task-spec-val-12",
-        item_type: "task",
-        category: "tasks",
-        title: "Отправить спецификацию валов в Битрикс24",
-        description: "Сформировать и отправить сервисной службе Heidelberg спецификацию на валы в Битрикс24 (задача #1045)",
-        start_time: "2026-11-12T12:00:00+03:00",
-        end_time: "2026-11-12T12:45:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["heidelberg", "битрикс24"]
-      },
-      {
-        id: "b0000112-1335-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "production",
-        title: "Техконтроль печатного цеха Heidelberg",
-        description: "Инструментальная проверка биения валов печатного цеха и калибровка краски",
-        start_time: "2026-11-12T13:35:00+03:00",
-        end_time: "2026-11-12T15:00:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["техконтроль", "heidelberg", "производство"]
-      },
-      {
-        id: "b0000112-1530-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "production",
-        title: "Калибровка цветопробы и спектрофотометрия",
-        description: "Проверка спектрофотометра и линеаризация выводного устройства CTP",
-        start_time: "2026-11-12T15:30:00+03:00",
-        end_time: "2026-11-12T16:55:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["цветопроба", "цех"]
-      },
-      {
-        id: "e0000112-1900-2026-0000-000000000001",
-        item_type: "task",
-        category: "tasks",
-        title: "Вечерний чек-ин смены: тираж №44102",
-        description: "Контрольная сдача смены печатников и передача ночного задания на тираж №44102",
-        start_time: "2026-11-12T19:00:00+03:00",
-        end_time: "2026-11-12T19:45:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["тираж-44102", "смена", "битрикс24"]
-      },
-      // Friday 13 Nov Timed Events
-      {
-        id: "b0000113-1900-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "sales",
-        title: "Итоги недели по отгрузкам",
-        description: "Сводка выполненных отгрузок за неделю, контроль дебиторской задолженности и закрытие актов",
-        start_time: "2026-11-13T19:00:00+03:00",
-        end_time: "2026-11-13T20:25:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 3],
-        participants: ["Смирнов А.С.", "Морозова Е.А."],
-        tags: ["отгрузки", "продажи"]
-      },
-      // Saturday 14 Nov Timed Events
-      {
-        id: "b0000114-1200-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "production",
-        title: "Аудит профилактики валов Heidelberg",
-        description: "Плановое техническое обслуживание и смывка красочных валиков офсетных секций",
-        start_time: "2026-11-14T12:00:00+03:00",
-        end_time: "2026-11-14T13:25:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["аудит", "валы", "heidelberg"]
-      },
-      {
-        id: "b0000114-1335-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "accounting",
-        title: "Сверка складских остатков и БД 1С",
-        description: "Сверка остатков бумаги, красок и лаков в 1С с фактическими инвентаризационными описями",
-        start_time: "2026-11-14T13:35:00+03:00",
-        end_time: "2026-11-14T15:00:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 4,
-        organizer_name: "Соколова О.В.",
-        participant_ids: [4],
-        participants: ["Соколова О.В."],
-        tags: ["1с", "инвентаризация", "склад", "бухгалтерия"]
-      },
-      // Monday 16 Nov Timed Events
-      {
-        id: "b0000116-1705-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "accounting",
-        title: "Финансовый комитет и закрытие счетов",
-        description: "Утверждение реестра оплат недели: аванс поставщику валов и оплата сырья",
-        start_time: "2026-11-16T17:05:00+03:00",
-        end_time: "2026-11-16T18:30:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 4],
-        participants: ["Смирнов А.С.", "Соколова О.В."],
-        tags: ["финансы", "платежи", "бухгалтерия"]
-      },
-      {
-        id: "b0000116-1900-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "sales",
-        title: "План продаж корпоративным клиентам",
-        description: "Анализ воронки ключевых корпоративных клиентов, новогодний каталог и загрузка цехов",
-        start_time: "2026-11-16T19:00:00+03:00",
-        end_time: "2026-11-16T20:25:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 3],
-        participants: ["Смирнов А.С.", "Морозова Е.А."],
-        tags: ["продажи", "клиенты"]
-      },
-      // Tuesday 17 Nov Timed Events
-      {
-        id: "b0000117-1530-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "production",
-        title: "Калибровка цветопробы цеха",
-        description: "Проверка спектрофотометра и линеаризация выводного устройства CTP",
-        start_time: "2026-11-17T15:30:00+03:00",
-        end_time: "2026-11-17T16:55:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 2,
-        organizer_name: "Кузнецов И.П.",
-        participant_ids: [2],
-        participants: ["Кузнецов И.П."],
-        tags: ["цветопроба", "цех"]
-      },
-      {
-        id: "b0000117-1705-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "management",
-        title: "Разбор аналитики выработки и себестоимости",
-        description: "Оценка выработки цехов, себестоимости тиражей и времени ответа Copilot",
-        start_time: "2026-11-17T17:05:00+03:00",
-        end_time: "2026-11-17T18:30:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2],
-        participants: ["Смирнов А.С.", "Кузнецов И.П."],
-        tags: ["себестоимость", "планерка"]
-      },
-      {
-        id: "b0000117-1900-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "sales",
-        title: "Синхронизация задач CRM Битрикс24",
-        description: "Разбор стадий сделок в CRM, проверка контактных лиц и задач менеджеров",
-        start_time: "2026-11-17T19:00:00+03:00",
-        end_time: "2026-11-17T20:25:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 3,
-        organizer_name: "Морозова Е.А.",
-        participant_ids: [3],
-        participants: ["Морозова Е.А."],
-        tags: ["битрикс24", "crm", "продажи"]
-      },
-      // Wednesday 18 Nov Timed Events
-      {
-        id: "b0000118-1530-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "management",
-        title: "Совещание по автоматизации n8n",
-        description: "Тестирование вебхука смены статуса заказов 1С и триггера авто-создания встреч",
-        start_time: "2026-11-18T15:30:00+03:00",
-        end_time: "2026-11-18T16:55:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 2, 3],
-        participants: ["Смирнов А.С.", "Кузнецов И.П.", "Морозова Е.А."],
-        tags: ["n8n", "автоматизация", "руководство"]
-      },
-      {
-        id: "b0000118-1705-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "accounting",
-        title: "Ревизия себестоимости тиражей",
-        description: "Анализ плановой и фактической маржинальности ноябрьских заказов с учетом ночных смен",
-        start_time: "2026-11-18T17:05:00+03:00",
-        end_time: "2026-11-18T18:30:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 1,
-        organizer_name: "Смирнов А.С.",
-        participant_ids: [1, 4],
-        participants: ["Смирнов А.С.", "Соколова О.В."],
-        tags: ["себестоимость", "бухгалтерия"]
-      },
-      {
-        id: "b0000118-1900-2026-0000-000000000001",
-        item_type: "meeting",
-        category: "accounting",
-        title: "Контроль дебиторской задолженности по отгрузкам",
-        description: "Сверка актов сверок и статус погашения задолженности за предыдущий отчетный месяц",
-        start_time: "2026-11-18T19:00:00+03:00",
-        end_time: "2026-11-18T20:25:00+03:00",
-        is_all_day: false,
-        is_recurring: false,
-        status: "scheduled",
-        organizer_id: 4,
-        organizer_name: "Соколова О.В.",
-        participant_ids: [4],
-        participants: ["Соколова О.В."],
-        tags: ["дебиторка", "платежи", "бухгалтерия"]
-      }
-    ];
+    const FALLBACK_CALENDAR_EVENTS = [];
 
     const calendarFilterState = {
       all: true,
@@ -2435,15 +1977,17 @@
     }
 
     function goToToday() {
-      currentCalendarDate = new Date(2026, 10, 12);
-      selectedCalendarDate = new Date(2026, 10, 12);
-      currentWeekStart = new Date(2026, 10, 12);
+      const now = new Date();
+      currentCalendarDate = new Date(now);
+      selectedCalendarDate = new Date(now);
+      currentWeekStart = getWeekMonday(now);
       renderCalendarGrid();
       renderWeekViewGrid();
       refreshCalendarEvents();
       const scrollArea = document.getElementById('cal-timegrid-scroll');
       if (scrollArea && (currentCalendarViewMode === 'day' || currentCalendarViewMode === 'week')) {
-        scrollArea.scrollTop = 450;
+        const curMin = now.getHours() * 60 + now.getMinutes();
+        scrollArea.scrollTop = Math.max(0, curMin - 150);
       }
     }
 
@@ -2659,7 +2203,7 @@
       activeWeekStart.setHours(0, 0, 0, 0);
       activeWeekEnd.setHours(23, 59, 59, 999);
 
-      const todayStr = '2026-11-12';
+      const todayStr = getTodayIso();
       const allCells = [];
 
       // Days from previous month
@@ -2738,14 +2282,42 @@
       return `${h - 12} PM`;
     }
 
+    function getEventMinutes(isoStr, dateObj) {
+      if (typeof isoStr === 'string' && isoStr.includes('T')) {
+        const timePart = isoStr.split('T')[1];
+        if (timePart) {
+          const parts = timePart.split(':');
+          if (parts.length >= 2) {
+            const h = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10);
+            if (!isNaN(h) && !isNaN(m)) return h * 60 + m;
+          }
+        }
+      }
+      return dateObj ? (dateObj.getHours() * 60 + dateObj.getMinutes()) : 0;
+    }
+
+    function getEventTimeStr(isoStr, dateObj) {
+      if (typeof isoStr === 'string' && isoStr.includes('T')) {
+        const timePart = isoStr.split('T')[1];
+        if (timePart) {
+          const parts = timePart.split(':');
+          if (parts.length >= 2) {
+            return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+          }
+        }
+      }
+      return dateObj ? dateObj.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+    }
+
     function layoutDayTimedEvents(events) {
       if (!events || events.length === 0) return [];
 
       const parsed = events.map(ev => {
         const start = new Date(ev.start_time);
         const end = ev.end_time ? new Date(ev.end_time) : new Date(start.getTime() + 60 * 60000);
-        const startMin = start.getHours() * 60 + start.getMinutes();
-        const endMin = end.getHours() * 60 + end.getMinutes();
+        const startMin = getEventMinutes(ev.start_time, start);
+        const endMin = ev.end_time ? getEventMinutes(ev.end_time, end) : (startMin + 60);
         const duration = Math.max(30, endMin - startMin);
         return {
           event: ev,
@@ -2908,7 +2480,7 @@
 
       gridColumns.innerHTML = '';
 
-      const todayStr = '2026-11-12';
+      const todayStr = getTodayIso();
       const weekDates = [];
       const WEEKDAY_NAMES_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -3081,7 +2653,7 @@
 
       const year = currentCalendarDate.getFullYear();
       const month = currentCalendarDate.getMonth();
-      const todayStr = '2026-11-12';
+      const todayStr = getTodayIso();
 
       // 1. Weekday headers row
       const weekdaysHeader = document.createElement('div');
@@ -3203,7 +2775,7 @@
           let timeStr = '';
           if (!ev.is_all_day && !ev.is_recurring && ev.start_time) {
             const startD = new Date(ev.start_time);
-            timeStr = startD.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            timeStr = getEventTimeStr(ev.start_time, startD);
           }
 
           pill.innerHTML = `
@@ -3275,7 +2847,7 @@
       yearGrid.innerHTML = '';
 
       const year = currentCalendarDate.getFullYear();
-      const todayStr = '2026-11-12';
+      const todayStr = getTodayIso();
 
       for (let m = 0; m < 12; m++) {
         const monthCard = document.createElement('div');
@@ -3417,7 +2989,7 @@
       }
 
       const user = getCurrentUser();
-      const employeeId = user.telegram_id === 100001 ? 1 : (user.telegram_id === 100002 ? 2 : (user.telegram_id === 100003 ? 3 : 4));
+      const employeeId = user.employee_id || (user.telegram_id === 2135203645 || user.telegram_id === 100001 ? 1 : (user.telegram_id === 100002 ? 2 : (user.telegram_id === 100003 ? 3 : (user.telegram_id === 100004 ? 4 : (user.telegram_id === 100005 ? 5 : 1)))));
 
       try {
         const query = new URLSearchParams({
@@ -3450,7 +3022,7 @@
       }
 
       // Update today badge count
-      const todayIso = '2026-11-12';
+      const todayIso = getTodayIso();
       const todayMeetings = cachedCalendarEvents.filter(ev => ev.start_time && ev.start_time.startsWith(todayIso));
       if (calendarTodayBadge) {
         calendarTodayBadge.textContent = String(todayMeetings.length);
@@ -3507,8 +3079,8 @@
           const s = new Date(ev.start_time);
           const e = ev.end_time ? new Date(ev.end_time) : new Date(s.getTime() + 60 * 60000);
           const dayStr = s.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
-          const sTime = s.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-          const eTime = e.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          const sTime = getEventTimeStr(ev.start_time, s);
+          const eTime = getEventTimeStr(ev.end_time, e);
           timeEl.textContent = `${dayStr}, ${sTime} - ${eTime}`;
         }
       }
@@ -3587,7 +3159,7 @@
     function downloadPopoverMoM() {
       if (!currentActivePopoverEvent) return;
       const ev = currentActivePopoverEvent;
-      const textContent = `Протокол встречи: ${ev.title}\nВремя: ${ev.start_time}\nУчастники: ${(ev.participants || []).join(', ')}\n\nСгенерировано Fotoprint AI Copilot.`;
+      const textContent = `Протокол встречи: ${ev.title}\nВремя: ${ev.start_time}\nУчастники: ${(ev.participants || []).join(', ')}\n\nСгенерировано TeaMate AI Copilot.`;
       const blob = new Blob([textContent], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -3615,7 +3187,7 @@
       if (descInput) descInput.value = '';
       if (tagsInput) tagsInput.value = '';
 
-      const defaultDate = dateStr || '2026-11-12';
+      const defaultDate = dateStr || getTodayIso();
       const defaultHour = typeof hour === 'number' ? hour : 14;
       const defaultMin = typeof minute === 'number' ? minute : 0;
 
@@ -4024,7 +3596,7 @@
       if (!title) return;
 
       const desc = descInput ? descInput.value.trim() : '';
-      const dateStr = dateInput ? dateInput.value : '2026-11-12';
+      const dateStr = dateInput ? dateInput.value : getTodayIso();
       const startStr = startInput ? startInput.value : '10:00';
       const endStr = endInput ? endInput.value : '11:00';
 
@@ -4369,10 +3941,10 @@
       if (existing) existing.remove();
 
       const title = `Встреча с ${card.target_person || 'Кузнецовым И.П.'}`;
-      const startTime = slot.iso_start || slot.start_time || '2026-11-12T14:30:00+03:00';
-      const endTime = slot.iso_end || slot.end_time || '2026-11-12T15:00:00+03:00';
+      const startTime = slot.iso_start || slot.start_time || `${getTodayIso()}T14:30:00+03:00`;
+      const endTime = slot.iso_end || slot.end_time || `${getTodayIso()}T15:00:00+03:00`;
       const organizer = getCurrentUser();
-      const organizerId = organizer.telegram_id === 100001 ? 1 : 2;
+      const organizerId = organizer.employee_id || (organizer.telegram_id === 2135203645 || organizer.telegram_id === 100001 ? 1 : 2);
       const participantId = card.target_employee_id || 2;
       const slotTimeText = slot.label || `${slot.start} – ${slot.end}`;
 

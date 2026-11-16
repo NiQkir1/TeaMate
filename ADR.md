@@ -1,9 +1,4 @@
-# 📐 ADR-001: Архитектура платформы Fotoprint AI Copilot & Единой системы управления (Track 1 + Track 3)
-
-- **Статус:** Принято (Accepted)
-- **Дата актуализации:** 12 ноября 2026
-- **Ветка синхронизации:** `dev`
-- **Заказчик:** ООО «Фотопринт» (`picpac.by`)
+# 📐 ADR-001: Архитектура платформы TeaMate AI Copilot & Единой системы управления (Track 1 + Track 3)
 
 ---
 
@@ -26,18 +21,19 @@
 
 ## 2. Принятые архитектурные решения (Architectural Decisions)
 
-### ADR-001.1: Изолированный периметр 5 MCP-микросервисов и единый API-шлюз (.NET 9)
-- **Решение:** Внешний трафик принимается исключительно через `Nginx Ingress` (`:80`, анти-сканер защита `444 Drop`, honeypot-ловушки и `limit_req`), который проксирует запросы в `Fotoprint.AiGateway.Api` (`:8080`, на хосте `127.0.0.1:8088`). Доменные коннекторы вынесены в **5 изолированных MCP-серверов** без публичного проброса портов:
-  - `Fotoprint.Mcp.EmployeeReader` (`:8081`)
-  - `Fotoprint.Mcp.OneC` (`:8082`)
-  - `Fotoprint.Mcp.Bitrix24` (`:8083`)
-  - `Fotoprint.Mcp.Calendar` (`:8084`)
-  - `Fotoprint.Mcp.KnowledgeBase` (`:8086`)
+### ADR-001.1: Изолированный периметр MCP-микросервисов и единый API-шлюз (.NET 9)
+- **Решение:** Внешний трафик принимается исключительно через `Nginx Ingress` (`:80`, анти-сканер защита `444 Drop`, honeypot-ловушки и `limit_req`), который проксирует запросы в `TeaMate.AiGateway.Api` (`:8080`, на хосте `127.0.0.1:8088`). Доменные коннекторы вынесены в **изолированные MCP-серверы** без публичного проброса портов:
+  - `TeaMate.Mcp.EmployeeReader` (`:8081`)
+  - `TeaMate.Mcp.OneC` (`:8082`)
+  - `TeaMate.Mcp.Bitrix24` (`:8083`)
+  - `TeaMate.Mcp.Calendar` (`:8084`)
+  - `TeaMate.Mcp.KnowledgeBase` (`:8086`)
+  - `TeaMate.Mcp.SupportDesk` (`:8087`)
   *(плюс опциональный внешний коннектор `bitrix24-ready-mcp :8085` под Compose-профилем `optional`).*
 - **Обоснование:** Исключает прямой доступ извне к корпоративным системам; все межсервисные вызовы защищены заголовком `X-Internal-Service-Key` и `SecurityInterceptorMiddleware`.
 
 ### ADR-001.2: 3-этапный конвейер диалога с LLM-детекцией смены контекста (`ContextSwitchDetector`)
-- **Решение:** Перед вызовом оркестратора `n8n` и `FotoprintAiAgent` шлюз загружает до 10 последних незамороженных сообщений активной сессии (`master_id`) и передает их в `IContextSwitchDetector`. При обнаружении смены темы (`is_context_switched = true`) старый `UUID SessionId` закрывается, его сообщения замораживаются (`is_frozen = true`), и создается новый `SessionId`.
+- **Решение:** Перед вызовом оркестратора `n8n` и `TeaMateAiAgent` шлюз загружает до 10 последних незамороженных сообщений активной сессии (`master_id`) и передает их в `IContextSwitchDetector`. При обнаружении смены темы (`is_context_switched = true`) старый `UUID SessionId` закрывается, его сообщения замораживаются (`is_frozen = true`), и создается новый `SessionId`.
 - **Обоснование:** Предотвращает «загрязнение» контекста LLM старыми темами и экономит токены при длительных диалогах в Telegram и Web UI.
 
 ### ADR-001.3: Zero-Trust RBAC на уровне БД, векторного поиска (`pgvector`) и дашбордов
@@ -58,7 +54,7 @@
 - **Решение:** В дополнение к трейсингу LLM в Langfuse v3 (ClickHouse + Redis + MinIO) развернут стек централизованного логирования и мониторинга:
   - **Grafana Alloy** собирает stdout/stderr-логи всех Docker-контейнеров через `/var/run/docker.sock` в **Loki** (`:3100`).
   - **ClickHouse-to-Loki Sync** (`infra/observability/clickhouse_to_loki.py`) каждые 10 секунд переливает из ClickHouse в Loki трейсы, `observations` (токены, модели, латентность), `scores` (`faithfulness`, `formatting_and_policy`, `meeting_rag_found`, `security_alert`) и SQL-ошибки `system.query_log`.
-  - **Grafana** (`127.0.0.1:3001`) автопровижинит источники `Loki` и `Postgres` и два дашборда: `Fotoprint — Langfuse, Errors & Backend Logs` (`fotoprint-observability`) и `Fotoprint — Только ошибки` (`fotoprint-errors`).
+  - **Grafana** (`127.0.0.1:3001`) автопровижинит источники `Loki` и `Postgres` и два дашборда: `TeaMate — Langfuse, Errors & Backend Logs` (`teamate-observability`) и `TeaMate — Только ошибки` (`teamate-errors`).
 
 ---
 
@@ -77,8 +73,8 @@ flowchart TB
     end
 
     subgraph CoreGateway["Центральный шлюз (.NET 9 / C# 13)"]
-        GW["Fotoprint.AiGateway.Api (:8080 / :8088)<br/>PerimeterDefenseMiddleware"]
-        AGENT["FotoprintAiAgent (ReAct Tool Calling, 12 Tools)<br/>+ 45s RBAC Read Cache"]
+        GW["TeaMate.AiGateway.Api (:8080 / :8088)<br/>PerimeterDefenseMiddleware"]
+        AGENT["TeaMateAiAgent (ReAct Tool Calling, 12 Tools)<br/>+ 45s RBAC Read Cache"]
         CSW["ContextSwitchDetector<br/>Ротация UUID SessionId (лимит 10 сообщ.)"]
         LB["LlmLoadBalancer & RollbackManager<br/>Token Bucket • Retries • Circuit Breaker"]
         STT["CompositeAudioTranscriber<br/>whisper-cli (whisper.cpp) + VocabularyPostProcessor"]
@@ -90,12 +86,13 @@ flowchart TB
         N8N["n8n Workflows (:5678)<br/>10 автоматизированных сценариев (Webhook & CRON)"]
     end
 
-    subgraph McpPerimeter["Изолированный внутренний периметр 5 MCP (X-Internal-Service-Key + RBAC)"]
-        MCP_EMP["Fotoprint.Mcp.EmployeeReader (:8081)<br/>MasterId • Паспорт ролей • IMemoryCache"]
-        MCP_1C["Fotoprint.Mcp.OneC (:8082)<br/>Заказы • Тиражи • KPI цехов • Брак"]
-        MCP_BX["Fotoprint.Mcp.Bitrix24 (:8083)<br/>Сделки CRM • Поручения • Дедлайны"]
-        MCP_CAL["Fotoprint.Mcp.Calendar (:8084)<br/>Расписание • Слоты • Расширенный поиск"]
-        MCP_KB["Fotoprint.Mcp.KnowledgeBase (:8086)<br/>Регламенты • Индексация • pgvector RAG"]
+    subgraph McpPerimeter["Изолированный внутренний периметр MCP (X-Internal-Service-Key + RBAC)"]
+        MCP_EMP["TeaMate.Mcp.EmployeeReader (:8081)<br/>MasterId • Паспорт ролей • IMemoryCache"]
+        MCP_1C["TeaMate.Mcp.OneC (:8082)<br/>Заказы • Тиражи • KPI цехов • Брак"]
+        MCP_BX["TeaMate.Mcp.Bitrix24 (:8083)<br/>Сделки CRM • Поручения • Дедлайны"]
+        MCP_CAL["TeaMate.Mcp.Calendar (:8084)<br/>Расписание • Слоты • Расширенный поиск"]
+        MCP_KB["TeaMate.Mcp.KnowledgeBase (:8086)<br/>Регламенты • Индексация • pgvector RAG"]
+        MCP_SUP["TeaMate.Mcp.SupportDesk (:8087)<br/>Поддержка • Оператор • Human Handoff"]
     end
 
     subgraph DataAndObs["Хранилище и Наблюдаемость (Data & Observability)"]
@@ -153,21 +150,21 @@ flowchart TB
 
 ## 4. Полный каталог возможностей и сценариев использования (Use Cases)
 
-### 4.1. Инструменты автономного ReAct-агента (`FotoprintAiAgent` — 12 Function Tools)
+### 4.1. Инструменты автономного ReAct-агента (`TeaMateAiAgent` — Function Tools)
 
 | Код | Инструмент (Tool) | Целевой сервис / Модуль | Требуемое право RBAC | Подтверждение (HiTL) | Бизнес-сценарий (Use Case) |
 |---|---|---|---|---|---|
-| **UC-A01** | `get_order_status` | `Fotoprint.Mcp.OneC` | `onec:read_orders` | Нет | Проверка статуса заказа/тиража в 1С (этап печати, % готовности, дата отгрузки, остатки). |
-| **UC-A02** | `get_production_kpis` | `Fotoprint.Mcp.OneC` | `onec:read_production_kpis` | Нет | Получение KPI цехов: выработка оттисков, процент брака, загрузка машин, простои. |
-| **UC-A03** | `get_user_tasks` | `Fotoprint.Mcp.Bitrix24` | `bitrix24:read_tasks` | Нет | Просмотр активных и просроченных задач/поручений сотрудника из Битрикс24. |
-| **UC-A04** | `get_crm_deal_info` | `Fotoprint.Mcp.Bitrix24` | `bitrix24:read_tasks` | Нет | Карточка CRM-сделки по номеру заказа или клиенту (сумма, стадия, статус оплаты, менеджер). |
-| **UC-A05** | `create_task` | `Fotoprint.Mcp.Bitrix24` | `bitrix24:create_tasks` | **Да (`RequireConfirmation`)** | Постановка новой задачи в Битрикс24 с дедлайном и ответственным после подтверждения плана действий. |
-| **UC-A06** | `find_free_slots` | `Fotoprint.Mcp.Calendar` | `calendar:read_meetings` | Нет | Умный подбор свободных окон в календаре для группы участников (09:00–18:00, буфер 10 мин). |
-| **UC-A07** | `schedule_meeting` | `Fotoprint.Mcp.Calendar` | `calendar:read_meetings` | **Да (`RequireConfirmation`)** | Назначение совещания/планерки в корпоративном календаре после подтверждения карточки предпросмотра. |
-| **UC-A08** | `get_upcoming_meetings` | `Fotoprint.Mcp.Calendar` | `calendar:read_meetings` | Нет | Получение списка ближайших встреч, тем и участников за выбранное окно времени. |
-| **UC-A09** | `get_meeting_history` | `Fotoprint.Mcp.Calendar` | `calendar:read_meetings` | Нет | Поиск прошлых совещаний, протоколов и поручений по ключевым словам темы. |
-| **UC-A10** | `search_meeting_rag` | `AiGateway` / `Mcp.Calendar` | `calendar:read_meetings` + фильтр участника | Нет | Семантический и календарно-временной поиск по стенограммам и решениям созвонов (Google Meet RAG) с RBAC-изоляцией. |
-| **UC-A11** | `search_typography_regulations` | `AiGateway` / `Mcp.KnowledgeBase` | Фильтр по `access_groups` | Нет | Поиск по техкартам, нормам брака, коммерческой политике и ПВТР (или обзор всех доступных документов). |
+| **UC-A01** | `get_order_status` | `TeaMate.Mcp.OneC` | `onec:read_orders` | Нет | Проверка статуса заказа/тиража в 1С (этап печати, % готовности, дата отгрузки, остатки). |
+| **UC-A02** | `get_production_kpis` | `TeaMate.Mcp.OneC` | `onec:read_production_kpis` | Нет | Получение KPI цехов: выработка оттисков, процент брака, загрузка машин, простои. |
+| **UC-A03** | `get_user_tasks` | `TeaMate.Mcp.Bitrix24` | `bitrix24:read_tasks` | Нет | Просмотр активных и просроченных задач/поручений сотрудника из Битрикс24. |
+| **UC-A04** | `get_crm_deal_info` | `TeaMate.Mcp.Bitrix24` | `bitrix24:read_tasks` | Нет | Карточка CRM-сделки по номеру заказа или клиенту (сумма, стадия, статус оплаты, менеджер). |
+| **UC-A05** | `create_task` | `TeaMate.Mcp.Bitrix24` | `bitrix24:create_tasks` | **Да (`RequireConfirmation`)** | Постановка новой задачи в Битрикс24 с дедлайном и ответственным после подтверждения плана действий. |
+| **UC-A06** | `find_free_slots` | `TeaMate.Mcp.Calendar` | `calendar:read_meetings` | Нет | Умный подбор свободных окон в календаре для группы участников (09:00–18:00, буфер 10 мин). |
+| **UC-A07** | `schedule_meeting` | `TeaMate.Mcp.Calendar` | `calendar:read_meetings` | **Да (`RequireConfirmation`)** | Назначение совещания/планерки в корпоративном календаре после подтверждения карточки предпросмотра. |
+| **UC-A08** | `get_upcoming_meetings` | `TeaMate.Mcp.Calendar` | `calendar:read_meetings` | Нет | Получение списка ближайших встреч, тем и участников за выбранное окно времени. |
+| **UC-A09** | `get_meeting_history` | `TeaMate.Mcp.Calendar` | `calendar:read_meetings` | Нет | Поиск прошлых совещаний, протоколов и поручений по ключевым словам темы. |
+| **UC-A10** | `search_meeting_rag` | `TeaMate.AiGateway.Api` / `TeaMate.Mcp.Calendar` | `calendar:read_meetings` + фильтр участника | Нет | Семантический и календарно-временной поиск по стенограммам и решениям созвонов (Google Meet RAG) с RBAC-изоляцией. |
+| **UC-A11** | `search_typography_regulations` | `TeaMate.AiGateway.Api` / `TeaMate.Mcp.KnowledgeBase` | Фильтр по `access_groups` | Нет | Поиск по техкартам, нормам брака, коммерческой политике и ПВТР (или обзор всех доступных документов). |
 | **UC-A12** | `get_notification_settings` / `update_notification_settings` | `NotificationEndpoints` | Личный профиль сотрудника | Нет (применяется сразу) | Чтение и изменение персональных настроек уведомлений: время дайджеста, напоминания и тихие часы. |
 
 ---
@@ -204,11 +201,11 @@ flowchart TB
 sequenceDiagram
     autonumber
     actor User as Сотрудник (Web UI / Telegram)
-    participant GW as Fotoprint.AiGateway.Api
+    participant GW as TeaMate.AiGateway.Api
     participant Repo as PostgreSQL + pgvector
     participant CSD as ContextSwitchDetector
     participant N8N as n8n (01_main_router)
-    participant Agent as FotoprintAiAgent
+    participant Agent as TeaMateAiAgent
     participant LLM as NVIDIA NIM / Gemini (via LoadBalancer)
     participant MCP as MCP Server (OneC / Bitrix24 / Calendar / KB)
     participant LF as Langfuse v3
@@ -264,7 +261,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor User as Организатор / Секретарь планерки
-    participant GW as Fotoprint.AiGateway.Api
+    participant GW as TeaMate.AiGateway.Api
     participant STT as CompositeAudioTranscriber<br/>(whisper-cli / Gemini)
     participant Vocab as VocabularyPostProcessor
     participant Analyzer as MeetingTranscriptAnalyzer
@@ -306,11 +303,11 @@ sequenceDiagram
 
 ### Преимущества архитектуры
 1. **Полная трассируемость и безопасность (Zero Trust):** Ни один запрос к 1С, Битрикс24, Календарю или векторной базе знаний не обходит проверку `EmployeeSecurityContext`.
-2. **Единая наблюдаемость:** Langfuse v3 (LLM-трейсы, токены, Judge-оценки) и Grafana + Loki + Alloy (системные логи, SQL-ошибки ClickHouse, дашборд `Fotoprint — Только ошибки`) работают синхронно.
+2. **Единая наблюдаемость:** Langfuse v3 (LLM-трейсы, токены, Judge-оценки) и Grafana + Loki + Alloy (системные логи, SQL-ошибки ClickHouse, дашборд `TeaMate — Только ошибки`) работают синхронно.
 3. **Устойчивость к нагрузкам и качественный поиск:** RBAC-кэш чтения (45 сек), балансировщик `LlmLoadBalancer`, локальный `whisper-cli`, а также гибридный поиск созвонов по теме, дате (MSK) и свежести.
 
 ### Верификация текущего состояния (`dev`)
-- **Юнит-тесты (`dotnet test Fotoprint.slnx -v minimal`):** `138` пройдено, `0` провалено, `0` пропущено.
+- **Юнит-тесты (`dotnet test TeaMate.slnx -v minimal`):** `162` пройдено, `0` провалено, `0` пропущено.
 - **E2E интеграционный прогон (`scripts/test-pipeline-e2e.ps1`):** `10 / 10` запросов пройдено, `0` ошибок в Loki.
 - **Проверка распознавания созвонов (Pipeline 08):** `8 / 8` сценариев (тема, участник, RBAC, вчерашний созвон, точная дата, последний созвон) — 100% точность.
 

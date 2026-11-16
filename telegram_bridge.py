@@ -24,7 +24,7 @@ def sanitize_err(err: Exception) -> str:
 
 
 print("=" * 60)
-print("Fotoprint Telegram Fallback Long-Polling Bridge (Dev Only)")
+print("TeaMate Telegram Fallback Long-Polling Bridge (Dev Only)")
 print("=" * 60)
 
 try:

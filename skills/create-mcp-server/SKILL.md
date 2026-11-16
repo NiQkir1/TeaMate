@@ -2,11 +2,11 @@
 name: create-mcp-server
 description: >-
   Use this skill when creating a new MCP microservice or adding a new MCP tool
-  in Fotoprint AI Copilot (.NET 9 / Minimal API + FotoprintAiAgent), including
+  in TeaMate AI Copilot (.NET 9 / Minimal API + FotoprintAiAgent), including
   mandatory RBAC permissions and Human-in-the-Loop [RequireConfirmation] enforcement.
 ---
 
-# Создание MCP-сервера и MCP-инструментов в Fotoprint AI Copilot
+# Создание MCP-сервера и MCP-инструментов в TeaMate AI Copilot
 
 Следуй этому регламенту при добавлении нового MCP-сервиса (`src/Fotoprint.Mcp.<Service>/`) или нового инструмента в существующий MCP-сервер и `FotoprintAiAgent`.
 

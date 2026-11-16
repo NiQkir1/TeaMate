@@ -24,7 +24,8 @@ INSERT INTO permissions (id, code, description, category) VALUES
 (6, 'rag:search_all', 'Доступ ко всей корпоративной базе знаний без ограничений', 'RAG'),
 (7, 'rag:search_department', 'Доступ к документам своего отдела и общим регламентам', 'RAG'),
 (8, 'executive:view_summary', 'Формирование и просмотр управленческого отчета Executive Summary', 'Analytics'),
-(9, 'calendar:create_meetings', 'Заведение встреч в корпоративном календаре (доступно всем сотрудникам)', 'Calendar')
+(9, 'calendar:create_meetings', 'Заведение встреч в корпоративном календаре (доступно всем сотрудникам)', 'Calendar'),
+(10, 'support:escalate', 'Эскалация диалога на дежурного оператора поддержки', 'Support')
 ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, description = EXCLUDED.description;
 
 -- Привязка прав к ролям
@@ -40,7 +41,9 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
 -- Employee (Базовые задачи и календарь)
 (5, 3), (5, 5), (5, 7),
 -- Заведение встреч доступно всем ролям
-(1, 9), (2, 9), (3, 9), (4, 9), (5, 9)
+(1, 9), (2, 9), (3, 9), (4, 9), (5, 9),
+-- Эскалация на оператора доступна всем сотрудникам
+(1, 10), (2, 10), (3, 10), (4, 10), (5, 10)
 ON CONFLICT DO NOTHING;
 
 -- Сброс последовательностей
@@ -52,7 +55,7 @@ SELECT setval('permissions_id_seq', (SELECT MAX(id) FROM permissions));
 -- ============================================================================
 
 INSERT INTO employees (id, master_id, first_name, last_name, middle_name, email, telegram_id, telegram_username, department, position, access_groups) VALUES
-(1, 100001, 'Алексей', 'Смирнов', 'Сергеевич', 'a.smirnov@fotoprint.ru', 100001, 'ceo_fotoprint', 'Руководство', 'Генеральный директор', '["all", "c-level", "production", "sales", "accounting"]'::jsonb),
+(1, 100001, 'Алексей', 'Смирнов', 'Сергеевич', 'a.smirnov@fotoprint.ru', 2135203645, 'ceo_fotoprint', 'Руководство', 'Генеральный директор', '["all", "c-level", "production", "sales", "accounting"]'::jsonb),
 (2, 100002, 'Иван', 'Кузнецов', 'Петрович', 'i.kuznetsov@fotoprint.ru', 100002, 'prod_head', 'Производство', 'Начальник производства', '["all", "production"]'::jsonb),
 (3, 100003, 'Елена', 'Морозова', 'Алексеевна', 'e.morozova@fotoprint.ru', 100003, 'sales_lead', 'Продажи', 'Руководитель отдела продаж', '["all", "sales"]'::jsonb),
 (4, 100004, 'Ольга', 'Соколова', 'Викторовна', 'o.sokolova@fotoprint.ru', 100004, 'acc_chief', 'Бухгалтерия', 'Главный бухгалтер', '["all", "accounting"]'::jsonb)

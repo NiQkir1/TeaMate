@@ -277,4 +277,28 @@ CREATE TABLE IF NOT EXISTS user_identities (
 CREATE INDEX IF NOT EXISTS idx_user_identities_master_id
     ON user_identities(master_id);
 
+-- ============================================================================
+-- 6. ЭСКАЛАЦИЯ НА ОПЕРАТОРА ПОДДЕРЖКИ (Human Handoff & Live Support)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS support_escalations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    user_master_id BIGINT NOT NULL,
+    user_telegram_id BIGINT NULL,
+    operator_telegram_id BIGINT NOT NULL DEFAULT 2135203645,
+    operator_message_id INT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'active', -- 'active', 'resolved', 'cancelled'
+    reason TEXT NULL,
+    urgency VARCHAR(20) NOT NULL DEFAULT 'normal',
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    closed_at TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_escalations_session ON support_escalations(session_id);
+CREATE INDEX IF NOT EXISTS idx_support_escalations_operator_status ON support_escalations(operator_telegram_id, status);
+CREATE INDEX IF NOT EXISTS idx_support_escalations_operator_msg ON support_escalations(operator_message_id);
+
+
 

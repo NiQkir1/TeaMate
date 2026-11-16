@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fotoprint AI Copilot — Apple Liquid Glass &amp; VisionOS</title>
+  <title>TeaMate AI Copilot — Apple Liquid Glass &amp; VisionOS</title>
   <link rel="stylesheet" href="themes/theme-liquid-glass.css">
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -23,7 +23,7 @@
         <i data-lucide="printer"></i>
       </div>
       <div class="title-group">
-        <h1>Fotoprint AI Copilot</h1>
+        <h1>TeaMate AI Copilot</h1>
         <div class="model-badge">
           <div class="pulse" aria-hidden="true"></div>
           <span>NVIDIA Nemotron-3.5 120B &amp; Whisper STT</span>
@@ -80,7 +80,7 @@
       <div class="msg-row bot">
         <div class="avatar" aria-hidden="true"><i data-lucide="bot"></i></div>
         <div class="msg-content">
-          Здравствуйте! Я — корпоративный ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
+          Здравствуйте! Я — TeaMate, корпоративный AI-ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
           Я могу проверить статус тиража в 1С, рассчитать выработку машин Heidelberg, проверить задачи и сделки в Битрикс24, посмотреть планерки в календаре или подсказать технологический регламент.<br><br>
           Для голосовых сценариев доступны кнопки голосового ввода с микрофона и загрузки аудиозаписи совещания для протокола MoM.
         </div>
@@ -235,10 +235,10 @@
     const calendarTodayBadge = document.getElementById('calendar-today-badge');
 
     const FALLBACK_USERS = [
-      { telegram_id: 100001, full_name: 'Смирнов Алексей Сергеевич', department: 'Руководство', position: 'Генеральный директор', roles: ['Director'], permissions: [] },
-      { telegram_id: 100002, full_name: 'Кузнецов Иван Петрович', department: 'Производство', position: 'Начальник производства', roles: ['Production'], permissions: [] },
-      { telegram_id: 100003, full_name: 'Морозова Елена Алексеевна', department: 'Продажи', position: 'Руководитель отдела продаж', roles: ['Sales'], permissions: [] },
-      { telegram_id: 100004, full_name: 'Соколова Ольга Викторовна', department: 'Бухгалтерия', position: 'Главный бухгалтер', roles: ['Accounting'], permissions: [] }
+      { employee_id: 1, telegram_id: 2135203645, full_name: 'Смирнов Алексей Сергеевич', department: 'Руководство', position: 'Генеральный директор', roles: ['Director'], permissions: [] },
+      { employee_id: 2, telegram_id: 100002, full_name: 'Кузнецов Иван Петрович', department: 'Производство', position: 'Начальник производства', roles: ['Production'], permissions: [] },
+      { employee_id: 3, telegram_id: 100003, full_name: 'Морозова Елена Алексеевна', department: 'Продажи', position: 'Руководитель отдела продаж', roles: ['Sales'], permissions: [] },
+      { employee_id: 4, telegram_id: 100004, full_name: 'Соколова Ольга Викторовна', department: 'Бухгалтерия', position: 'Главный бухгалтер', roles: ['Accounting'], permissions: [] }
     ];
     const GUEST_TEST_USER = {
       telegram_id: 999999,
@@ -249,12 +249,21 @@
       permissions: []
     };
 
+    function getTodayIso() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
     let availableUsers = [];
-    let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 100001;
+    let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 2135203645;
 
     // Calendar state
-    let currentCalendarDate = new Date(2026, 10, 12); // Default: November 12, 2026
-    let selectedCalendarDate = new Date(2026, 10, 12);
+    const _nowInit = new Date();
+    let currentCalendarDate = new Date(_nowInit);
+    let selectedCalendarDate = new Date(_nowInit);
     let currentCalendarScope = 'my';
     let cachedCalendarEvents = [];
 
@@ -462,7 +471,7 @@
         grid.appendChild(cell);
       }
 
-      const todayStr = '2026-11-12';
+      const todayStr = getTodayIso();
 
       // Current month days
       for (let day = 1; day <= totalDays; day++) {
@@ -592,7 +601,7 @@
       const endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59)).toISOString().slice(0, 10);
 
       const user = getCurrentUser();
-      const employeeId = user.telegram_id === 100001 ? 1 : (user.telegram_id === 100002 ? 2 : (user.telegram_id === 100003 ? 3 : 4));
+      const employeeId = user.employee_id || (user.telegram_id === 2135203645 || user.telegram_id === 100001 ? 1 : (user.telegram_id === 100002 ? 2 : (user.telegram_id === 100003 ? 3 : (user.telegram_id === 100004 ? 4 : 1))));
 
       try {
         const query = new URLSearchParams({
@@ -623,7 +632,7 @@
       }
 
       // Update today badge count
-      const todayIso = '2026-11-12';
+      const todayIso = getTodayIso();
       const todayMeetings = cachedCalendarEvents.filter(ev => ev.start_time && ev.start_time.startsWith(todayIso));
       if (calendarTodayBadge) {
         calendarTodayBadge.textContent = String(todayMeetings.length);
@@ -805,10 +814,10 @@
       if (existing) existing.remove();
 
       const title = `Встреча с ${card.target_person || 'Кузнецовым И.П.'}`;
-      const startTime = slot.iso_start || slot.start_time || '2026-11-12T14:30:00+03:00';
-      const endTime = slot.iso_end || slot.end_time || '2026-11-12T15:00:00+03:00';
+      const startTime = slot.iso_start || slot.start_time || `${getTodayIso()}T14:30:00+03:00`;
+      const endTime = slot.iso_end || slot.end_time || `${getTodayIso()}T15:00:00+03:00`;
       const organizer = getCurrentUser();
-      const organizerId = organizer.telegram_id === 100001 ? 1 : 2;
+      const organizerId = organizer.employee_id || (organizer.telegram_id === 2135203645 || organizer.telegram_id === 100001 ? 1 : 2);
       const participantId = card.target_employee_id || 2;
       const slotTimeText = slot.label || `${slot.start} – ${slot.end}`;
 

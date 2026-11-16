@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fotoprint AI Copilot — Linear &amp; Raycast Obsidian Pro</title>
+  <title>TeaMate AI Copilot — Linear &amp; Raycast Obsidian Pro</title>
   <link rel="stylesheet" href="themes/theme-obsidian.css">
 </head>
 <body>
@@ -17,7 +17,7 @@
         <i data-lucide="printer"></i>
       </div>
       <div class="title-group">
-        <h1>Fotoprint AI Copilot</h1>
+        <h1>TeaMate AI Copilot</h1>
         <div class="model-badge">
           <div class="pulse" aria-hidden="true"></div>
           NVIDIA Nemotron-3.5 120B &amp; Whisper STT
@@ -126,7 +126,7 @@
           <i data-lucide="terminal"></i>
         </div>
         <div class="msg-content">
-          Здравствуйте! Я — корпоративный ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
+          Здравствуйте! Я — TeaMate, корпоративный AI-ассистент типографии «Фотопринт», работающий на нейросети <strong>NVIDIA Nemotron 3.5 120B</strong>.<br><br>
           Я могу проверить статус тиража в 1С, рассчитать выработку машин Heidelberg, проверить задачи и сделки в Битрикс24, посмотреть планерки в корпоративном календаре или подсказать технологический регламент.<br><br>
           Для голосовых сценариев доступны кнопки микрофона (голосовой ввод) и скрепки (загрузка аудиозаписи совещания для структурированного протокола MoM).
         </div>
@@ -241,10 +241,10 @@
     // RBAC & Employees State
     // ------------------------------------------------------------------------
     const FALLBACK_USERS = [
-      { telegram_id: 100001, full_name: 'Смирнов Алексей Сергеевич', department: 'Руководство', position: 'Генеральный директор', roles: ['Director'], permissions: ['calendar:read_meetings', 'calendar:write_meetings'] },
-      { telegram_id: 100002, full_name: 'Кузнецов Иван Петрович', department: 'Производство', position: 'Начальник производства', roles: ['Production'], permissions: ['calendar:read_meetings', 'calendar:write_meetings'] },
-      { telegram_id: 100003, full_name: 'Морозова Елена Алексеевна', department: 'Продажи', position: 'Руководитель отдела продаж', roles: ['Sales'], permissions: ['calendar:read_meetings'] },
-      { telegram_id: 100004, full_name: 'Соколова Ольга Викторовна', department: 'Бухгалтерия', position: 'Главный бухгалтер', roles: ['Accounting'], permissions: ['calendar:read_meetings'] }
+      { employee_id: 1, telegram_id: 2135203645, full_name: 'Смирнов Алексей Сергеевич', department: 'Руководство', position: 'Генеральный директор', roles: ['Director'], permissions: ['calendar:read_meetings', 'calendar:write_meetings'] },
+      { employee_id: 2, telegram_id: 100002, full_name: 'Кузнецов Иван Петрович', department: 'Производство', position: 'Начальник производства', roles: ['Production'], permissions: ['calendar:read_meetings', 'calendar:write_meetings'] },
+      { employee_id: 3, telegram_id: 100003, full_name: 'Морозова Елена Алексеевна', department: 'Продажи', position: 'Руководитель отдела продаж', roles: ['Sales'], permissions: ['calendar:read_meetings'] },
+      { employee_id: 4, telegram_id: 100004, full_name: 'Соколова Ольга Викторовна', department: 'Бухгалтерия', position: 'Главный бухгалтер', roles: ['Accounting'], permissions: ['calendar:read_meetings'] }
     ];
 
     const GUEST_TEST_USER = {
@@ -257,7 +257,7 @@
     };
 
     let availableUsers = [];
-    let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 100001;
+    let currentTelegramId = Number(localStorage.getItem('fotoprint_telegram_id')) || 2135203645;
 
     function escapeHtml(str) {
       if (str === null || str === undefined) return '';

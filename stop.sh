@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # =============================================================================
-# Fotoprint AI Copilot — Unified System Stopper
+# TeaMate AI Copilot — Unified System Stopper
 # =============================================================================
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,4 +26,4 @@ echo "✅ AI Gateway остановлен."
 echo "🛑 Остановка Docker контейнеров..."
 docker-compose down 2>/dev/null || true
 echo "✅ Все контейнеры остановлены."
-echo "🎉 Система Fotoprint AI Copilot успешно остановлена."
+echo "🎉 Система TeaMate AI Copilot успешно остановлена."

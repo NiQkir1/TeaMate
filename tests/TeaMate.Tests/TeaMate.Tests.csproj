@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TeaMate.Core\TeaMate.Core.csproj" />
+    <ProjectReference Include="..\..\src\TeaMate.Mcp.Calendar\TeaMate.Mcp.Calendar.csproj" />
+    <ProjectReference Include="..\..\src\TeaMate.Mcp.SupportDesk\TeaMate.Mcp.SupportDesk.csproj" />
+    <ProjectReference Include="..\..\src\TeaMate.AiGateway.Api\TeaMate.AiGateway.Api.csproj" />
+  </ItemGroup>
+
+</Project>

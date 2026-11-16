@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TeaMate.AiGateway.Api/TeaMate.AiGateway.Api.csproj" />
+    <Project Path="src/TeaMate.Core/TeaMate.Core.csproj" />
+    <Project Path="src/TeaMate.Mcp.Bitrix24/TeaMate.Mcp.Bitrix24.csproj" />
+    <Project Path="src/TeaMate.Mcp.Calendar/TeaMate.Mcp.Calendar.csproj" />
+    <Project Path="src/TeaMate.Mcp.EmployeeReader/TeaMate.Mcp.EmployeeReader.csproj" />
+    <Project Path="src/TeaMate.Mcp.KnowledgeBase/TeaMate.Mcp.KnowledgeBase.csproj" />
+    <Project Path="src/TeaMate.Mcp.OneC/TeaMate.Mcp.OneC.csproj" />
+    <Project Path="src/TeaMate.Mcp.SupportDesk/TeaMate.Mcp.SupportDesk.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TeaMate.Tests/TeaMate.Tests.csproj" />
+  </Folder>
+</Solution>

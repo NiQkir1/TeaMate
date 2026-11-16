@@ -1,4 +1,4 @@
-# Права доступа и ролевая модель (RBAC) — Fotoprint AI Copilot
+# Права доступа и ролевая модель (RBAC) — TeaMate AI Copilot
 
 Документ описывает актуальную матрицу ролей, прав (`permissions`), привязку к MCP-инструментам и тестовых пользователей в PostgreSQL (`roles`, `permissions`, `role_permissions`, `employees`, `employee_roles`).
 

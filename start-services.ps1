@@ -1,5 +1,5 @@
 # =============================================================================
-# Fotoprint AI Copilot - Local Windows Startup (.NET 9 + Whisper Vulkan/CPU)
+# TeaMate AI Copilot - Local Windows Startup (.NET 9 + Whisper Vulkan/CPU)
 # =============================================================================
 # Требует запущенных в Docker (или локально) PostgreSQL, n8n и Langfuse.
 # =============================================================================
@@ -46,24 +46,24 @@ if (-not $env:Security__EmployeeReaderUrl){ $env:Security__EmployeeReaderUrl= "h
 powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\download-model.ps1") -CheckOnly
 
 # 4. Сборка решения перед запуском
-Write-Host "`nBuilding Fotoprint.slnx..." -ForegroundColor Cyan
-dotnet build Fotoprint.slnx -c Release --nologo -v quiet
+Write-Host "`nBuilding TeaMate.slnx..." -ForegroundColor Cyan
+dotnet build TeaMate.slnx -c Release --nologo -v quiet
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Build failed. Fix compilation errors before starting services."
     exit 1
 }
 
 $projects = @(
-    @{ Name = "Fotoprint.Mcp.EmployeeReader"; Port = 8081; Path = "src/Fotoprint.Mcp.EmployeeReader" },
-    @{ Name = "Fotoprint.Mcp.OneC";           Port = 8082; Path = "src/Fotoprint.Mcp.OneC" },
-    @{ Name = "Fotoprint.Mcp.Bitrix24";       Port = 8083; Path = "src/Fotoprint.Mcp.Bitrix24" },
-    @{ Name = "Fotoprint.Mcp.Calendar";       Port = 8084; Path = "src/Fotoprint.Mcp.Calendar" },
-    @{ Name = "Fotoprint.Mcp.KnowledgeBase";  Port = 8086; Path = "src/Fotoprint.Mcp.KnowledgeBase" },
-    @{ Name = "Fotoprint.AiGateway.Api";      Port = 8088; Path = "src/Fotoprint.AiGateway.Api" }
+    @{ Name = "TeaMate.Mcp.EmployeeReader"; Port = 8081; Path = "src/TeaMate.Mcp.EmployeeReader" },
+    @{ Name = "TeaMate.Mcp.OneC";           Port = 8082; Path = "src/TeaMate.Mcp.OneC" },
+    @{ Name = "TeaMate.Mcp.Bitrix24";       Port = 8083; Path = "src/TeaMate.Mcp.Bitrix24" },
+    @{ Name = "TeaMate.Mcp.Calendar";       Port = 8084; Path = "src/TeaMate.Mcp.Calendar" },
+    @{ Name = "TeaMate.Mcp.KnowledgeBase";  Port = 8086; Path = "src/TeaMate.Mcp.KnowledgeBase" },
+    @{ Name = "TeaMate.AiGateway.Api";      Port = 8088; Path = "src/TeaMate.AiGateway.Api" }
 )
 
 Write-Host "=========================================================" -ForegroundColor Cyan
-Write-Host "Starting Fotoprint AI Copilot Services (.NET 9, Windows)..." -ForegroundColor Cyan
+Write-Host "Starting TeaMate AI Copilot Services (.NET 9, Windows)..." -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
 
 foreach ($p in $projects) {

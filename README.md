@@ -1,6 +1,6 @@
-# 🖨️ Fotoprint AI Copilot
+# 🖨️ TeaMate AI Copilot
 
-**Fotoprint AI Copilot** — интеллектуальная мультиагентная платформа и корпоративный ассистент типографии. Система автоматизирует подготовку к ежедневным планеркам, протоколирование совещаний (Minutes of Meeting), контроль производственных поручений, семантический поиск по регламентам с разграничением прав доступа (RBAC RAG), а также интеграцию с производственной системой 1С и CRM Битрикс24.
+**TeaMate AI Copilot** (ранее Fotoprint AI Copilot) — интеллектуальная мультиагентная платформа и корпоративный ассистент типографии. Система автоматизирует подготовку к ежедневным планеркам, протоколирование совещаний (Minutes of Meeting), контроль производственных поручений, семантический поиск по регламентам с разграничением прав доступа (RBAC RAG), а также интеграцию с производственной системой 1С и CRM Битрикс24.
 
 ---
 
@@ -23,7 +23,7 @@
                                         │ (Внутренняя сеть fotoprint-net)
                                         ▼
     ┌────────────────────────────────────────────────────────────────────────┐
-    │                       Fotoprint.AiGateway.Api                          │
+    │                         TeaMate.AiGateway.Api                          │
     │                   (Внутренний шлюз агента, 8080)                       │
     └──────────────┬────────────────────┬────────────────────┬───────────────┘
                    │                    │                    │
@@ -43,7 +43,7 @@
    │    через защищенный заголовок X-Internal-Service-Key                    │
    │  • SecurityInterceptor: валидация контекста прав сотрудника (RBAC)      │
    ├───────────────────┬────────────────────┬────────────────────────────────┤
-   │ Fotoprint.Mcp.    │ Fotoprint.Mcp.     │ Fotoprint.Mcp.                 │
+   │ TeaMate.Mcp.      │ TeaMate.Mcp.       │ TeaMate.Mcp.                   │
    │ EmployeeReader    │ OneC               │ Bitrix24 & Calendar            │
    │ (RBAC, :8081)     │ (Заказы/KPI, :8082)│ (CRM/Задачи :8083, План :8084) │
    └───────────────────┴────────────────────┴────────────────────────────────┘
@@ -51,22 +51,24 @@
 
 ### Основные компоненты
 
-1. **`Fotoprint.AiGateway.Api` (.NET 9 / C# 13)** — центральный входной API-шлюз с 3-этапной обработкой:
-   - **Этап 1 (Периметр и резолвинг MasterId):** Прием вебхуков Telegram, защита периметра (`PerimeterDefenseMiddleware`), запрос в `Fotoprint.Mcp.EmployeeReader` для получения уникального числового `MasterId` пользователя, сглаживание пиков (`LlmLoadBalancer`) и роллбэк (`RollbackManager`).
+1. **`TeaMate.AiGateway.Api` (.NET 9 / C# 13)** — центральный входной API-шлюз с 3-этапной обработкой:
+   - **Этап 1 (Периметр и резолвинг MasterId):** Прием вебхуков Telegram, защита периметра (`PerimeterDefenseMiddleware`), запрос в `TeaMate.Mcp.EmployeeReader` для получения уникального числового `MasterId` пользователя, сглаживание пиков (`LlmLoadBalancer`) и роллбэк (`RollbackManager`).
    - **Этап 2 (БД диалогов и LLM ContextSwitchDetector):** По `MasterId` находится активный диалог с UUID `SessionId`. В `ContextSwitchDetector` передается история текущей сессии (`GetMessagesBySessionIdAsync`) и новое сообщение. Если Gemini определяет смену контекста (`is_context_switched = true`) — **активный `SessionId` закрывается и генерируется новый UUID `SessionId`**, а старые сообщения замораживаются.
    - **Этап 3 (Оркестрация MCP в n8n):** В n8n передается payload с `master_id`, актуальным `session_id`, флагом `is_context_switched` и веткой `branch`, где вызываются изолированные MCP-микросервисы (1C, Bitrix24, Calendar, RAG).
-2. **`Fotoprint.Core`** — общая библиотека ядра:
+2. **`TeaMate.Core`** — общая библиотека ядра:
    - Доменные модели (`Entities`).
-   - Репозиторий Dapper + Npgsql (`FotoprintRepository`) с поддержкой векторного поиска через pgvector.
+   - Репозиторий Dapper + Npgsql (`TeaMateRepository`) с поддержкой векторного поиска через pgvector.
    - Парсер документов DOCX, XLSX, PDF (`DocumentParser`).
    - Генератор протоколов встреч с таймкодами и задачами (`MeetingProtocolGenerator`).
    - RBAC & Security Middleware (`SecurityInterceptorMiddleware`, `EmployeeSecurityContext`).
    - Клиент аудита и трейсинга Langfuse v3 (`LangfuseClient`).
 3. **MCP-серверы (Model Context Protocol)**:
-   - `Fotoprint.Mcp.EmployeeReader` (порт 8081) — паспорт сотрудника, аутентификация по Telegram ID, роли и права доступа.
-   - `Fotoprint.Mcp.OneC` (порт 8082) — данные заказов 1С, статусы тиражей, загрузка печатных цехов, процент брака.
-   - `Fotoprint.Mcp.Bitrix24` (порт 8083) — сделки CRM, лиды, постановка задач и контроль исполнителей.
-   - `Fotoprint.Mcp.Calendar` (порт 8084) — корпоративный календарь, встречи, повестки планерок.
+   - `TeaMate.Mcp.EmployeeReader` (порт 8081) — паспорт сотрудника, аутентификация по Telegram ID, роли и права доступа.
+   - `TeaMate.Mcp.OneC` (порт 8082) — данные заказов 1С, статусы тиражей, загрузка печатных цехов, процент брака.
+   - `TeaMate.Mcp.Bitrix24` (порт 8083) — сделки CRM, лиды, постановка задач и контроль исполнителей.
+   - `TeaMate.Mcp.Calendar` (порт 8084) — корпоративный календарь, встречи, повестки планерок.
+   - `TeaMate.Mcp.KnowledgeBase` (порт 8086) — регламенты, индексация и pgvector RAG.
+   - `TeaMate.Mcp.SupportDesk` (порт 8087) — передача диалога человеку-оператору и тикеты поддержки.
    - `bitrix24-ready-mcp` (порт 8085) — готовый Docker-коннектор к REST API Битрикс24.
 4. **Оркестратор сценариев n8n (порт 5678)** — исполнение 6 ключевых цепочек:
    - `01_main_router_and_auth` — входной роутер и авторизация.
@@ -156,7 +158,7 @@ docker compose logs -f mcp-1c
 
 3. Запустите нужный микросервис локально, например AI Gateway:
    ```bash
-   dotnet run --project src/Fotoprint.AiGateway.Api
+   dotnet run --project src/TeaMate.AiGateway.Api
    ```
 
 ---
@@ -224,7 +226,7 @@ docker compose restart n8n
 | **n8n Orchestrator** | [http://localhost:5678](http://localhost:5678) | Визуальные воркфлоу, AI-агенты, RAG | Задаются при первом входе |
 | **Langfuse UI** | [http://localhost:3000](http://localhost:3000) | Трейсинг LLM, аудит безопасности, метрики | `admin@fotoprint.ru` / `FotoprintAdmin2026!` |
 | **MinIO Console** | [http://localhost:9091](http://localhost:9091) | Хранилище объектов для Langfuse | `minio` / `minio_secret_password` |
-| **Fotoprint AI Gateway** | `127.0.0.1:8080` (или через Nginx) | Основной REST API (привязан к localhost) | — |
+| **TeaMate AI Gateway** | `127.0.0.1:8080` (или через Nginx) | Основной REST API (привязан к localhost) | — |
 | **MCP Серверы (1C, Bitrix, Calendar, EmployeeReader)** | *Внутренняя сеть Docker (порты 8081-8085 закрыты)* | Изолированный периметр. Доступен ТОЛЬКО n8n и Gateway через `X-Internal-Service-Key` | — |
 | **PostgreSQL 16** | `127.0.0.1:5432` | БД `fotoprint`, `n8n`, `langfuse` (только localhost) | `fotoprint` / `fotoprint_secret` |
 
@@ -275,7 +277,7 @@ curl http://localhost:8080/api/system/stats
 Пример ответа:
 ```json
 {
-  "service": "Fotoprint.AiGateway.Api",
+  "service": "TeaMate.AiGateway.Api",
   "load_balancer": {
     "totalProcessed": 42,
     "totalThrottled": 5,
@@ -311,7 +313,7 @@ dotnet test --logger "console;verbosity=detailed"
 
 ## 📦 Управление зависимостями (`libraries.yaml`)
 
-Все внешние пакеты и библиотеки зафиксированы в едином манифесте [libraries.yaml](file:///c:/Users/jotry/Photoprint/libraries.yaml):
+Все внешние пакеты и библиотеки зафиксированы в едином манифесте [libraries.yaml](libraries.yaml):
 - Пакеты .NET 9 (Npgsql, Pgvector, Dapper, OpenXml, PdfPig, YamlDotNet).
 - npm-модули для n8n (axios, lodash, form-data, pdf-parse, docx).
 - MCP коннекторы и Python-библиотеки.
@@ -322,7 +324,7 @@ dotnet test --logger "console;verbosity=detailed"
 
 ## ⚙️ Единый конфигурационный файл (`config.yaml`)
 
-Все динамические параметры системы вынесены в [config.yaml](file:///c:/Users/jotry/Photoprint/config.yaml) (Single Source of Truth), а [FotoprintConfig.cs](file:///c:/Users/jotry/Photoprint/src/Fotoprint.Core/Configuration/FotoprintConfig.cs) служит строго типизированным загрузчиком для C#:
+Все динамические параметры системы вынесены в [config.yaml](config.yaml) (Single Source of Truth), а [TeaMateConfig.cs](src/TeaMate.Core/Configuration/TeaMateConfig.cs) служит строго типизированным загрузчиком для C#:
 - **LLM & Proxy**: выбор провайдера (`gemini`, `openai`, `proxy`), API ключ Google AI Studio (`GEMINI_API_KEY`), модель (`gemini-1.5-flash` / `gemini-3.5`).
 - **Ограничения Rate Limits**: `rpm` (по умолчанию 60 RPM, гибко настраивается под тариф), `tpm` (1000000), `max_concurrent_requests` (5).
 - **Балансировщик**: интервал сглаживания `min_interval_between_requests_ms` (250мс), размер очереди `queue_capacity` (1000).
@@ -335,7 +337,7 @@ dotnet test --logger "console;verbosity=detailed"
 
 ## 🤖 Интеграция с Google Gemini (AI Studio) и контроль Rate Limits
 
-В системе реализован клиент [GeminiClient.cs](file:///c:/Users/jotry/Photoprint/src/Fotoprint.Core/Llm/GeminiClient.cs), работающий по спецификации Google AI Studio:
+В системе реализован клиент [GeminiClient.cs](src/TeaMate.Core/Llm/GeminiClient.cs), работающий по спецификации Google AI Studio:
 - **Аутентификация**: переменная `GEMINI_API_KEY` в файле `.env`, передаваемая в HTTP-заголовке `x-goog-api-key`.
 - **Эндпоинты генерации и чата**:
   - `POST /api/gemini/generate` — прямой вызов Gemini.
@@ -390,7 +392,7 @@ dotnet test --logger "console;verbosity=detailed"
 
 ## 🎙️ Модуль локальной транскрибации речи (SOLID Audio Architecture v2.0) и автопротоколирования (MoM)
 
-Для распознавания голосовых сообщений сотрудников и аудиозаписей планерок реализован гибридный отказоустойчивый модуль `Fotoprint.Core.Audio` по принципам **SOLID**, объединяющий встроенные в репозиторий C++ бинарники инференса (Apple Silicon Metal GPU / Windows Vulkan GPU / CPU), внешнюю базу предметного словаря и облачный мультимодальный резерв.
+Для распознавания голосовых сообщений сотрудников и аудиозаписей планерок реализован гибридный отказоустойчивый модуль `TeaMate.Core.Audio` по принципам **SOLID**, объединяющий встроенные в репозиторий C++ бинарники инференса (Apple Silicon Metal GPU / Windows Vulkan GPU / CPU), внешнюю базу предметного словаря и облачный мультимодальный резерв.
 
 ### 🎙️ Настройка модуля распознавания речи
 
@@ -532,7 +534,7 @@ curl -X POST "http://localhost:8080/api/meetings/process-audio?language=ru" \
 ```
 
 #### 4.3 Обработка голосовых сообщений в Telegram (`POST /api/telegram/webhook`)
-Шлюз автоматически перехватывает объекты `message.voice` и `message.audio` из Telegram, скачивает голосовой файл через Telegram Bot API (или читает локальный файл при тестировании), расшифровывает речь через `IAudioTranscriber` и передает распознанный текст в стандартный пайплайн `MasterId` $\rightarrow$ `SessionId` $\rightarrow$ `ContextSwitchDetector` $\rightarrow$ `FotoprintAiAgent` / `n8n`:
+Шлюз автоматически перехватывает объекты `message.voice` и `message.audio` из Telegram, скачивает голосовой файл через Telegram Bot API (или читает локальный файл при тестировании), расшифровывает речь через `IAudioTranscriber` и передает распознанный текст в стандартный пайплайн `MasterId` $\rightarrow$ `SessionId` $\rightarrow$ `ContextSwitchDetector` $\rightarrow$ `TeaMateAiAgent` / `n8n`:
 
 ```bash
 curl -X POST "http://localhost:8080/api/telegram/webhook" \

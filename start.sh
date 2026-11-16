@@ -2,7 +2,7 @@
 set -e
 
 # =============================================================================
-# Fotoprint AI Copilot — Unified System Launcher
+# TeaMate AI Copilot — Unified System Launcher
 # =============================================================================
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +50,7 @@ if lsof -iTCP:8899 -sTCP:LISTEN -n -P > /dev/null 2>&1; then
     echo "✅ AI Gateway уже работает на http://localhost:8899"
 else
     echo "⚡ Запуск AI Gateway в фоновом режиме..."
-    nohup dotnet run --project src/Fotoprint.AiGateway.Api > "$PROJECT_DIR/.gateway.log" 2>&1 &
+    nohup dotnet run --project src/TeaMate.AiGateway.Api > "$PROJECT_DIR/.gateway.log" 2>&1 &
     GATEWAY_PID=$!
     echo "$GATEWAY_PID" > "$PROJECT_DIR/.gateway.pid"
     echo "⏳ Ожидание старта Gateway..."
@@ -65,7 +65,7 @@ fi
 
 echo ""
 echo "============================================================================="
-echo "🎉 СИСТЕМА FOTOPRINT AI COPILOT УСПЕШНО ЗАПУЩЕНА!"
+echo "🎉 СИСТЕМА TEAMATE AI COPILOT УСПЕШНО ЗАПУЩЕНА!"
 echo "============================================================================="
 echo "🎙️ Веб-интерфейс (транскрибация, чат, аудио-визуализатор): http://localhost:8899"
 echo "⚙️ n8n сценарии и автоматизация:                         http://localhost:5678"

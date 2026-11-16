@@ -1,5 +1,5 @@
 {
-  "name": "Fotoprint AI Copilot",
+  "name": "TeaMate AI Copilot",
   "cmd": ["/bin/bash", "./start.sh"],
   "port": 8899,
   "url": "http://127.0.0.1:8899",
