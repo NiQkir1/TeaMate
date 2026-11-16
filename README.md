@@ -1,5 +1,7 @@
 # 🖨️ TeaMate AI Copilot
 
+> **Автор и разработчик AI-ассистента:** [NiQkir1](https://github.com/NiQkir1)
+
 **TeaMate AI Copilot** (ранее Fotoprint AI Copilot) — интеллектуальная мультиагентная платформа и корпоративный ассистент типографии. Система автоматизирует подготовку к ежедневным планеркам, протоколирование совещаний (Minutes of Meeting), контроль производственных поручений, семантический поиск по регламентам с разграничением прав доступа (RBAC RAG), а также интеграцию с производственной системой 1С и CRM Битрикс24.
 
 ---
@@ -554,6 +556,17 @@ curl -X POST "http://localhost:8080/api/telegram/webhook" \
     }
   }'
 ```
+
+---
+
+## 👨‍💻 Автор и разработчик
+
+Платформа и корпоративный AI-ассистент **TeaMate AI Copilot** спроектированы и разработаны **[NiQkir1](https://github.com/NiQkir1)**:
+- **Архитектура**: мультиагентная система на .NET 9 (C# 13) + Minimal API, изолированный стек MCP-микросервисов, ReAct Tool Calling, Stateless Calendar Engine.
+- **Безопасность и RAG**: Zero-Trust RBAC, семантический поиск pgvector, периметральная защита NGINX (Anti-Scanner 444 Drop, Honeypot, Token Bucket).
+- **Мультимодальность**: гибридный отказоустойчивый конвейер распознавания речи (C++ `whisper-cli` / Google Gemini) и сквозная телеметрия Langfuse v3.
+
+Репозиторий проекта: [https://github.com/NiQkir1/TeaMate](https://github.com/NiQkir1/TeaMate)
 
 
 
